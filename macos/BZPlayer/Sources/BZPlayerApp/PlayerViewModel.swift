@@ -22,6 +22,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
     private var currentFileURL: URL?
     private var pendingResumeTime: Double?
     private var observer: Any?
+    private var terminationObserver: NSObjectProtocol?
     private var statusObserver: NSKeyValueObservation?
     private var itemObserver: NSKeyValueObservation?
 
@@ -29,12 +30,19 @@ final class PlayerViewModel: NSObject, ObservableObject {
         super.init()
         player.automaticallyWaitsToMinimizeStalling = true
         attachPeriodicObserver()
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handleWillTerminate(_:)),
-            name: NSApplication.willTerminateNotification,
-            object: nil
-        )
+        terminationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.handleWillTerminate()
+        }
+    }
+
+    deinit {
+        if let terminationObserver {
+            NotificationCenter.default.removeObserver(terminationObserver)
+        }
     }
 
     func openFile() {
@@ -143,8 +151,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         }
     }
 
-    @objc
-    private func handleWillTerminate(_ notification: Notification) {
+    private func handleWillTerminate() {
         saveCurrentProgress()
         detachPeriodicObserverIfNeeded()
     }
