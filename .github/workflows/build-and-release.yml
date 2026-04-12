@@ -15,10 +15,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Node.js 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "22"
 
@@ -96,7 +96,7 @@ jobs:
             "release/BZPlayer-${{ steps.version.outputs.tag }}.dmg"
 
       - name: Upload workflow artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: bzplayer-${{ steps.version.outputs.tag }}
           path: |
@@ -104,7 +104,7 @@ jobs:
             release/BZPlayer-${{ steps.version.outputs.tag }}.dmg
 
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v2.3.3
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           name: BZPlayer ${{ steps.version.outputs.tag }}
