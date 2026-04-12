@@ -170,7 +170,7 @@
     function togglePlayPause() {
       if (!video.src) return;
       if (video.paused) {
-        video.play().catch(() => {});
+        video.play().catch(() => showHint("播放失败，请点击播放按钮重试"));
       } else {
         video.pause();
       }
@@ -196,7 +196,7 @@
       objectUrl = URL.createObjectURL(file);
       video.src = objectUrl;
       video.load();
-      video.play().catch(() => {});
+      video.play().catch(() => showHint("浏览器拦截了自动播放，请手动点击播放"));
     });
 
     playPauseBtn.addEventListener("click", togglePlayPause);
@@ -242,7 +242,7 @@
 
     function releaseResources() {
       if (objectUrl) URL.revokeObjectURL(objectUrl);
-      cancelAnimationFrame(rafId);
+      if (rafId) cancelAnimationFrame(rafId);
       objectUrl = null;
       rafId = 0;
       clearTimeout(hintTimer);
