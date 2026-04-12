@@ -321,7 +321,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
                 lines.append("【音频 #\(index + 1)】")
                 lines.append("码率：\(formatBitrate(estimatedBitRate))")
 
-                if let formatDesc = audioTrack.formatDescriptions.first as? CMAudioFormatDescription,
+                if let formatDesc = audioTrack.formatDescriptions.first.map({ $0 as! CMFormatDescription }),
                    let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(formatDesc)?.pointee {
                     lines.append("采样率：\(Int(asbd.mSampleRate)) Hz")
                     lines.append("声道数：\(asbd.mChannelsPerFrame)")
@@ -385,9 +385,9 @@ private func fourCCString(_ code: FourCharCode) -> String {
 }
 
 private func codecDescription(from formatDescription: Any?, mediaType: String) -> String {
-    guard let formatDescription = formatDescription as? CMFormatDescription else {
+    guard let formatDescription else {
         return "未知（\(mediaType)格式描述不可用）"
     }
-    let subtype = CMFormatDescriptionGetMediaSubType(formatDescription)
+    let subtype = CMFormatDescriptionGetMediaSubType(formatDescription as! CMFormatDescription)
     return "\(fourCCString(subtype)) (\(subtype))"
 }

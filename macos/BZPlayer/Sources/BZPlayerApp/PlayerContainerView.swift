@@ -44,8 +44,6 @@ final class ClickablePlayerView: AVPlayerView {
         let doubleTap = NSClickGestureRecognizer(target: self, action: #selector(handleDoubleClickGesture))
         doubleTap.numberOfClicksRequired = 2
 
-        singleTap.require(toFail: doubleTap)
-
         addGestureRecognizer(singleTap)
         addGestureRecognizer(doubleTap)
     }
