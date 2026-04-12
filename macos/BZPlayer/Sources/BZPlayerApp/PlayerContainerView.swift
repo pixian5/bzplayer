@@ -1,54 +1,89 @@
-import AVKit
+import AppKit
 import SwiftUI
 
 struct PlayerContainerView: NSViewRepresentable {
     @ObservedObject var viewModel: PlayerViewModel
 
-    func makeNSView(context: Context) -> ClickablePlayerView {
-        let view = ClickablePlayerView()
-        view.player = viewModel.player
-        view.controlsStyle = .none
-        view.videoGravity = .resizeAspect
-        view.setupClickHandlingIfNeeded()
-        view.onSingleClick = {
+    func makeNSView(context: Context) -> PlayerHostView {
+        let view = PlayerHostView()
+        view.clickView.onSingleClick = {
             viewModel.togglePause()
         }
-        view.onDoubleClick = {
+        view.clickView.onDoubleClick = {
             viewModel.toggleFullscreen(in: view.window)
         }
-        view.onRequestFileInfo = {
+        view.clickView.onRequestFileInfo = {
             viewModel.showFileInfo()
         }
+        viewModel.attachPlayerView(view.playerSurfaceView)
         return view
     }
 
-    func updateNSView(_ nsView: ClickablePlayerView, context: Context) {
-        nsView.player = viewModel.player
+    func updateNSView(_ nsView: PlayerHostView, context: Context) {
+        viewModel.attachPlayerView(nsView.playerSurfaceView)
     }
 }
 
-final class ClickablePlayerView: AVPlayerView {
+final class PlayerHostView: NSView {
+    let playerSurfaceView = NSView()
+    let clickView = ClickCaptureView()
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.black.cgColor
+
+        playerSurfaceView.translatesAutoresizingMaskIntoConstraints = false
+        clickView.translatesAutoresizingMaskIntoConstraints = false
+
+        addSubview(playerSurfaceView)
+        addSubview(clickView)
+
+        NSLayoutConstraint.activate([
+            playerSurfaceView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            playerSurfaceView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            playerSurfaceView.topAnchor.constraint(equalTo: topAnchor),
+            playerSurfaceView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            clickView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            clickView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            clickView.topAnchor.constraint(equalTo: topAnchor),
+            clickView.bottomAnchor.constraint(equalTo: bottomAnchor)
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+}
+
+final class ClickCaptureView: NSView {
     var onSingleClick: (() -> Void)?
     var onDoubleClick: (() -> Void)?
     var onRequestFileInfo: (() -> Void)?
     private var pendingSingleClick: DispatchWorkItem?
-    private var didSetupClickHandling = false
 
-    func setupClickHandlingIfNeeded() {
-        guard !didSetupClickHandling else { return }
-        didSetupClickHandling = true
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
+    }
 
-        let singleTap = NSClickGestureRecognizer(target: self, action: #selector(handleSingleClickGesture))
-        singleTap.numberOfClicksRequired = 1
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
 
-        let doubleTap = NSClickGestureRecognizer(target: self, action: #selector(handleDoubleClickGesture))
-        doubleTap.numberOfClicksRequired = 2
+    override var acceptsFirstResponder: Bool {
+        true
+    }
 
-        addGestureRecognizer(singleTap)
-        addGestureRecognizer(doubleTap)
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
     }
 
     override func mouseDown(with event: NSEvent) {
+        window?.makeFirstResponder(self)
         pendingSingleClick?.cancel()
         if event.clickCount >= 2 {
             onDoubleClick?()
@@ -62,10 +97,6 @@ final class ClickablePlayerView: AVPlayerView {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: work)
     }
 
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
-        true
-    }
-
     override func menu(for event: NSEvent) -> NSMenu? {
         let menu = NSMenu(title: "菜单")
         let fileInfoItem = NSMenuItem(title: "文件信息", action: #selector(handleFileInfo), keyEquivalent: "")
@@ -77,15 +108,5 @@ final class ClickablePlayerView: AVPlayerView {
     @objc
     private func handleFileInfo() {
         onRequestFileInfo?()
-    }
-
-    @objc
-    private func handleSingleClickGesture() {
-        onSingleClick?()
-    }
-
-    @objc
-    private func handleDoubleClickGesture() {
-        onDoubleClick?()
     }
 }

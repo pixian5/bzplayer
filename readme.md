@@ -1,6 +1,6 @@
 # BZPlayer (macOS)
 
-本仓库新增了 `macos/BZPlayer` 的 SwiftUI + AVFoundation macOS 播放器实现。
+本仓库新增了 `macos/BZPlayer` 的 SwiftUI + `mpv/libmpv` macOS 播放器实现。
 
 ## 关键功能
 
@@ -8,21 +8,22 @@
 - 点击画面暂停/播放
 - 双击画面全屏，或按 `f` 切换全屏
 - 速度微调（`±0.25x`）
-- 基础音画同步状态提示
-- 音频兼容修复：当 AVFoundation 识别不到音轨但 `ffprobe` 可识别时，自动转码为 AAC（视频流直拷贝）后再播放
+- 使用 `mpv/libmpv` 作为底层播放内核，兼容性明显强于原生 AVPlayer
+- 文件信息可同时显示 AVFoundation 与 `ffprobe` 的媒体流识别结果
 
 ## 运行方式（macOS）
 
 ```bash
+brew install mpv ffmpeg
 cd macos/BZPlayer
 swift run
 ```
 
 ## 重大说明
 
-- 该播放器使用 `SwiftUI + AppKit + AVKit`，**无法在 Ubuntu 直接运行**。
+- 该播放器使用 `SwiftUI + AppKit + mpv/libmpv`，**无法在 Ubuntu 直接运行**。
 - 如需在 Ubuntu 验证，只能做静态代码检查，实际功能需在 macOS 13+ 上运行确认。
-- 兼容修复依赖本机安装 `ffprobe` / `ffmpeg`（建议 `brew install ffmpeg`）。
+- 当前开发版运行依赖本机已通过 Homebrew 安装 `mpv`；未安装时无法构建或启动。
 
 ## 自动构建与发布（GitHub Actions）
 

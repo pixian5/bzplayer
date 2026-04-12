@@ -30,6 +30,10 @@ jobs:
         with:
           xcode-version: latest-stable
 
+      - name: Install mpv
+        shell: bash
+        run: brew install mpv
+
       - name: Compute version
         id: version
         shell: bash

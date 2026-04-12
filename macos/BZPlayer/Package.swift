@@ -10,9 +10,20 @@ let package = Package(
         .executable(name: "BZPlayer", targets: ["BZPlayerApp"])
     ],
     targets: [
+        .systemLibrary(
+            name: "CMpv",
+            path: "Sources/CMpv"
+        ),
         .executableTarget(
             name: "BZPlayerApp",
-            path: "Sources/BZPlayerApp"
+            dependencies: ["CMpv"],
+            path: "Sources/BZPlayerApp",
+            linkerSettings: [
+                .unsafeFlags([
+                    "-L/opt/homebrew/lib",
+                    "-L/usr/local/lib"
+                ])
+            ]
         )
     ]
 )
