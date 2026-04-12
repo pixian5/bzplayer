@@ -15,6 +15,9 @@ struct PlayerContainerView: NSViewRepresentable {
         view.onDoubleClick = {
             viewModel.toggleFullscreen()
         }
+        view.onRequestFileInfo = {
+            viewModel.showFileInfo()
+        }
         return view
     }
 
@@ -26,13 +29,12 @@ struct PlayerContainerView: NSViewRepresentable {
 final class ClickablePlayerView: AVPlayerView {
     var onSingleClick: (() -> Void)?
     var onDoubleClick: (() -> Void)?
-
+    var onRequestFileInfo: (() -> Void)?
     private var pendingSingleClick: DispatchWorkItem?
 
     override func mouseDown(with event: NSEvent) {
         pendingSingleClick?.cancel()
-
-        if event.clickCount == 2 {
+        if event.clickCount >= 2 {
             onDoubleClick?()
             return
         }
@@ -41,6 +43,19 @@ final class ClickablePlayerView: AVPlayerView {
             self?.onSingleClick?()
         }
         pendingSingleClick = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.22, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: work)
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let menu = NSMenu(title: "菜单")
+        let fileInfoItem = NSMenuItem(title: "文件信息", action: #selector(handleFileInfo), keyEquivalent: "")
+        fileInfoItem.target = self
+        menu.addItem(fileInfoItem)
+        return menu
+    }
+
+    @objc
+    private func handleFileInfo() {
+        onRequestFileInfo?()
     }
 }
