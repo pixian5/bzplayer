@@ -1,6 +1,7 @@
 import AVFoundation
 import AppKit
 import Combine
+import CryptoKit
 import CoreServices
 import UniformTypeIdentifiers
 
@@ -15,6 +16,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
     @Published var currentIndex: Int = -1
     @Published var windowTitle = "BZPlayer"
     @Published var fileAssociationStatus = "未执行格式关联"
+    @Published var compatibilityStatus = "兼容模式：未触发"
 
     let player = AVPlayer()
     let speedCandidates: [Double] = [0.25, 0.5, 1, 1.5, 2, 4, 8, 16]
@@ -170,17 +172,46 @@ final class PlayerViewModel: NSObject, ObservableObject {
     }
 
     private func openFromPlaylist(_ url: URL) {
+        Task {
+            await openFromPlaylistAsync(url)
+        }
+    }
+
+    private func openFromPlaylistAsync(_ url: URL) async {
         saveCurrentProgress()
         currentFileURL = url
         currentIndex = playlist.firstIndex(of: url) ?? -1
         pendingResumeTime = loadSavedProgress(for: url)
         updateWindowTitle(url.lastPathComponent)
 
-        let item = AVPlayerItem(url: url)
+        let playableURL = await resolvePlayableURL(for: url)
+        let item = AVPlayerItem(url: playableURL)
         item.audioTimePitchAlgorithm = .spectral
         player.replaceCurrentItem(with: item)
         observeCurrentItem(item)
         play()
+    }
+
+    private func resolvePlayableURL(for originalURL: URL) async -> URL {
+        let avSeesAudio = await Self.hasAudioTrackInAVFoundation(originalURL)
+        if avSeesAudio {
+            compatibilityStatus = "兼容模式：系统链路正常"
+            return originalURL
+        }
+
+        let ffprobeResult = await Self.hasAudioTrackInFFprobe(originalURL)
+        guard ffprobeResult else {
+            compatibilityStatus = "兼容模式：未检测到可恢复音轨"
+            return originalURL
+        }
+
+        guard let repairedURL = await Self.transcodeAudioToAACIfNeeded(originalURL) else {
+            compatibilityStatus = "兼容模式：修复失败（缺少 FFmpeg 或转码失败）"
+            return originalURL
+        }
+
+        compatibilityStatus = "兼容模式：已转 AAC（视频直拷贝）"
+        return repairedURL
     }
 
     private func loadPlaylist(with selectedURL: URL) {
@@ -338,6 +369,104 @@ final class PlayerViewModel: NSObject, ObservableObject {
             return lines.joined(separator: "\n")
         } catch {
             return "读取媒体信息失败：\(error.localizedDescription)"
+        }
+    }
+}
+
+private extension PlayerViewModel {
+    static func hasAudioTrackInAVFoundation(_ url: URL) async -> Bool {
+        do {
+            let asset = AVURLAsset(url: url)
+            let tracks = try await asset.load(.tracks)
+            return tracks.contains { $0.mediaType == .audio }
+        } catch {
+            return false
+        }
+    }
+
+    static func hasAudioTrackInFFprobe(_ url: URL) async -> Bool {
+        guard commandExists("ffprobe") else {
+            return false
+        }
+
+        let output = runProcess(
+            executable: "/usr/bin/env",
+            arguments: [
+                "ffprobe",
+                "-v", "error",
+                "-select_streams", "a",
+                "-show_entries", "stream=codec_name",
+                "-of", "csv=p=0",
+                url.path
+            ]
+        )
+        return !output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    static func transcodeAudioToAACIfNeeded(_ sourceURL: URL) async -> URL? {
+        guard commandExists("ffmpeg") else {
+            return nil
+        }
+
+        let repairedURL = compatibleOutputURL(for: sourceURL)
+        if FileManager.default.fileExists(atPath: repairedURL.path) {
+            return repairedURL
+        }
+
+        let folder = repairedURL.deletingLastPathComponent()
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+
+        _ = runProcess(
+            executable: "/usr/bin/env",
+            arguments: [
+                "ffmpeg",
+                "-y",
+                "-i", sourceURL.path,
+                "-map", "0:v?",
+                "-map", "0:a?",
+                "-map", "0:s?",
+                "-c:v", "copy",
+                "-c:a", "aac",
+                "-b:a", "192k",
+                "-c:s", "copy",
+                repairedURL.path
+            ]
+        )
+
+        return FileManager.default.fileExists(atPath: repairedURL.path) ? repairedURL : nil
+    }
+
+    static func compatibleOutputURL(for sourceURL: URL) -> URL {
+        let hash = Insecure.MD5.hash(data: Data(sourceURL.path.utf8)).map { String(format: "%02hhx", $0) }.joined()
+        let base = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library")
+            .appendingPathComponent("Caches")
+            .appendingPathComponent("BZPlayer")
+            .appendingPathComponent("CompatibleMedia")
+        return base.appendingPathComponent("\(hash).mp4")
+    }
+
+    static func commandExists(_ command: String) -> Bool {
+        let output = runProcess(executable: "/usr/bin/env", arguments: ["which", command])
+        return !output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    static func runProcess(executable: String, arguments: [String]) -> String {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
+
+        let outputPipe = Pipe()
+        process.standardOutput = outputPipe
+        process.standardError = outputPipe
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+            let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
+            return String(data: data, encoding: .utf8) ?? ""
+        } catch {
+            return ""
         }
     }
 }

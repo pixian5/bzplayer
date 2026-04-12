@@ -9,6 +9,7 @@
 - 双击画面全屏，或按 `f` 切换全屏
 - 速度微调（`±0.25x`）
 - 基础音画同步状态提示
+- 音频兼容修复：当 AVFoundation 识别不到音轨但 `ffprobe` 可识别时，自动转码为 AAC（视频流直拷贝）后再播放
 
 ## 运行方式（macOS）
 
@@ -21,6 +22,7 @@ swift run
 
 - 该播放器使用 `SwiftUI + AppKit + AVKit`，**无法在 Ubuntu 直接运行**。
 - 如需在 Ubuntu 验证，只能做静态代码检查，实际功能需在 macOS 13+ 上运行确认。
+- 兼容修复依赖本机安装 `ffprobe` / `ffmpeg`（建议 `brew install ffmpeg`）。
 
 ## 自动构建与发布（GitHub Actions）
 

@@ -148,6 +148,8 @@ struct PlayerRootView: View {
                 .font(.system(.body, design: .monospaced))
 
             Spacer()
+            Text(viewModel.compatibilityStatus)
+                .foregroundStyle(.secondary)
             Text("双击或按f全屏，点击画面暂停/播放")
                 .foregroundStyle(.secondary)
         }
