@@ -226,6 +226,8 @@
     fasterBtn.addEventListener("click", () => setSpeed(video.playbackRate + 0.25));
 
     document.addEventListener("keydown", (event) => {
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+
       const target = event.target;
       const isTypingTarget = target instanceof HTMLElement &&
         (target.isContentEditable ||
