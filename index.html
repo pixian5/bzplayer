@@ -12,6 +12,8 @@
       --text: #e7edf7;
       --muted: #9fb0c7;
       --accent: #4f9cff;
+      --ok: #7cd992;
+      --warn: #f2c14e;
     }
     * { box-sizing: border-box; }
     body {
@@ -71,6 +73,8 @@
       width: 220px;
       accent-color: var(--accent);
     }
+    .sync-ok { color: var(--ok); }
+    .sync-warn { color: var(--warn); }
   </style>
 </head>
 <body>
@@ -83,7 +87,7 @@
       <span class="status" id="hintText">双击或按 f 全屏，点击画面暂停/播放</span>
     </div>
     <div class="video-wrap" id="videoWrap">
-      <video id="video" preload="metadata" aria-label="视频播放器" title="视频播放器"></video>
+      <video id="video" preload="metadata" playsinline aria-label="视频播放器" title="视频播放器"></video>
     </div>
     <div class="controls" id="speedControls">
       <span>速度：</span>
@@ -98,6 +102,7 @@
       <button id="slowerBtn" type="button">-0.25x</button>
       <button id="fasterBtn" type="button">+0.25x</button>
       <span id="speedLabel" class="status" style="margin-left:0;">当前：1.00x</span>
+      <span id="syncLabel" class="status sync-ok" style="margin-left:0;">音画同步：稳定</span>
     </div>
   </section>
 
@@ -108,6 +113,7 @@
     const playPauseBtn = document.getElementById("playPauseBtn");
     const speedControls = document.getElementById("speedControls");
     const speedLabel = document.getElementById("speedLabel");
+    const syncLabel = document.getElementById("syncLabel");
     const seekBar = document.getElementById("seekBar");
     const timeLabel = document.getElementById("timeLabel");
     const slowerBtn = document.getElementById("slowerBtn");
@@ -117,10 +123,16 @@
     let objectUrl = null;
     let isSeeking = false;
     let progressUpdateFrameId = 0;
+    let frameCallbackId = 0;
     let hintTimer = 0;
+    let lastMediaTime = 0;
+    let lastWallClock = 0;
+
     const MIN_SPEED = 0.25;
     const MAX_SPEED = 16;
     const SPEED_COMPARISON_EPSILON = 1e-8;
+    const SYNC_WARN_SECONDS = 0.08;
+    const SYNC_FIX_SECONDS = 0.2;
     const DEFAULT_HINT_TEXT = "双击或按 f 全屏，点击画面暂停/播放";
     const TEXT_INPUT_TYPES = ["text", "search", "email", "url", "tel", "password", "number"];
 
@@ -169,6 +181,50 @@
       progressUpdateFrameId = requestAnimationFrame(updateProgress);
     }
 
+    function syncCheck() {
+      if (video.paused || !Number.isFinite(video.currentTime)) {
+        syncLabel.textContent = "音画同步：稳定";
+        syncLabel.classList.add("sync-ok");
+        syncLabel.classList.remove("sync-warn");
+        lastMediaTime = video.currentTime || 0;
+        lastWallClock = performance.now();
+        return;
+      }
+
+      const now = performance.now();
+      if (!lastWallClock) {
+        lastMediaTime = video.currentTime;
+        lastWallClock = now;
+        return;
+      }
+
+      const expectedAdvance = ((now - lastWallClock) / 1000) * video.playbackRate;
+      const actualAdvance = video.currentTime - lastMediaTime;
+      const drift = actualAdvance - expectedAdvance;
+
+      if (Math.abs(drift) > SYNC_WARN_SECONDS) {
+        syncLabel.textContent = `音画同步：轻微偏移 ${drift > 0 ? "+" : ""}${drift.toFixed(2)}s`;
+        syncLabel.classList.add("sync-warn");
+        syncLabel.classList.remove("sync-ok");
+      } else {
+        syncLabel.textContent = "音画同步：稳定";
+        syncLabel.classList.add("sync-ok");
+        syncLabel.classList.remove("sync-warn");
+      }
+
+      if (Math.abs(drift) > SYNC_FIX_SECONDS && Number.isFinite(video.duration) && video.duration > 0) {
+        const correctedTime = Math.min(video.duration, Math.max(0, video.currentTime - drift * 0.5));
+        if (typeof video.fastSeek === "function") {
+          video.fastSeek(correctedTime);
+        } else {
+          video.currentTime = correctedTime;
+        }
+      }
+
+      lastMediaTime = video.currentTime;
+      lastWallClock = now;
+    }
+
     function togglePlayPause() {
       if (!video.src) return;
       if (video.paused) {
@@ -191,6 +247,15 @@
       }
     }
 
+    function scheduleFrameSync() {
+      if (!("requestVideoFrameCallback" in HTMLVideoElement.prototype)) return;
+      const callback = () => {
+        syncCheck();
+        frameCallbackId = video.requestVideoFrameCallback(callback);
+      };
+      frameCallbackId = video.requestVideoFrameCallback(callback);
+    }
+
     fileInput.addEventListener("change", () => {
       const file = fileInput.files?.[0];
       if (!file) return;
@@ -206,9 +271,12 @@
     video.addEventListener("dblclick", () => toggleFullscreen());
     video.addEventListener("play", updatePlayPauseText);
     video.addEventListener("pause", updatePlayPauseText);
+    video.addEventListener("ratechange", syncCheck);
+    video.addEventListener("seeking", syncCheck);
     video.addEventListener("loadedmetadata", () => {
       updatePlayPauseText();
       if (!progressUpdateFrameId) updateProgress();
+      syncCheck();
     });
 
     seekBar.addEventListener("pointerdown", () => { isSeeking = true; });
@@ -217,15 +285,23 @@
       if (!Number.isFinite(video.duration) || video.duration <= 0) return;
       const ratio = Number(seekBar.value) / 1000;
       video.currentTime = ratio * video.duration;
+      syncCheck();
     });
 
     speedControls.addEventListener("click", (event) => {
       const target = event.target.closest("[data-speed]");
       if (!target) return;
       setSpeed(Number(target.dataset.speed));
+      syncCheck();
     });
-    slowerBtn.addEventListener("click", () => setSpeed(video.playbackRate - 0.25));
-    fasterBtn.addEventListener("click", () => setSpeed(video.playbackRate + 0.25));
+    slowerBtn.addEventListener("click", () => {
+      setSpeed(video.playbackRate - 0.25);
+      syncCheck();
+    });
+    fasterBtn.addEventListener("click", () => {
+      setSpeed(video.playbackRate + 0.25);
+      syncCheck();
+    });
 
     document.addEventListener("keydown", (event) => {
       if (event.ctrlKey || event.metaKey || event.altKey) return;
@@ -240,17 +316,26 @@
           target.tagName === "SELECT");
       if (isTypingTarget) return;
 
-      if (event.key.toLowerCase() === "f") {
+      const key = event.key.toLowerCase();
+      if (key === "f") {
         event.preventDefault();
         toggleFullscreen();
+      }
+      if (key === " ") {
+        event.preventDefault();
+        togglePlayPause();
       }
     });
 
     function releaseResources() {
       if (objectUrl) URL.revokeObjectURL(objectUrl);
       if (progressUpdateFrameId) cancelAnimationFrame(progressUpdateFrameId);
+      if (frameCallbackId && typeof video.cancelVideoFrameCallback === "function") {
+        video.cancelVideoFrameCallback(frameCallbackId);
+      }
       objectUrl = null;
       progressUpdateFrameId = 0;
+      frameCallbackId = 0;
       clearTimeout(hintTimer);
       hintTimer = 0;
     }
@@ -261,6 +346,7 @@
     setSpeed(1);
     updatePlayPauseText();
     updateProgress();
+    scheduleFrameSync();
   </script>
 </body>
 </html>
