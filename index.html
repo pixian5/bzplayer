@@ -80,7 +80,7 @@
       <button id="playPauseBtn" type="button">播放</button>
       <input id="seekBar" class="seek" type="range" min="0" max="1000" value="0" step="1" />
       <span id="timeLabel">00:00 / 00:00</span>
-      <span class="status">双击或按 <b>f</b> 全屏，点击画面暂停/播放</span>
+      <span class="status" id="hintText">双击或按 <b>f</b> 全屏，点击画面暂停/播放</span>
     </div>
     <div class="video-wrap" id="videoWrap">
       <video id="video" preload="metadata"></video>
@@ -112,12 +112,15 @@
     const timeLabel = document.getElementById("timeLabel");
     const slowerBtn = document.getElementById("slowerBtn");
     const fasterBtn = document.getElementById("fasterBtn");
+    const hintText = document.getElementById("hintText");
 
     let objectUrl = null;
     let isSeeking = false;
     let rafId = 0;
+    let hintTimer = 0;
     const MIN_SPEED = 0.25;
     const MAX_SPEED = 16;
+    const DEFAULT_HINT_HTML = "双击或按 <b>f</b> 全屏，点击画面暂停/播放";
 
     video.preservesPitch = true;
     video.mozPreservesPitch = true;
@@ -148,6 +151,14 @@
       playPauseBtn.textContent = video.paused ? "播放" : "暂停";
     }
 
+    function showHint(text) {
+      hintText.textContent = text;
+      clearTimeout(hintTimer);
+      hintTimer = setTimeout(() => {
+        hintText.innerHTML = DEFAULT_HINT_HTML;
+      }, 1800);
+    }
+
     function updateProgress() {
       if (!isSeeking && Number.isFinite(video.duration) && video.duration > 0) {
         seekBar.value = String(Math.floor((video.currentTime / video.duration) * 1000));
@@ -166,10 +177,15 @@
     }
 
     async function toggleFullscreen() {
-      if (document.fullscreenElement) {
-        await document.exitFullscreen();
-      } else {
-        await videoWrap.requestFullscreen();
+      try {
+        if (document.fullscreenElement) {
+          await document.exitFullscreen();
+        } else {
+          await videoWrap.requestFullscreen();
+        }
+      } catch (error) {
+        console.warn("Fullscreen toggle failed:", error);
+        showHint("全屏切换失败，请检查浏览器权限");
       }
     }
 
@@ -185,7 +201,7 @@
 
     playPauseBtn.addEventListener("click", togglePlayPause);
     video.addEventListener("click", togglePlayPause);
-    video.addEventListener("dblclick", () => toggleFullscreen().catch(() => {}));
+    video.addEventListener("dblclick", () => toggleFullscreen());
     video.addEventListener("play", updatePlayPauseText);
     video.addEventListener("pause", updatePlayPauseText);
     video.addEventListener("loadedmetadata", () => {
@@ -210,16 +226,30 @@
     fasterBtn.addEventListener("click", () => setSpeed(video.playbackRate + 0.25));
 
     document.addEventListener("keydown", (event) => {
+      const target = event.target;
+      const isTypingTarget = target instanceof HTMLElement &&
+        (target.isContentEditable ||
+          target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT");
+      if (isTypingTarget) return;
+
       if (event.key.toLowerCase() === "f") {
         event.preventDefault();
-        toggleFullscreen().catch(() => {});
+        toggleFullscreen();
       }
     });
 
-    window.addEventListener("beforeunload", () => {
+    function releaseResources() {
       if (objectUrl) URL.revokeObjectURL(objectUrl);
       cancelAnimationFrame(rafId);
-    });
+      objectUrl = null;
+      rafId = 0;
+      clearTimeout(hintTimer);
+    }
+
+    window.addEventListener("beforeunload", releaseResources);
+    window.addEventListener("pagehide", releaseResources);
 
     setSpeed(1);
     updatePlayPauseText();
