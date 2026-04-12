@@ -25,7 +25,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
     private var statusObserver: NSKeyValueObservation?
     private var itemObserver: NSKeyValueObservation?
 
-    init() {
+    override init() {
         super.init()
         player.automaticallyWaitsToMinimizeStalling = true
         attachPeriodicObserver()
@@ -138,15 +138,17 @@ final class PlayerViewModel: NSObject, ObservableObject {
 
     private func attachPeriodicObserver() {
         observer = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.05, preferredTimescale: 600), queue: .main) { [weak self] time in
-            guard let self else { return }
-            self.currentTime = time.seconds.isFinite ? time.seconds : 0
-            if let itemDuration = self.player.currentItem?.duration.seconds, itemDuration.isFinite {
-                self.duration = itemDuration
+            Task { @MainActor in
+                guard let self else { return }
+                self.currentTime = time.seconds.isFinite ? time.seconds : 0
+                if let itemDuration = self.player.currentItem?.duration.seconds, itemDuration.isFinite {
+                    self.duration = itemDuration
+                }
+                if Int(self.currentTime * 10) % 30 == 0 {
+                    self.saveCurrentProgress()
+                }
+                self.updateSyncStatus()
             }
-            if Int(self.currentTime * 10) % 30 == 0 {
-                self.saveCurrentProgress()
-            }
-            self.updateSyncStatus()
         }
     }
 
@@ -307,7 +309,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
                 lines.append("")
                 lines.append("【音频】")
                 lines.append("码率：\(formatBitrate(estimatedBitRate))")
-                if let formatDesc = audioTrack.formatDescriptions.first as? CMAudioFormatDescription,
+                if let formatDesc = audioTrack.formatDescriptions.first.map({ $0 as! CMFormatDescription }),
                    let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(formatDesc)?.pointee {
                     lines.append("采样率：\(Int(asbd.mSampleRate)) Hz")
                     lines.append("声道数：\(asbd.mChannelsPerFrame)")
