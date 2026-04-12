@@ -5,23 +5,50 @@ struct PlayerRootView: View {
     @EnvironmentObject private var viewModel: PlayerViewModel
     @State private var seekValue: Double = 0
     @State private var eventMonitor: Any?
+    @State private var mouseMoveMonitor: Any?
+    @State private var mouseDownMonitor: Any?
     @State private var shouldShowPlaylist = false
+    @State private var isControlsVisible = true
+    @State private var hideControlsTask: DispatchWorkItem?
 
     var body: some View {
         VStack(spacing: 0) {
-            topBar
+            if isControlsVisible {
+                topBar
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
             playerArea
-            controlBar
+            if isControlsVisible {
+                controlBar
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
         }
+        .animation(.easeInOut(duration: 0.2), value: isControlsVisible)
         .onAppear {
             eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
                 handleKey(event)
             }
+            mouseMoveMonitor = NSEvent.addLocalMonitorForEvents(matching: .mouseMoved) { event in
+                revealControlsAndScheduleHide()
+                return event
+            }
+            mouseDownMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { event in
+                revealControlsAndScheduleHide()
+                return event
+            }
+            revealControlsAndScheduleHide()
         }
         .onDisappear {
             if let eventMonitor {
                 NSEvent.removeMonitor(eventMonitor)
             }
+            if let mouseMoveMonitor {
+                NSEvent.removeMonitor(mouseMoveMonitor)
+            }
+            if let mouseDownMonitor {
+                NSEvent.removeMonitor(mouseDownMonitor)
+            }
+            hideControlsTask?.cancel()
         }
         .onReceive(viewModel.$currentTime) { current in
             guard viewModel.duration > 0 else {
@@ -43,6 +70,7 @@ struct PlayerRootView: View {
                     .onContinuousHover { phase in
                         switch phase {
                         case .active(let location):
+                            revealControlsAndScheduleHide()
                             shouldShowPlaylist = location.x >= proxy.size.width - 36
                         case .ended:
                             shouldShowPlaylist = false
@@ -101,12 +129,14 @@ struct PlayerRootView: View {
     private var topBar: some View {
         HStack(spacing: 12) {
             Button("打开文件") {
+                revealControlsAndScheduleHide()
                 viewModel.openFile()
             }
 
             Slider(value: Binding(
                 get: { seekValue },
                 set: { newValue in
+                    revealControlsAndScheduleHide()
                     seekValue = newValue
                     viewModel.seek(to: newValue)
                 }
@@ -129,6 +159,7 @@ struct PlayerRootView: View {
             Text("速度：")
             ForEach(viewModel.speedCandidates, id: \.self) { speed in
                 Button("\(speed, specifier: "%g")x") {
+                    revealControlsAndScheduleHide()
                     viewModel.setSpeed(speed)
                 }
                 .buttonStyle(.bordered)
@@ -136,9 +167,11 @@ struct PlayerRootView: View {
             }
 
             Button("-0.25x") {
+                revealControlsAndScheduleHide()
                 viewModel.adjustSpeed(by: -0.25)
             }
             Button("+0.25x") {
+                revealControlsAndScheduleHide()
                 viewModel.adjustSpeed(by: 0.25)
             }
 
@@ -152,6 +185,7 @@ struct PlayerRootView: View {
     }
 
     private func handleKey(_ event: NSEvent) -> NSEvent? {
+        revealControlsAndScheduleHide()
         guard !event.modifierFlags.contains(.command),
               !event.modifierFlags.contains(.control),
               !event.modifierFlags.contains(.option) else {
@@ -180,5 +214,18 @@ struct PlayerRootView: View {
             return String(format: "%d:%02d:%02d", h, m, s)
         }
         return String(format: "%02d:%02d", m, s)
+    }
+
+    private func revealControlsAndScheduleHide() {
+        isControlsVisible = true
+        hideControlsTask?.cancel()
+        let task = DispatchWorkItem {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                isControlsVisible = false
+                shouldShowPlaylist = false
+            }
+        }
+        hideControlsTask = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: task)
     }
 }
