@@ -80,10 +80,10 @@
       <button id="playPauseBtn" type="button">播放</button>
       <input id="seekBar" class="seek" type="range" min="0" max="1000" value="0" step="1" />
       <span id="timeLabel">00:00 / 00:00</span>
-      <span class="status" id="hintText">双击或按 <b>f</b> 全屏，点击画面暂停/播放</span>
+      <span class="status" id="hintText">双击或按 f 全屏，点击画面暂停/播放</span>
     </div>
     <div class="video-wrap" id="videoWrap">
-      <video id="video" preload="metadata"></video>
+      <video id="video" preload="metadata" aria-label="视频播放器" title="视频播放器"></video>
     </div>
     <div class="controls" id="speedControls">
       <span>速度：</span>
@@ -120,7 +120,7 @@
     let hintTimer = 0;
     const MIN_SPEED = 0.25;
     const MAX_SPEED = 16;
-    const DEFAULT_HINT_HTML = "双击或按 <b>f</b> 全屏，点击画面暂停/播放";
+    const DEFAULT_HINT_TEXT = "双击或按 f 全屏，点击画面暂停/播放";
 
     video.preservesPitch = true;
     video.mozPreservesPitch = true;
@@ -135,7 +135,7 @@
       video.playbackRate = speed;
       speedLabel.textContent = `当前：${speed.toFixed(2)}x`;
       speedControls.querySelectorAll("[data-speed]").forEach((btn) => {
-        btn.classList.toggle("active", Number(btn.dataset.speed) === speed);
+        btn.classList.toggle("active", Math.abs(Number(btn.dataset.speed) - speed) < 1e-8);
       });
     }
 
@@ -155,7 +155,7 @@
       hintText.textContent = text;
       clearTimeout(hintTimer);
       hintTimer = setTimeout(() => {
-        hintText.innerHTML = DEFAULT_HINT_HTML;
+        hintText.textContent = DEFAULT_HINT_TEXT;
       }, 1800);
     }
 
@@ -229,9 +229,11 @@
       if (event.ctrlKey || event.metaKey || event.altKey) return;
 
       const target = event.target;
+      const isTextInput = target instanceof HTMLInputElement &&
+        ["text", "search", "email", "url", "tel", "password", "number"].includes(target.type);
       const isTypingTarget = target instanceof HTMLElement &&
         (target.isContentEditable ||
-          target.tagName === "INPUT" ||
+          isTextInput ||
           target.tagName === "TEXTAREA" ||
           target.tagName === "SELECT");
       if (isTypingTarget) return;
