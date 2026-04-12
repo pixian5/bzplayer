@@ -144,7 +144,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
     }
 
     @objc
-    private func handleWillTerminate() {
+    private func handleWillTerminate(_ notification: Notification) {
         saveCurrentProgress()
         detachPeriodicObserverIfNeeded()
     }
