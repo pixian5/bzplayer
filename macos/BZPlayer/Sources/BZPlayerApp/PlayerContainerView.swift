@@ -9,11 +9,12 @@ struct PlayerContainerView: NSViewRepresentable {
         view.player = viewModel.player
         view.controlsStyle = .none
         view.videoGravity = .resizeAspect
+        view.setupClickHandlingIfNeeded()
         view.onSingleClick = {
             viewModel.togglePause()
         }
         view.onDoubleClick = {
-            viewModel.toggleFullscreen()
+            viewModel.toggleFullscreen(in: view.window)
         }
         view.onRequestFileInfo = {
             viewModel.showFileInfo()
@@ -31,6 +32,23 @@ final class ClickablePlayerView: AVPlayerView {
     var onDoubleClick: (() -> Void)?
     var onRequestFileInfo: (() -> Void)?
     private var pendingSingleClick: DispatchWorkItem?
+    private var didSetupClickHandling = false
+
+    func setupClickHandlingIfNeeded() {
+        guard !didSetupClickHandling else { return }
+        didSetupClickHandling = true
+
+        let singleTap = NSClickGestureRecognizer(target: self, action: #selector(handleSingleClickGesture))
+        singleTap.numberOfClicksRequired = 1
+
+        let doubleTap = NSClickGestureRecognizer(target: self, action: #selector(handleDoubleClickGesture))
+        doubleTap.numberOfClicksRequired = 2
+
+        singleTap.require(toFail: doubleTap)
+
+        addGestureRecognizer(singleTap)
+        addGestureRecognizer(doubleTap)
+    }
 
     override func mouseDown(with event: NSEvent) {
         pendingSingleClick?.cancel()
@@ -46,6 +64,10 @@ final class ClickablePlayerView: AVPlayerView {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: work)
     }
 
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
+    }
+
     override func menu(for event: NSEvent) -> NSMenu? {
         let menu = NSMenu(title: "菜单")
         let fileInfoItem = NSMenuItem(title: "文件信息", action: #selector(handleFileInfo), keyEquivalent: "")
@@ -57,5 +79,15 @@ final class ClickablePlayerView: AVPlayerView {
     @objc
     private func handleFileInfo() {
         onRequestFileInfo?()
+    }
+
+    @objc
+    private func handleSingleClickGesture() {
+        onSingleClick?()
+    }
+
+    @objc
+    private func handleDoubleClickGesture() {
+        onDoubleClick?()
     }
 }

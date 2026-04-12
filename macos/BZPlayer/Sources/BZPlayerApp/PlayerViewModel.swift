@@ -86,8 +86,9 @@ final class PlayerViewModel: NSObject, ObservableObject {
         setSpeed((speed + delta).rounded(toPlaces: 2))
     }
 
-    func toggleFullscreen() {
-        NSApp.keyWindow?.toggleFullScreen(nil)
+    func toggleFullscreen(in window: NSWindow? = nil) {
+        let targetWindow = window ?? NSApp.mainWindow ?? NSApp.keyWindow ?? NSApp.windows.first
+        targetWindow?.toggleFullScreen(nil)
     }
 
     func showFileInfo() {
@@ -282,7 +283,10 @@ final class PlayerViewModel: NSObject, ObservableObject {
                 lines.append("时长：\(formatDuration(durationSeconds)) (\(String(format: "%.2f", durationSeconds)) 秒)")
             }
 
-            if let videoTrack = tracks.first(where: { $0.mediaType == .video }) {
+            let videoTracks = tracks.filter { $0.mediaType == .video }
+            lines.append("")
+            lines.append("视频轨道：\(videoTracks.count)")
+            for (index, videoTrack) in videoTracks.enumerated() {
                 let size = try await videoTrack.load(.naturalSize)
                 let transform = try await videoTrack.load(.preferredTransform)
                 let fps = try await videoTrack.load(.nominalFrameRate)
@@ -293,32 +297,41 @@ final class PlayerViewModel: NSObject, ObservableObject {
                 let height = abs(Int(transformed.height.rounded()))
 
                 lines.append("")
-                lines.append("【视频】")
+                lines.append("【视频 #\(index + 1)】")
                 lines.append("分辨率：\(width)x\(height)")
                 lines.append("帧率：\(String(format: "%.3f", fps)) fps")
                 lines.append("码率：\(formatBitrate(estimatedBitRate))")
-                if let codec = videoTrack.formatDescriptions.first
-                    .map({ CMFormatDescriptionGetMediaSubType($0 as! CMFormatDescription) })
-                    .map({ fourCCString($0) }) {
-                    lines.append("编码：\(codec)")
+                lines.append("编码：\(codecDescription(from: videoTrack.formatDescriptions.first, mediaType: "视频"))")
+                let extendedLanguage = try await videoTrack.load(.extendedLanguageTag)
+                if let extendedLanguage, !extendedLanguage.isEmpty {
+                    lines.append("语言：\(extendedLanguage)")
                 }
             }
 
-            if let audioTrack = tracks.first(where: { $0.mediaType == .audio }) {
+            let audioTracks = tracks.filter { $0.mediaType == .audio }
+            lines.append("")
+            lines.append("音频轨道：\(audioTracks.count)")
+            if audioTracks.isEmpty {
+                lines.append("⚠️ 未检测到音频轨道，这个文件可能是无声视频。")
+            }
+
+            for (index, audioTrack) in audioTracks.enumerated() {
                 let estimatedBitRate = try await audioTrack.load(.estimatedDataRate)
                 lines.append("")
-                lines.append("【音频】")
+                lines.append("【音频 #\(index + 1)】")
                 lines.append("码率：\(formatBitrate(estimatedBitRate))")
-                if let formatDesc = audioTrack.formatDescriptions.first.map({ $0 as! CMFormatDescription }),
+
+                if let formatDesc = audioTrack.formatDescriptions.first as? CMAudioFormatDescription,
                    let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(formatDesc)?.pointee {
                     lines.append("采样率：\(Int(asbd.mSampleRate)) Hz")
                     lines.append("声道数：\(asbd.mChannelsPerFrame)")
                     lines.append("位深：\(asbd.mBitsPerChannel) bit")
                 }
-                if let codec = audioTrack.formatDescriptions.first
-                    .map({ CMFormatDescriptionGetMediaSubType($0 as! CMFormatDescription) })
-                    .map({ fourCCString($0) }) {
-                    lines.append("编码：\(codec)")
+
+                lines.append("编码：\(codecDescription(from: audioTrack.formatDescriptions.first, mediaType: "音频"))")
+                let extendedLanguage = try await audioTrack.load(.extendedLanguageTag)
+                if let extendedLanguage, !extendedLanguage.isEmpty {
+                    lines.append("语言：\(extendedLanguage)")
                 }
             }
 
@@ -369,4 +382,12 @@ private func fourCCString(_ code: FourCharCode) -> String {
     let c4 = Character(UnicodeScalar(n & 255)!)
     let text = String([c1, c2, c3, c4])
     return text.trimmingCharacters(in: .controlCharacters).isEmpty ? "\(code)" : text
+}
+
+private func codecDescription(from formatDescription: Any?, mediaType: String) -> String {
+    guard let formatDescription = formatDescription as? CMFormatDescription else {
+        return "未知（\(mediaType)格式描述不可用）"
+    }
+    let subtype = CMFormatDescriptionGetMediaSubType(formatDescription)
+    return "\(fourCCString(subtype)) (\(subtype))"
 }
