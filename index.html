@@ -116,11 +116,13 @@
 
     let objectUrl = null;
     let isSeeking = false;
-    let rafId = 0;
+    let progressUpdateFrameId = 0;
     let hintTimer = 0;
     const MIN_SPEED = 0.25;
     const MAX_SPEED = 16;
+    const SPEED_COMPARISON_EPSILON = 1e-8;
     const DEFAULT_HINT_TEXT = "双击或按 f 全屏，点击画面暂停/播放";
+    const TEXT_INPUT_TYPES = ["text", "search", "email", "url", "tel", "password", "number"];
 
     video.preservesPitch = true;
     video.mozPreservesPitch = true;
@@ -135,7 +137,7 @@
       video.playbackRate = speed;
       speedLabel.textContent = `当前：${speed.toFixed(2)}x`;
       speedControls.querySelectorAll("[data-speed]").forEach((btn) => {
-        btn.classList.toggle("active", Math.abs(Number(btn.dataset.speed) - speed) < 1e-8);
+        btn.classList.toggle("active", Math.abs(Number(btn.dataset.speed) - speed) < SPEED_COMPARISON_EPSILON);
       });
     }
 
@@ -164,7 +166,7 @@
         seekBar.value = String(Math.floor((video.currentTime / video.duration) * 1000));
       }
       timeLabel.textContent = `${formatTime(video.currentTime)} / ${formatTime(video.duration)}`;
-      rafId = requestAnimationFrame(updateProgress);
+      progressUpdateFrameId = requestAnimationFrame(updateProgress);
     }
 
     function togglePlayPause() {
@@ -206,7 +208,7 @@
     video.addEventListener("pause", updatePlayPauseText);
     video.addEventListener("loadedmetadata", () => {
       updatePlayPauseText();
-      if (!rafId) updateProgress();
+      if (!progressUpdateFrameId) updateProgress();
     });
 
     seekBar.addEventListener("pointerdown", () => { isSeeking = true; });
@@ -230,7 +232,7 @@
 
       const target = event.target;
       const isTextInput = target instanceof HTMLInputElement &&
-        ["text", "search", "email", "url", "tel", "password", "number"].includes(target.type);
+        TEXT_INPUT_TYPES.includes(target.type);
       const isTypingTarget = target instanceof HTMLElement &&
         (target.isContentEditable ||
           isTextInput ||
@@ -246,10 +248,11 @@
 
     function releaseResources() {
       if (objectUrl) URL.revokeObjectURL(objectUrl);
-      if (rafId) cancelAnimationFrame(rafId);
+      if (progressUpdateFrameId) cancelAnimationFrame(progressUpdateFrameId);
       objectUrl = null;
-      rafId = 0;
+      progressUpdateFrameId = 0;
       clearTimeout(hintTimer);
+      hintTimer = 0;
     }
 
     window.addEventListener("beforeunload", releaseResources);
