@@ -1,9 +1,11 @@
 import AVFoundation
 import AppKit
 import Combine
+import CoreServices
+import UniformTypeIdentifiers
 
 @MainActor
-final class PlayerViewModel: ObservableObject {
+final class PlayerViewModel: NSObject, ObservableObject {
     @Published var isPaused = true
     @Published var speed: Double = 1.0
     @Published var currentTime: Double = 0
@@ -12,6 +14,7 @@ final class PlayerViewModel: ObservableObject {
     @Published var playlist: [URL] = []
     @Published var currentIndex: Int = -1
     @Published var windowTitle = "BZPlayer"
+    @Published var fileAssociationStatus = "未执行格式关联"
 
     let player = AVPlayer()
     let speedCandidates: [Double] = [0.25, 0.5, 1, 1.5, 2, 4, 8, 16]
@@ -23,21 +26,15 @@ final class PlayerViewModel: ObservableObject {
     private var itemObserver: NSKeyValueObservation?
 
     init() {
+        super.init()
         player.automaticallyWaitsToMinimizeStalling = true
         attachPeriodicObserver()
         NotificationCenter.default.addObserver(
-            forName: NSApplication.willTerminateNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            self?.saveCurrentProgress()
-        }
-    }
-
-    deinit {
-        if let observer {
-            player.removeTimeObserver(observer)
-        }
+            self,
+            selector: #selector(handleWillTerminate),
+            name: NSApplication.willTerminateNotification,
+            object: nil
+        )
     }
 
     func openFile() {
@@ -105,6 +102,51 @@ final class PlayerViewModel: ObservableObject {
                 self.showAlert(title: "文件信息", message: text)
             }
         }
+    }
+
+
+    func associateCommonVideoFormats() {
+        let bundleID = (Bundle.main.bundleIdentifier ?? "tech.sbbz.bzplayer") as CFString
+        let commonExtensions = [
+            "mp4", "m4v", "mov", "mkv", "avi", "wmv", "flv", "webm", "ts", "mpeg", "mpg"
+        ]
+
+        var associated: [String] = []
+        var failed: [String] = []
+
+        for ext in commonExtensions {
+            guard let type = UTType(filenameExtension: ext) else {
+                failed.append(ext)
+                continue
+            }
+            let status = LSSetDefaultRoleHandlerForContentType(type.identifier as CFString, .viewer, bundleID)
+            if status == noErr {
+                associated.append(ext)
+            } else {
+                failed.append(ext)
+            }
+        }
+
+        if failed.isEmpty {
+            fileAssociationStatus = "已关联：\(associated.joined(separator: ", "))"
+        } else if associated.isEmpty {
+            fileAssociationStatus = "关联失败：\(failed.joined(separator: ", "))"
+        } else {
+            fileAssociationStatus = "部分成功，已关联：\(associated.joined(separator: ", "))；失败：\(failed.joined(separator: ", "))"
+        }
+    }
+
+    private func detachPeriodicObserverIfNeeded() {
+        if let observer {
+            player.removeTimeObserver(observer)
+            self.observer = nil
+        }
+    }
+
+    @objc
+    private func handleWillTerminate() {
+        saveCurrentProgress()
+        detachPeriodicObserverIfNeeded()
     }
 
     private func attachPeriodicObserver() {
