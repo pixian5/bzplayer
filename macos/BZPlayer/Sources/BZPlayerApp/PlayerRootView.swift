@@ -5,12 +5,12 @@ struct PlayerRootView: View {
     @EnvironmentObject private var viewModel: PlayerViewModel
     @State private var seekValue: Double = 0
     @State private var eventMonitor: Any?
+    @State private var shouldShowPlaylist = false
 
     var body: some View {
         VStack(spacing: 0) {
             topBar
-            PlayerContainerView(viewModel: viewModel)
-                .background(Color.black)
+            playerArea
             controlBar
         }
         .onAppear {
@@ -30,16 +30,78 @@ struct PlayerRootView: View {
             }
             seekValue = current / viewModel.duration
         }
+        .onReceive(viewModel.$windowTitle) { title in
+            NSApp.keyWindow?.title = title
+        }
+    }
+
+    private var playerArea: some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .trailing) {
+                PlayerContainerView(viewModel: viewModel)
+                    .background(Color.black)
+                    .onContinuousHover { phase in
+                        switch phase {
+                        case .active(let location):
+                            shouldShowPlaylist = location.x >= proxy.size.width - 36
+                        case .ended:
+                            shouldShowPlaylist = false
+                        }
+                    }
+
+                if shouldShowPlaylist && !viewModel.playlist.isEmpty {
+                    playlistPanel
+                        .padding(.trailing, 8)
+                        .transition(.move(edge: .trailing).combined(with: .opacity))
+                }
+            }
+            .animation(.easeInOut(duration: 0.15), value: shouldShowPlaylist)
+        }
+    }
+
+    private var playlistPanel: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("播放列表")
+                .font(.headline)
+                .foregroundStyle(.white)
+
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 4) {
+                    ForEach(Array(viewModel.playlist.enumerated()), id: \.offset) { index, url in
+                        Button {
+                            viewModel.selectPlaylistItem(index)
+                        } label: {
+                            HStack {
+                                Text(url.lastPathComponent)
+                                    .lineLimit(1)
+                                Spacer()
+                                if index == viewModel.currentIndex {
+                                    Image(systemName: "play.fill")
+                                }
+                            }
+                            .font(.system(size: 13))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 6)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(index == viewModel.currentIndex ? Color.blue.opacity(0.35) : Color.clear)
+                            .cornerRadius(6)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.white)
+                    }
+                }
+            }
+        }
+        .padding(10)
+        .frame(width: 300, maxHeight: .infinity, alignment: .top)
+        .background(Color.black.opacity(0.72))
+        .cornerRadius(10)
     }
 
     private var topBar: some View {
         HStack(spacing: 12) {
             Button("打开文件") {
                 viewModel.openFile()
-            }
-
-            Button(viewModel.isPaused ? "播放" : "暂停") {
-                viewModel.togglePause()
             }
 
             Slider(value: Binding(
@@ -55,7 +117,7 @@ struct PlayerRootView: View {
                 .font(.system(.body, design: .monospaced))
 
             Spacer()
-            Text("双击或按 f 全屏，点击画面暂停/播放")
+            Text("双击或按f全屏，点击画面暂停/播放")
                 .foregroundStyle(.secondary)
         }
         .padding(12)
