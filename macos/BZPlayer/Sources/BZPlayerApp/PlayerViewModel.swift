@@ -31,7 +31,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         attachPeriodicObserver()
         NotificationCenter.default.addObserver(
             self,
-            selector: #selector(handleWillTerminate),
+            selector: #selector(handleWillTerminate(_:)),
             name: NSApplication.willTerminateNotification,
             object: nil
         )
@@ -144,7 +144,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
     }
 
     @objc
-    private func handleWillTerminate() {
+    private func handleWillTerminate(_ notification: Notification) {
         saveCurrentProgress()
         detachPeriodicObserverIfNeeded()
     }
