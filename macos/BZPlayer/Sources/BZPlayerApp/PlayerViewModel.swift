@@ -5,7 +5,7 @@ import CoreServices
 import UniformTypeIdentifiers
 
 @MainActor
-final class PlayerViewModel: ObservableObject {
+final class PlayerViewModel: NSObject, ObservableObject {
     @Published var isPaused = true
     @Published var speed: Double = 1.0
     @Published var currentTime: Double = 0
@@ -26,16 +26,15 @@ final class PlayerViewModel: ObservableObject {
     private var itemObserver: NSKeyValueObservation?
 
     init() {
+        super.init()
         player.automaticallyWaitsToMinimizeStalling = true
         attachPeriodicObserver()
         NotificationCenter.default.addObserver(
-            forName: NSApplication.willTerminateNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            self?.saveCurrentProgress()
-            self?.detachPeriodicObserverIfNeeded()
-        }
+            self,
+            selector: #selector(handleWillTerminate),
+            name: NSApplication.willTerminateNotification,
+            object: nil
+        )
     }
 
     func openFile() {
@@ -142,6 +141,12 @@ final class PlayerViewModel: ObservableObject {
             player.removeTimeObserver(observer)
             self.observer = nil
         }
+    }
+
+    @objc
+    private func handleWillTerminate() {
+        saveCurrentProgress()
+        detachPeriodicObserverIfNeeded()
     }
 
     private func attachPeriodicObserver() {

@@ -77,7 +77,18 @@ jobs:
         shell: bash
         run: |
           mkdir -p release
-          hdiutil create -volname "BZPlayer" -srcfolder "dist/BZPlayer.app" -ov -format UDZO "release/BZPlayer-${{ steps.version.outputs.tag }}.dmg"
+          DMG_STAGING="dist/dmg"
+          rm -rf "${DMG_STAGING}"
+          mkdir -p "${DMG_STAGING}"
+          cp -R "dist/BZPlayer.app" "${DMG_STAGING}/BZPlayer.app"
+          ln -s /Applications "${DMG_STAGING}/Applications"
+
+          hdiutil create \
+            -volname "BZPlayer" \
+            -srcfolder "${DMG_STAGING}" \
+            -ov \
+            -format UDZO \
+            "release/BZPlayer-${{ steps.version.outputs.tag }}.dmg"
 
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
