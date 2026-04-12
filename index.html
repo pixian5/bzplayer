@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BZPlayer</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b0f14;
+      --panel: #141b24;
+      --text: #e7edf7;
+      --muted: #9fb0c7;
+      --accent: #4f9cff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    .player {
+      width: min(1100px, 96vw);
+      background: var(--panel);
+      border: 1px solid #273140;
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .video-wrap {
+      position: relative;
+      background: #000;
+      aspect-ratio: 16 / 9;
+    }
+    video {
+      width: 100%;
+      height: 100%;
+      display: block;
+      background: #000;
+      cursor: pointer;
+      user-select: none;
+    }
+    .topbar, .controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 12px;
+      flex-wrap: wrap;
+    }
+    .topbar { border-bottom: 1px solid #273140; }
+    .controls { border-top: 1px solid #273140; }
+    button, input[type="file"]::file-selector-button {
+      border: 1px solid #324055;
+      background: #1a2432;
+      color: var(--text);
+      border-radius: 8px;
+      padding: 6px 10px;
+      cursor: pointer;
+    }
+    button.active {
+      border-color: var(--accent);
+      color: #fff;
+      background: #1f3c68;
+    }
+    button:hover { border-color: #4b5f7a; }
+    .status { color: var(--muted); font-size: 13px; margin-left: auto; }
+    .seek {
+      width: 220px;
+      accent-color: var(--accent);
+    }
+  </style>
+</head>
+<body>
+  <section class="player">
+    <div class="topbar">
+      <input id="fileInput" type="file" accept="video/*,audio/*" />
+      <button id="playPauseBtn" type="button">播放</button>
+      <input id="seekBar" class="seek" type="range" min="0" max="1000" value="0" step="1" />
+      <span id="timeLabel">00:00 / 00:00</span>
+      <span class="status">双击或按 <b>f</b> 全屏，点击画面暂停/播放</span>
+    </div>
+    <div class="video-wrap" id="videoWrap">
+      <video id="video" preload="metadata"></video>
+    </div>
+    <div class="controls" id="speedControls">
+      <span>速度：</span>
+      <button type="button" data-speed="0.25">0.25x</button>
+      <button type="button" data-speed="0.5">0.5x</button>
+      <button type="button" data-speed="1" class="active">1x</button>
+      <button type="button" data-speed="1.5">1.5x</button>
+      <button type="button" data-speed="2">2x</button>
+      <button type="button" data-speed="4">4x</button>
+      <button type="button" data-speed="8">8x</button>
+      <button type="button" data-speed="16">16x</button>
+      <button id="slowerBtn" type="button">-0.25x</button>
+      <button id="fasterBtn" type="button">+0.25x</button>
+      <span id="speedLabel" class="status" style="margin-left:0;">当前：1.00x</span>
+    </div>
+  </section>
+
+  <script>
+    const video = document.getElementById("video");
+    const videoWrap = document.getElementById("videoWrap");
+    const fileInput = document.getElementById("fileInput");
+    const playPauseBtn = document.getElementById("playPauseBtn");
+    const speedControls = document.getElementById("speedControls");
+    const speedLabel = document.getElementById("speedLabel");
+    const seekBar = document.getElementById("seekBar");
+    const timeLabel = document.getElementById("timeLabel");
+    const slowerBtn = document.getElementById("slowerBtn");
+    const fasterBtn = document.getElementById("fasterBtn");
+
+    let objectUrl = null;
+    let isSeeking = false;
+    let rafId = 0;
+    const MIN_SPEED = 0.25;
+    const MAX_SPEED = 16;
+
+    video.preservesPitch = true;
+    video.mozPreservesPitch = true;
+    video.webkitPreservesPitch = true;
+
+    function clampSpeed(v) {
+      return Math.min(MAX_SPEED, Math.max(MIN_SPEED, v));
+    }
+
+    function setSpeed(v) {
+      const speed = clampSpeed(v);
+      video.playbackRate = speed;
+      speedLabel.textContent = `当前：${speed.toFixed(2)}x`;
+      speedControls.querySelectorAll("[data-speed]").forEach((btn) => {
+        btn.classList.toggle("active", Number(btn.dataset.speed) === speed);
+      });
+    }
+
+    function formatTime(seconds) {
+      if (!Number.isFinite(seconds) || seconds < 0) return "00:00";
+      const s = Math.floor(seconds % 60).toString().padStart(2, "0");
+      const m = Math.floor((seconds / 60) % 60).toString().padStart(2, "0");
+      const h = Math.floor(seconds / 3600);
+      return h > 0 ? `${h}:${m}:${s}` : `${m}:${s}`;
+    }
+
+    function updatePlayPauseText() {
+      playPauseBtn.textContent = video.paused ? "播放" : "暂停";
+    }
+
+    function updateProgress() {
+      if (!isSeeking && Number.isFinite(video.duration) && video.duration > 0) {
+        seekBar.value = String(Math.floor((video.currentTime / video.duration) * 1000));
+      }
+      timeLabel.textContent = `${formatTime(video.currentTime)} / ${formatTime(video.duration)}`;
+      rafId = requestAnimationFrame(updateProgress);
+    }
+
+    function togglePlayPause() {
+      if (!video.src) return;
+      if (video.paused) {
+        video.play().catch(() => {});
+      } else {
+        video.pause();
+      }
+    }
+
+    async function toggleFullscreen() {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+      } else {
+        await videoWrap.requestFullscreen();
+      }
+    }
+
+    fileInput.addEventListener("change", () => {
+      const file = fileInput.files?.[0];
+      if (!file) return;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      objectUrl = URL.createObjectURL(file);
+      video.src = objectUrl;
+      video.load();
+      video.play().catch(() => {});
+    });
+
+    playPauseBtn.addEventListener("click", togglePlayPause);
+    video.addEventListener("click", togglePlayPause);
+    video.addEventListener("dblclick", () => toggleFullscreen().catch(() => {}));
+    video.addEventListener("play", updatePlayPauseText);
+    video.addEventListener("pause", updatePlayPauseText);
+    video.addEventListener("loadedmetadata", () => {
+      updatePlayPauseText();
+      if (!rafId) updateProgress();
+    });
+
+    seekBar.addEventListener("pointerdown", () => { isSeeking = true; });
+    seekBar.addEventListener("pointerup", () => { isSeeking = false; });
+    seekBar.addEventListener("input", () => {
+      if (!Number.isFinite(video.duration) || video.duration <= 0) return;
+      const ratio = Number(seekBar.value) / 1000;
+      video.currentTime = ratio * video.duration;
+    });
+
+    speedControls.addEventListener("click", (event) => {
+      const target = event.target.closest("[data-speed]");
+      if (!target) return;
+      setSpeed(Number(target.dataset.speed));
+    });
+    slowerBtn.addEventListener("click", () => setSpeed(video.playbackRate - 0.25));
+    fasterBtn.addEventListener("click", () => setSpeed(video.playbackRate + 0.25));
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        toggleFullscreen().catch(() => {});
+      }
+    });
+
+    window.addEventListener("beforeunload", () => {
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      cancelAnimationFrame(rafId);
+    });
+
+    setSpeed(1);
+    updatePlayPauseText();
+    updateProgress();
+  </script>
+</body>
+</html>
