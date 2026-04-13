@@ -94,7 +94,7 @@ final class MpvPlayer: NSObject {
         mpv_set_option_string(handle, "vo", "libmpv")
         mpv_set_option_string(handle, "framedrop", "vo")
         mpv_set_option_string(handle, "video-latency-hacks", "yes")
-        mpv_set_option_string(handle, "audio-pitch-correction", "no")
+        mpv_set_option_string(handle, "audio-pitch-correction", "yes")
 
         let result = mpv_initialize(handle)
         guard result >= 0 else {
@@ -231,7 +231,11 @@ final class MpvPlayer: NSObject {
     }
 
     private func applyPlaybackProfile(for speed: Double) {
-        setFlagProperty("audio-pitch-correction", false)
+        if speed >= 12 {
+            setFlagProperty("audio-pitch-correction", false)
+        } else {
+            setFlagProperty("audio-pitch-correction", true)
+        }
     }
 
     private func renderInterval(for speed: Double) -> CFTimeInterval {
