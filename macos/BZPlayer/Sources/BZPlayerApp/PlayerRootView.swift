@@ -8,6 +8,7 @@ struct PlayerRootView: View {
     @State private var mouseMoveMonitor: Any?
     @State private var mouseDownMonitor: Any?
     @State private var shouldShowPlaylist = false
+    @State private var isHoveringPlaylist = false
     @State private var isControlsVisible = true
     @State private var hideControlsTask: DispatchWorkItem?
 
@@ -71,9 +72,12 @@ struct PlayerRootView: View {
                         switch phase {
                         case .active(let location):
                             revealControlsAndScheduleHide()
-                            shouldShowPlaylist = location.x >= proxy.size.width - 36
+                            let triggerWidth = max(proxy.size.width * 0.05, 24)
+                            shouldShowPlaylist = isHoveringPlaylist || location.x >= proxy.size.width - triggerWidth
                         case .ended:
-                            shouldShowPlaylist = false
+                            if !isHoveringPlaylist {
+                                shouldShowPlaylist = false
+                            }
                         }
                     }
 
@@ -126,6 +130,12 @@ struct PlayerRootView: View {
         .frame(maxHeight: .infinity, alignment: .top)
         .background(Color.black.opacity(0.72))
         .cornerRadius(10)
+        .onHover { hovering in
+            isHoveringPlaylist = hovering
+            if hovering {
+                shouldShowPlaylist = true
+            }
+        }
     }
 
     private var controlBar: some View {
@@ -232,7 +242,9 @@ struct PlayerRootView: View {
         let task = DispatchWorkItem {
             withAnimation(.easeInOut(duration: 0.2)) {
                 isControlsVisible = false
-                shouldShowPlaylist = false
+                if !isHoveringPlaylist {
+                    shouldShowPlaylist = false
+                }
             }
         }
         hideControlsTask = task
