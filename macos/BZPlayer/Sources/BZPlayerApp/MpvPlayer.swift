@@ -24,6 +24,7 @@ final class MpvPlayer: NSObject {
     private var lastPresentedPlaybackTime: Double?
     private var sourceFPS: Double = 30
     private var displayFPS: Double = 60
+    private var renderWarmupUntil: CFTimeInterval = 0
 
     override init() {
         super.init()
@@ -62,7 +63,9 @@ final class MpvPlayer: NSObject {
     }
 
     func play() {
+        armRenderWarmup()
         setFlagProperty("pause", false)
+        requestRender()
     }
 
     func pause() {
@@ -72,13 +75,17 @@ final class MpvPlayer: NSObject {
     func seek(seconds: Double) {
         guard seconds.isFinite else { return }
         resetSamplingState()
+        armRenderWarmup()
         setDoubleProperty("time-pos", seconds)
+        requestRender()
     }
 
     func setSpeed(_ speed: Double) {
         configuredSpeed = speed
         applyPlaybackProfile(for: speed)
         setDoubleProperty("speed", speed)
+        armRenderWarmup()
+        requestRender()
     }
 
     private func createPlayer() {
@@ -171,6 +178,7 @@ final class MpvPlayer: NSObject {
             switch eventID {
             case MPV_EVENT_FILE_LOADED:
                 resetSamplingState()
+                armRenderWarmup(duration: 0.35)
                 setDoubleProperty("speed", configuredSpeed)
                 if let pendingResumeTime, pendingResumeTime > 0 {
                     setDoubleProperty("time-pos", pendingResumeTime)
@@ -435,6 +443,9 @@ private extension MpvPlayer {
 
     func remainingWallDelay(for profile: RenderProfile) -> CFTimeInterval? {
         let now = CACurrentMediaTime()
+        if now < renderWarmupUntil {
+            return max(0, min(profile.wallInterval, 1.0 / 120.0) - (now - lastRenderAt))
+        }
         let wallDelay = max(0, profile.wallInterval - (now - lastRenderAt))
 
         guard configuredSpeed >= 8, let lastPresentedPlaybackTime else {
@@ -463,6 +474,10 @@ private extension MpvPlayer {
         latestPlaybackTime = 0
         lastPresentedPlaybackTime = nil
         lastRenderAt = 0
+    }
+
+    func armRenderWarmup(duration: CFTimeInterval = 0.25) {
+        renderWarmupUntil = CACurrentMediaTime() + duration
     }
 }
 
