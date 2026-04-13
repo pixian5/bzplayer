@@ -18,6 +18,7 @@ final class MpvPlayer: NSObject {
     private var configuredSpeed: Double = 1.0
     private var isRenderScheduled = false
     private var needsAnotherRender = false
+    private var lastRenderAt: CFTimeInterval = 0
 
     override init() {
         super.init()
@@ -70,6 +71,7 @@ final class MpvPlayer: NSObject {
 
     func setSpeed(_ speed: Double) {
         configuredSpeed = speed
+        applyPlaybackProfile(for: speed)
         setDoubleProperty("speed", speed)
     }
 
@@ -90,6 +92,8 @@ final class MpvPlayer: NSObject {
         mpv_set_option_string(handle, "force-window", "no")
         mpv_set_option_string(handle, "hwdec", "auto-safe")
         mpv_set_option_string(handle, "vo", "libmpv")
+        mpv_set_option_string(handle, "framedrop", "vo")
+        mpv_set_option_string(handle, "video-latency-hacks", "yes")
 
         let result = mpv_initialize(handle)
         guard result >= 0 else {
@@ -102,6 +106,7 @@ final class MpvPlayer: NSObject {
         mpv_set_wakeup_callback(handle, mpvWakeupCallback, Unmanaged.passUnretained(self).toOpaque())
         observeProperties(on: handle)
         createRenderContextIfNeeded()
+        applyPlaybackProfile(for: configuredSpeed)
         onStatusChanged?("播放引擎：mpv/libmpv")
     }
 
@@ -172,6 +177,7 @@ final class MpvPlayer: NSObject {
     func renderCurrentFrame() {
         guard let renderContext, let attachedView else { return }
         isRenderScheduled = false
+        lastRenderAt = CACurrentMediaTime()
 
         attachedView.renderFrame { size, stride, pointer in
             var sizeStorage = [Int32(size.x), Int32(size.y)]
@@ -207,9 +213,40 @@ final class MpvPlayer: NSObject {
             needsAnotherRender = true
             return
         }
+        let now = CACurrentMediaTime()
+        let minInterval = renderInterval(for: configuredSpeed)
+        let elapsed = now - lastRenderAt
         isRenderScheduled = true
-        DispatchQueue.main.async { [weak self] in
-            self?.renderCurrentFrame()
+        let delay = max(0, minInterval - elapsed)
+        if delay > 0 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                self?.renderCurrentFrame()
+            }
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                self?.renderCurrentFrame()
+            }
+        }
+    }
+
+    private func applyPlaybackProfile(for speed: Double) {
+        if speed >= 8 {
+            setFlagProperty("audio-pitch-correction", false)
+        } else {
+            setFlagProperty("audio-pitch-correction", true)
+        }
+    }
+
+    private func renderInterval(for speed: Double) -> CFTimeInterval {
+        switch speed {
+        case 16...:
+            return 1.0 / 12.0
+        case 8...:
+            return 1.0 / 15.0
+        case 4...:
+            return 1.0 / 24.0
+        default:
+            return 0
         }
     }
 
