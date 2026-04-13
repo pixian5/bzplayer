@@ -1,7 +1,9 @@
 import SwiftUI
+import AppKit
 
 @main
 struct BZPlayerApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var viewModel = PlayerViewModel()
 
     var body: some Scene {
@@ -15,6 +17,12 @@ struct BZPlayerApp: App {
         Settings {
             SettingsView(viewModel: viewModel)
         }
+    }
+}
+
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        true
     }
 }
 
