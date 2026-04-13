@@ -5,11 +5,10 @@ struct PlayerRootView: View {
     @EnvironmentObject private var viewModel: PlayerViewModel
     @State private var seekValue: Double = 0
     @State private var eventMonitor: Any?
-    @State private var mouseMoveMonitor: Any?
-    @State private var mouseDownMonitor: Any?
     @State private var shouldShowPlaylist = false
     @State private var isHoveringPlaylist = false
-    @State private var isControlsVisible = true
+    @State private var isHoveringControlBar = false
+    @State private var isControlsVisible = false
     @State private var hideControlsTask: DispatchWorkItem?
 
     var body: some View {
@@ -28,25 +27,10 @@ struct PlayerRootView: View {
             eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
                 handleKey(event)
             }
-            mouseMoveMonitor = NSEvent.addLocalMonitorForEvents(matching: .mouseMoved) { event in
-                revealControlsAndScheduleHide()
-                return event
-            }
-            mouseDownMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { event in
-                revealControlsAndScheduleHide()
-                return event
-            }
-            revealControlsAndScheduleHide()
         }
         .onDisappear {
             if let eventMonitor {
                 NSEvent.removeMonitor(eventMonitor)
-            }
-            if let mouseMoveMonitor {
-                NSEvent.removeMonitor(mouseMoveMonitor)
-            }
-            if let mouseDownMonitor {
-                NSEvent.removeMonitor(mouseDownMonitor)
             }
             hideControlsTask?.cancel()
         }
@@ -71,12 +55,26 @@ struct PlayerRootView: View {
                     .onContinuousHover { phase in
                         switch phase {
                         case .active(let location):
-                            revealControlsAndScheduleHide()
                             let triggerWidth = max(proxy.size.width * 0.05, 24)
+                            let triggerHeight = max(proxy.size.height * 0.05, 24)
                             shouldShowPlaylist = isHoveringPlaylist || location.x >= proxy.size.width - triggerWidth
+                            if isHoveringControlBar || location.y >= proxy.size.height - triggerHeight {
+                                revealControlsAndScheduleHide()
+                            } else if !isHoveringControlBar {
+                                hideControlsTask?.cancel()
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    isControlsVisible = false
+                                }
+                            }
                         case .ended:
                             if !isHoveringPlaylist {
                                 shouldShowPlaylist = false
+                            }
+                            if !isHoveringControlBar {
+                                hideControlsTask?.cancel()
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    isControlsVisible = false
+                                }
                             }
                         }
                     }
@@ -202,6 +200,14 @@ struct PlayerRootView: View {
         )
         .foregroundStyle(.white)
         .shadow(color: .black.opacity(0.28), radius: 16, y: 8)
+        .onHover { hovering in
+            isHoveringControlBar = hovering
+            if hovering {
+                revealControlsAndScheduleHide()
+            } else {
+                revealControlsAndScheduleHide()
+            }
+        }
     }
 
     private func handleKey(_ event: NSEvent) -> NSEvent? {
