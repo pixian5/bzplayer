@@ -10,6 +10,7 @@ struct PlayerRootView: View {
     @State private var isHoveringControlBar = false
     @State private var isControlsVisible = false
     @State private var hideControlsTask: DispatchWorkItem?
+    @State private var controlBarFrame: CGRect = .zero
 
     private var shouldPinControlsVisible: Bool {
         !viewModel.hasOpenedFile || viewModel.hasReachedEndOfPlayback
@@ -218,6 +219,17 @@ struct PlayerRootView: View {
         )
         .foregroundStyle(.white)
         .shadow(color: .black.opacity(0.18), radius: 8, y: 4)
+        .background(
+            GeometryReader { proxy in
+                Color.clear
+                    .onAppear {
+                        controlBarFrame = proxy.frame(in: .global)
+                    }
+                    .onChange(of: proxy.frame(in: .global)) { frame in
+                        controlBarFrame = frame
+                    }
+            }
+        )
         .onHover { hovering in
             isHoveringControlBar = hovering
             if hovering {
@@ -281,6 +293,14 @@ struct PlayerRootView: View {
         }
         hideControlsTask?.cancel()
         let task = DispatchWorkItem {
+            let mouseLocation = NSEvent.mouseLocation
+            let cursorIsInsideControlBar = controlBarFrame.contains(mouseLocation)
+            if cursorIsInsideControlBar {
+                isHoveringControlBar = true
+                revealControlsAndScheduleHide()
+                return
+            }
+
             withAnimation(.easeOut(duration: 0.12)) {
                 isControlsVisible = false
                 if !isHoveringPlaylist {
