@@ -242,9 +242,9 @@ final class MpvPlayer: NSObject {
         switch speed {
         case 16...:
             return 1.0 / 12.0
+        case 12...:
+            return 1.0 / 18.0
         case 8...:
-            return 1.0 / 15.0
-        case 4...:
             return 1.0 / 24.0
         default:
             return 0
