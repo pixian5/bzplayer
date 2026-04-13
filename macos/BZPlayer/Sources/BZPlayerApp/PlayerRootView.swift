@@ -71,10 +71,13 @@ struct PlayerRootView: View {
                         switch phase {
                         case .active(let location):
                             let triggerWidth = max(proxy.size.width * 0.05, 24)
+                            let triggerHeight = max(proxy.size.height * 0.15, 24)
+                            let controlRegionHeight = max(triggerHeight, controlBarFrame.height + 32)
+                            let isInControlRegion = location.y >= proxy.size.height - controlRegionHeight
                             shouldShowPlaylist = isHoveringPlaylist || location.x >= proxy.size.width - triggerWidth
                             if shouldPinControlsVisible {
                                 revealControlsAndScheduleHide()
-                            } else if shouldKeepControlsVisible() {
+                            } else if isInControlRegion || isHoveringControlBar || cursorIsInsideControlBar() {
                                 revealControlsAndScheduleHide()
                             } else if isControlsVisible {
                                 scheduleControlsHide()
