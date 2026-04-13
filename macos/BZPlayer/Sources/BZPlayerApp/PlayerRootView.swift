@@ -11,6 +11,10 @@ struct PlayerRootView: View {
     @State private var isControlsVisible = false
     @State private var hideControlsTask: DispatchWorkItem?
 
+    private var shouldPinControlsVisible: Bool {
+        !viewModel.hasOpenedFile || viewModel.hasReachedEndOfPlayback
+    }
+
     var body: some View {
         ZStack(alignment: .bottom) {
             playerArea
@@ -24,6 +28,7 @@ struct PlayerRootView: View {
         }
         .animation(.easeOut(duration: 0.12), value: isControlsVisible)
         .onAppear {
+            syncControlsVisibilityWithPlaybackState()
             eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
                 handleKey(event)
             }
@@ -44,6 +49,15 @@ struct PlayerRootView: View {
         .onReceive(viewModel.$windowTitle) { title in
             NSApp.keyWindow?.title = title
         }
+        .onReceive(viewModel.$isPaused) { _ in
+            syncControlsVisibilityWithPlaybackState()
+        }
+        .onReceive(viewModel.$currentTime) { _ in
+            syncControlsVisibilityWithPlaybackState()
+        }
+        .onReceive(viewModel.$duration) { _ in
+            syncControlsVisibilityWithPlaybackState()
+        }
     }
 
     private var playerArea: some View {
@@ -58,7 +72,9 @@ struct PlayerRootView: View {
                             let triggerWidth = max(proxy.size.width * 0.05, 24)
                             let triggerHeight = max(proxy.size.height * 0.15, 24)
                             shouldShowPlaylist = isHoveringPlaylist || location.x >= proxy.size.width - triggerWidth
-                            if isHoveringControlBar || location.y >= proxy.size.height - triggerHeight {
+                            if shouldPinControlsVisible {
+                                revealControlsAndScheduleHide()
+                            } else if isHoveringControlBar || location.y >= proxy.size.height - triggerHeight {
                                 revealControlsAndScheduleHide()
                             } else if !isHoveringControlBar {
                                 hideControlsTask?.cancel()
@@ -70,7 +86,9 @@ struct PlayerRootView: View {
                             if !isHoveringPlaylist {
                                 shouldShowPlaylist = false
                             }
-                            if !isHoveringControlBar {
+                            if shouldPinControlsVisible {
+                                revealControlsAndScheduleHide()
+                            } else if !isHoveringControlBar {
                                 hideControlsTask?.cancel()
                                 withAnimation(.easeInOut(duration: 0.2)) {
                                     isControlsVisible = false
@@ -246,10 +264,21 @@ struct PlayerRootView: View {
         if !isControlsVisible {
             isControlsVisible = true
         }
+        if shouldPinControlsVisible {
+            hideControlsTask?.cancel()
+            return
+        }
         scheduleControlsHide()
     }
 
     private func scheduleControlsHide() {
+        if shouldPinControlsVisible {
+            hideControlsTask?.cancel()
+            if !isControlsVisible {
+                isControlsVisible = true
+            }
+            return
+        }
         hideControlsTask?.cancel()
         let task = DispatchWorkItem {
             withAnimation(.easeOut(duration: 0.12)) {
@@ -261,5 +290,14 @@ struct PlayerRootView: View {
         }
         hideControlsTask = task
         DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: task)
+    }
+
+    private func syncControlsVisibilityWithPlaybackState() {
+        if shouldPinControlsVisible {
+            hideControlsTask?.cancel()
+            if !isControlsVisible {
+                isControlsVisible = true
+            }
+        }
     }
 }

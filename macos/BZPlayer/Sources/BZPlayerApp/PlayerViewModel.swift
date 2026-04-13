@@ -28,6 +28,14 @@ final class PlayerViewModel: NSObject, ObservableObject {
     let nativePlayer = AVPlayer()
     let speedCandidates: [Double] = [0.25, 0.5, 1, 1.5, 2, 4, 8, 16]
 
+    var hasOpenedFile: Bool {
+        currentFileURL != nil
+    }
+
+    var hasReachedEndOfPlayback: Bool {
+        duration > 0 && isPaused && currentTime >= max(duration - 0.5, 0)
+    }
+
     private var currentFileURL: URL?
     private var nativeTimeObserver: Any?
     private var nativeItemStatusObserver: NSKeyValueObservation?
@@ -400,8 +408,9 @@ final class PlayerViewModel: NSObject, ObservableObject {
                     lines.append("这类文件会自动切到 mpv 后端播放。")
                 } else {
                     lines.append("提示：AVFoundation 未检测到音轨。")
-                    lines.append("若文件在其它播放器有声音，通常是当前系统媒体解析兼容性问题，而不一定是源文件无声。")
-                    lines.append("当前未拿到 ffprobe 音轨结果，因此暂时无法进一步确认。")
+                    lines.append("若文件在其它播放器有声音，更可能是当前系统媒体解析兼容性问题。")
+                    lines.append("本次未拿到 ffprobe 音轨结果，可能是 ffprobe 不可用、执行失败，或文件读取受限。")
+                    lines.append("因此这里不能据此判断源文件就是无声。")
                 }
             }
 
