@@ -1,4 +1,5 @@
 import AppKit
+import AVKit
 import OpenGL.GL3
 import SwiftUI
 
@@ -23,6 +24,7 @@ struct PlayerContainerView: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: PlayerHostView, context: Context) {
+        nsView.updateBackend(viewModel.playbackBackend, player: viewModel.nativePlayer)
         if nsView.window != nil {
             viewModel.attachPlayerView(nsView.playerSurfaceView)
         }
@@ -30,6 +32,7 @@ struct PlayerContainerView: NSViewRepresentable {
 }
 
 final class PlayerHostView: NSView {
+    let nativePlayerView = AVPlayerView()
     let playerSurfaceView = MpvRenderView(frame: .zero)
     let clickView = ClickCaptureView()
     var onViewReady: ((MpvRenderView) -> Void)?
@@ -39,13 +42,24 @@ final class PlayerHostView: NSView {
         wantsLayer = true
         layer?.backgroundColor = NSColor.black.cgColor
 
+        nativePlayerView.translatesAutoresizingMaskIntoConstraints = false
+        nativePlayerView.controlsStyle = .none
+        nativePlayerView.videoGravity = .resizeAspect
+        nativePlayerView.showsFullScreenToggleButton = false
+        nativePlayerView.player = nil
+
         playerSurfaceView.translatesAutoresizingMaskIntoConstraints = false
         clickView.translatesAutoresizingMaskIntoConstraints = false
 
+        addSubview(nativePlayerView)
         addSubview(playerSurfaceView)
         addSubview(clickView)
 
         NSLayoutConstraint.activate([
+            nativePlayerView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            nativePlayerView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            nativePlayerView.topAnchor.constraint(equalTo: topAnchor),
+            nativePlayerView.bottomAnchor.constraint(equalTo: bottomAnchor),
             playerSurfaceView.leadingAnchor.constraint(equalTo: leadingAnchor),
             playerSurfaceView.trailingAnchor.constraint(equalTo: trailingAnchor),
             playerSurfaceView.topAnchor.constraint(equalTo: topAnchor),
@@ -66,6 +80,18 @@ final class PlayerHostView: NSView {
         super.viewDidMoveToWindow()
         guard window != nil else { return }
         onViewReady?(playerSurfaceView)
+    }
+
+    func updateBackend(_ backend: PlayerViewModel.PlaybackBackend, player: AVPlayer) {
+        nativePlayerView.player = player
+        switch backend {
+        case .native:
+            nativePlayerView.isHidden = false
+            playerSurfaceView.isHidden = true
+        case .mpv:
+            nativePlayerView.isHidden = true
+            playerSurfaceView.isHidden = false
+        }
     }
 }
 

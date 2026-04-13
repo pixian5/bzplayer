@@ -1,4 +1,5 @@
 import AVFoundation
+import AVKit
 import AppKit
 import CoreServices
 import Foundation
@@ -6,29 +7,50 @@ import UniformTypeIdentifiers
 
 @MainActor
 final class PlayerViewModel: NSObject, ObservableObject {
+    enum PlaybackBackend: String {
+        case native
+        case mpv
+    }
+
     @Published var isPaused = true
     @Published var speed: Double = 1.0
     @Published var currentTime: Double = 0
     @Published var duration: Double = 0
-    @Published var syncText = "播放链路：mpv/libmpv"
+    @Published var syncText = "播放链路：系统原生"
     @Published var playlist: [URL] = []
     @Published var currentIndex: Int = -1
     @Published var windowTitle = "BZPlayer"
     @Published var fileAssociationStatus = "未执行格式关联"
-    @Published var playbackEngineStatus = "播放引擎：mpv/libmpv"
+    @Published var playbackEngineStatus = "播放引擎：AVPlayer"
+    @Published var playbackBackend: PlaybackBackend = .native
 
-    let player = MpvPlayer()
+    let mpvPlayer = MpvPlayer()
+    let nativePlayer = AVPlayer()
     let speedCandidates: [Double] = [0.25, 0.5, 1, 1.5, 2, 4, 8, 16]
 
     private var currentFileURL: URL?
+    private var nativeTimeObserver: Any?
+    private var nativeItemStatusObserver: NSKeyValueObservation?
+    private var nativeEndObserver: NSObjectProtocol?
 
     override init() {
         super.init()
-        bindPlayerCallbacks()
+        bindMpvCallbacks()
+        bindNativePlayer()
+        selectBackend(.native)
+    }
+
+    deinit {
+        if let nativeTimeObserver {
+            nativePlayer.removeTimeObserver(nativeTimeObserver)
+        }
+        if let nativeEndObserver {
+            NotificationCenter.default.removeObserver(nativeEndObserver)
+        }
     }
 
     func attachPlayerView(_ view: MpvRenderView) {
-        player.attach(to: view)
+        mpvPlayer.attach(to: view)
     }
 
     func openFile() {
@@ -44,12 +66,24 @@ final class PlayerViewModel: NSObject, ObservableObject {
     }
 
     func play() {
-        player.play()
-        isPaused = false
+        switch playbackBackend {
+        case .native:
+            nativePlayer.play()
+            nativePlayer.rate = Float(speed)
+            isPaused = false
+        case .mpv:
+            mpvPlayer.play()
+            isPaused = false
+        }
     }
 
     func pause() {
-        player.pause()
+        switch playbackBackend {
+        case .native:
+            nativePlayer.pause()
+        case .mpv:
+            mpvPlayer.pause()
+        }
         isPaused = true
         saveCurrentProgress()
     }
@@ -65,12 +99,23 @@ final class PlayerViewModel: NSObject, ObservableObject {
 
     func seek(to progress: Double) {
         guard duration > 0 else { return }
-        player.seek(seconds: duration * progress)
+        let target = duration * progress
+        switch playbackBackend {
+        case .native:
+            nativePlayer.seek(to: CMTime(seconds: target, preferredTimescale: 600))
+        case .mpv:
+            mpvPlayer.seek(seconds: target)
+        }
     }
 
     func setSpeed(_ value: Double) {
         speed = min(max(value, 0.25), 16)
-        player.setSpeed(speed)
+        switch playbackBackend {
+        case .native:
+            nativePlayer.rate = isPaused ? 0 : Float(speed)
+        case .mpv:
+            mpvPlayer.setSpeed(speed)
+        }
     }
 
     func adjustSpeed(by delta: Double) {
@@ -97,9 +142,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
 
     func associateCommonVideoFormats() {
         let bundleID = (Bundle.main.bundleIdentifier ?? "tech.sbbz.bzplayer") as CFString
-        let commonExtensions = [
-            "mp4", "m4v", "mov", "mkv", "avi", "wmv", "flv", "webm", "ts", "mpeg", "mpg"
-        ]
+        let commonExtensions = ["mp4", "m4v", "mov", "mkv", "avi", "wmv", "flv", "webm", "ts", "mpeg", "mpg"]
 
         var associated: [String] = []
         var failed: [String] = []
@@ -126,26 +169,67 @@ final class PlayerViewModel: NSObject, ObservableObject {
         }
     }
 
-    private func bindPlayerCallbacks() {
-        player.onTimeChanged = { [weak self] time in
-            guard let self else { return }
+    private func bindMpvCallbacks() {
+        mpvPlayer.onTimeChanged = { [weak self] time in
+            guard let self, self.playbackBackend == .mpv else { return }
             self.currentTime = time.isFinite ? time : 0
             if Int(self.currentTime * 10) % 30 == 0 {
                 self.saveCurrentProgress()
             }
         }
-        player.onDurationChanged = { [weak self] duration in
-            guard let self else { return }
+        mpvPlayer.onDurationChanged = { [weak self] duration in
+            guard let self, self.playbackBackend == .mpv else { return }
             self.duration = duration.isFinite ? duration : 0
         }
-        player.onPauseChanged = { [weak self] paused in
-            self?.isPaused = paused
+        mpvPlayer.onPauseChanged = { [weak self] paused in
+            guard let self, self.playbackBackend == .mpv else { return }
+            self.isPaused = paused
         }
-        player.onFileLoaded = { [weak self] in
-            self?.syncText = "播放链路：mpv/libmpv"
+        mpvPlayer.onFileLoaded = { [weak self] in
+            guard let self, self.playbackBackend == .mpv else { return }
+            self.syncText = "播放链路：mpv/libmpv"
         }
-        player.onStatusChanged = { [weak self] status in
-            self?.playbackEngineStatus = status
+        mpvPlayer.onStatusChanged = { [weak self] status in
+            guard let self, self.playbackBackend == .mpv else { return }
+            self.playbackEngineStatus = status
+        }
+    }
+
+    private func bindNativePlayer() {
+        nativeTimeObserver = nativePlayer.addPeriodicTimeObserver(
+            forInterval: CMTime(seconds: 0.1, preferredTimescale: 600),
+            queue: .main
+        ) { [weak self] time in
+            guard let self, self.playbackBackend == .native else { return }
+            let seconds = time.seconds
+            self.currentTime = seconds.isFinite ? max(0, seconds) : 0
+            if Int(self.currentTime * 10) % 30 == 0 {
+                self.saveCurrentProgress()
+            }
+        }
+
+        nativeEndObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemDidPlayToEndTime,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let self, self.playbackBackend == .native else { return }
+            guard notification.object as? AVPlayerItem === self.nativePlayer.currentItem else { return }
+            self.isPaused = true
+        }
+    }
+
+    private func selectBackend(_ backend: PlaybackBackend) {
+        playbackBackend = backend
+        switch backend {
+        case .native:
+            playbackEngineStatus = "播放引擎：AVPlayer"
+            syncText = "播放链路：系统原生"
+            mpvPlayer.pause()
+        case .mpv:
+            playbackEngineStatus = "播放引擎：mpv/libmpv"
+            syncText = "播放链路：mpv/libmpv"
+            nativePlayer.pause()
         }
     }
 
@@ -156,10 +240,51 @@ final class PlayerViewModel: NSObject, ObservableObject {
         currentTime = 0
         duration = 0
         updateWindowTitle(url.lastPathComponent)
-        syncText = "播放链路：mpv/libmpv"
         let resumeTime = loadSavedProgress(for: url)
-        player.setSpeed(speed)
-        player.load(url: url, resumeAt: resumeTime)
+        let backend = chooseBackend(for: url)
+        selectBackend(backend)
+
+        switch backend {
+        case .native:
+            openWithNative(url: url, resumeAt: resumeTime)
+        case .mpv:
+            mpvPlayer.setSpeed(speed)
+            mpvPlayer.load(url: url, resumeAt: resumeTime)
+        }
+    }
+
+    private func openWithNative(url: URL, resumeAt: Double?) {
+        let item = AVPlayerItem(url: url)
+        nativeItemStatusObserver = item.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in
+            guard let self, self.playbackBackend == .native else { return }
+            if item.status == .readyToPlay {
+                let seconds = item.duration.seconds
+                self.duration = seconds.isFinite ? max(0, seconds) : 0
+                self.syncText = "播放链路：系统原生"
+                self.playbackEngineStatus = "播放引擎：AVPlayer"
+                self.isPaused = false
+                if let resumeAt, resumeAt > 0 {
+                    self.nativePlayer.seek(to: CMTime(seconds: resumeAt, preferredTimescale: 600))
+                }
+                self.nativePlayer.play()
+                self.nativePlayer.rate = Float(self.speed)
+            }
+        }
+        nativePlayer.replaceCurrentItem(with: item)
+    }
+
+    private func chooseBackend(for url: URL) -> PlaybackBackend {
+        let asset = AVURLAsset(url: url)
+        let ffprobeInfo = probeMediaInfo(url: url)
+
+        if let ffprobeInfo, ffprobeInfo.audioStreams.isEmpty == false {
+            let audioTracks = asset.tracks(withMediaType: .audio)
+            if audioTracks.isEmpty {
+                return .mpv
+            }
+        }
+
+        return .native
     }
 
     private func loadPlaylist(with selectedURL: URL) {
@@ -173,10 +298,8 @@ final class PlayerViewModel: NSObject, ObservableObject {
             options: [.skipsHiddenFiles]
         )) ?? []
 
-        let allVideos = urls.filter { url in
-            let ext = url.pathExtension.lowercased()
-            return videoExts.contains(ext)
-        }.sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+        let allVideos = urls.filter { videoExts.contains($0.pathExtension.lowercased()) }
+            .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
 
         playlist = allVideos.isEmpty ? [selectedURL] : allVideos
         currentIndex = playlist.firstIndex(of: selectedURL) ?? 0
@@ -218,6 +341,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
             let tracks = try await asset.load(.tracks)
             let fileSizeBytes = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize
             let ffprobeInfo = probeMediaInfo(url: url)
+            let recommendedBackend = chooseBackend(for: url)
 
             var lines: [String] = []
             lines.append("文件：\(url.lastPathComponent)")
@@ -230,6 +354,8 @@ final class PlayerViewModel: NSObject, ObservableObject {
             if durationSeconds.isFinite, durationSeconds > 0 {
                 lines.append("时长：\(formatDuration(durationSeconds)) (\(String(format: "%.2f", durationSeconds)) 秒)")
             }
+
+            lines.append("建议播放后端：\(recommendedBackend == .native ? "系统原生" : "mpv/libmpv")")
 
             let videoTracks = tracks.filter { $0.mediaType == .video }
             lines.append("")
@@ -250,10 +376,6 @@ final class PlayerViewModel: NSObject, ObservableObject {
                 lines.append("帧率：\(String(format: "%.3f", fps)) fps")
                 lines.append("码率：\(formatBitrate(estimatedBitRate))")
                 lines.append("编码：\(codecDescription(from: videoTrack.formatDescriptions.first, mediaType: "视频"))")
-                let extendedLanguage = try await videoTrack.load(.extendedLanguageTag)
-                if let extendedLanguage, !extendedLanguage.isEmpty {
-                    lines.append("语言：\(extendedLanguage)")
-                }
             }
 
             let audioTracks = tracks.filter { $0.mediaType == .audio }
@@ -262,7 +384,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
             if audioTracks.isEmpty {
                 if let ffprobeInfo, ffprobeInfo.audioStreams.isEmpty == false {
                     lines.append("提示：AVFoundation 未识别到音轨，但 ffprobe 检测到 \(ffprobeInfo.audioStreams.count) 条音轨。")
-                    lines.append("实际播放已切换为 mpv/libmpv，兼容性以 mpv 结果为准。")
+                    lines.append("这类文件会自动切到 mpv 后端播放。")
                 } else {
                     lines.append("提示：AVFoundation 未检测到音轨。")
                     lines.append("若文件在其它播放器有声音，通常是当前系统媒体解析兼容性问题，而不一定是源文件无声。")
@@ -282,10 +404,6 @@ final class PlayerViewModel: NSObject, ObservableObject {
                     lines.append("位深：\(asbd.mBitsPerChannel) bit")
                 }
                 lines.append("编码：\(codecDescription(from: audioTrack.formatDescriptions.first, mediaType: "音频"))")
-                let extendedLanguage = try await audioTrack.load(.extendedLanguageTag)
-                if let extendedLanguage, !extendedLanguage.isEmpty {
-                    lines.append("语言：\(extendedLanguage)")
-                }
             }
 
             if let ffprobeInfo {
@@ -410,43 +528,45 @@ private func ffprobeStreamSummary(from json: [String: Any]) -> (type: String, su
 
     var parts: [String] = []
     if let codec = json["codec_name"] as? String {
-        if let longName = json["codec_long_name"] as? String, longName.isEmpty == false, longName.lowercased() != codec.lowercased() {
+        if let longName = json["codec_long_name"] as? String, !longName.isEmpty, longName.lowercased() != codec.lowercased() {
             parts.append("编码 \(codec) (\(longName))")
         } else {
             parts.append("编码 \(codec)")
         }
     }
-    if let tag = json["codec_tag_string"] as? String, tag.isEmpty == false {
+    if let tag = json["codec_tag_string"] as? String, !tag.isEmpty {
         parts.append("标签 \(tag)")
     }
-    if let profile = json["profile"] as? String, profile.isEmpty == false, profile != "unknown" {
+    if let profile = json["profile"] as? String, !profile.isEmpty, profile != "unknown" {
         parts.append("Profile \(profile)")
     }
+
     if type == "video" {
         if let width = json["width"] as? Int, let height = json["height"] as? Int {
             parts.append("\(width)x\(height)")
         }
-        if let fps = json["r_frame_rate"] as? String, fps != "0/0" {
-            parts.append("帧率 \(fps)")
+        if let frameRate = json["r_frame_rate"] as? String, frameRate != "0/0" {
+            parts.append("帧率 \(frameRate)")
         }
-    }
-    if type == "audio" {
-        if let sampleRate = json["sample_rate"] as? String, sampleRate.isEmpty == false {
+    } else if type == "audio" {
+        if let sampleRate = json["sample_rate"] as? String, !sampleRate.isEmpty {
             parts.append("采样率 \(sampleRate) Hz")
         }
         if let channels = json["channels"] as? Int {
             parts.append("声道 \(channels)")
         }
-        if let layout = json["channel_layout"] as? String, layout.isEmpty == false {
-            parts.append(layout)
+        if let channelLayout = json["channel_layout"] as? String, !channelLayout.isEmpty {
+            parts.append(channelLayout)
         }
     }
-    if let bitRate = json["bit_rate"] as? String, let value = Double(bitRate), value > 0 {
-        parts.append("码率 \(formatBitrate(Float(value)))")
+
+    if let bitRate = json["bit_rate"] as? String, let value = Float(bitRate) {
+        parts.append("码率 \(formatBitrate(value))")
     }
-    if let tags = json["tags"] as? [String: Any], let language = tags["language"] as? String, language.isEmpty == false {
+
+    if let tags = json["tags"] as? [String: Any], let language = tags["language"] as? String, !language.isEmpty {
         parts.append("语言 \(language)")
     }
 
-    return (type: type, summary: parts.joined(separator: "，"))
+    return (type, parts.joined(separator: "，"))
 }
