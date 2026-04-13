@@ -2,6 +2,7 @@ import AppKit
 import CMpv
 import Darwin
 import Foundation
+import OpenGL.GL3
 
 @MainActor
 final class MpvPlayer: NSObject {
@@ -38,10 +39,10 @@ final class MpvPlayer: NSObject {
 
     func attach(to view: MpvRenderView) {
         attachedView = view
-        if handle == nil {
-            createPlayer()
+        view.onRendererReady = { [weak self] readyView in
+            self?.prepareRenderer(for: readyView)
         }
-        requestRender()
+        prepareRenderer(for: view)
     }
 
     func load(url: URL, resumeAt: Double?) {
@@ -112,23 +113,30 @@ final class MpvPlayer: NSObject {
     }
 
     private func createRenderContextIfNeeded() {
-        guard let handle, renderContext == nil else { return }
+        guard let handle, renderContext == nil, let attachedView else { return }
+        attachedView.openGLContext?.makeCurrentContext()
 
-        let apiType = strdup(MPV_RENDER_API_TYPE_SW)
+        var glInitParams = mpv_opengl_init_params(
+            get_proc_address: mpvOpenGLGetProcAddress,
+            get_proc_address_ctx: nil
+        )
+        let apiType = strdup(MPV_RENDER_API_TYPE_OPENGL)
         defer { free(apiType) }
 
-        var params = [
-            mpv_render_param(type: MPV_RENDER_PARAM_API_TYPE, data: UnsafeMutableRawPointer(apiType)),
-            mpv_render_param(type: MPV_RENDER_PARAM_INVALID, data: nil)
-        ]
-
         var context: OpaquePointer?
-        let result = params.withUnsafeMutableBufferPointer { buffer -> Int32 in
-            mpv_render_context_create(&context, handle, buffer.baseAddress)
+        let result = withUnsafeMutablePointer(to: &glInitParams) { initPtr -> Int32 in
+            var params = [
+                mpv_render_param(type: MPV_RENDER_PARAM_API_TYPE, data: UnsafeMutableRawPointer(apiType)),
+                mpv_render_param(type: MPV_RENDER_PARAM_OPENGL_INIT_PARAMS, data: initPtr),
+                mpv_render_param(type: MPV_RENDER_PARAM_INVALID, data: nil)
+            ]
+            return params.withUnsafeMutableBufferPointer { buffer -> Int32 in
+                mpv_render_context_create(&context, handle, buffer.baseAddress)
+            }
         }
 
         guard result >= 0, let context else {
-            onStatusChanged?("播放引擎：mpv render 初始化失败")
+            onStatusChanged?("播放引擎：mpv OpenGL render 初始化失败")
             return
         }
 
@@ -180,18 +188,14 @@ final class MpvPlayer: NSObject {
         isRenderScheduled = false
         lastRenderAt = CACurrentMediaTime()
 
-        attachedView.renderFrame { size, stride, pointer in
-            var sizeStorage = [Int32(size.x), Int32(size.y)]
-            var strideStorage = stride
-            let format = strdup("bgr0")
-            defer { free(format) }
-            sizeStorage.withUnsafeMutableBytes { sizeBytes in
-                withUnsafeMutablePointer(to: &strideStorage) { stridePtr in
+        attachedView.renderFrame { size, fbo, flipY in
+            var target = mpv_opengl_fbo(fbo: fbo, w: size.x, h: size.y, internal_format: 0)
+            var flip = flipY
+            withUnsafeMutablePointer(to: &target) { targetPtr in
+                withUnsafeMutablePointer(to: &flip) { flipPtr in
                     var params = [
-                        mpv_render_param(type: MPV_RENDER_PARAM_SW_SIZE, data: sizeBytes.baseAddress),
-                        mpv_render_param(type: MPV_RENDER_PARAM_SW_FORMAT, data: UnsafeMutableRawPointer(format)),
-                        mpv_render_param(type: MPV_RENDER_PARAM_SW_STRIDE, data: stridePtr),
-                        mpv_render_param(type: MPV_RENDER_PARAM_SW_POINTER, data: pointer),
+                        mpv_render_param(type: MPV_RENDER_PARAM_OPENGL_FBO, data: targetPtr),
+                        mpv_render_param(type: MPV_RENDER_PARAM_FLIP_Y, data: flipPtr),
                         mpv_render_param(type: MPV_RENDER_PARAM_INVALID, data: nil)
                     ]
 
@@ -242,13 +246,23 @@ final class MpvPlayer: NSObject {
     private func renderInterval(for speed: Double) -> CFTimeInterval {
         switch speed {
         case 16...:
-            return 1.0 / 12.0
-        case 12...:
-            return 1.0 / 18.0
-        case 8...:
             return 1.0 / 24.0
+        case 12...:
+            return 1.0 / 30.0
         default:
             return 0
+        }
+    }
+
+    private func prepareRenderer(for view: MpvRenderView) {
+        attachedView = view
+        guard view.openGLContext != nil else { return }
+        view.openGLContext?.makeCurrentContext()
+        if handle == nil {
+            createPlayer()
+        } else {
+            createRenderContextIfNeeded()
+            requestRender()
         }
     }
 
@@ -316,5 +330,23 @@ private let mpvRenderUpdateCallback: @convention(c) (UnsafeMutableRawPointer?) -
     let player = Unmanaged<MpvPlayer>.fromOpaque(context).takeUnretainedValue()
     DispatchQueue.main.async {
         player.requestRender()
+    }
+}
+
+private let mpvOpenGLGetProcAddress: @convention(c) (UnsafeMutableRawPointer?, UnsafePointer<CChar>?) -> UnsafeMutableRawPointer? = { _, name in
+    guard let name else { return nil }
+    return mpvOpenGLLibraryHandle.withLibraryHandle { library in
+        guard let library else { return nil }
+        return dlsym(library, String(cString: name))
+    }
+}
+
+private enum mpvOpenGLLibraryHandle {
+    private static let handle: UnsafeMutableRawPointer? = {
+        dlopen("/System/Library/Frameworks/OpenGL.framework/OpenGL", RTLD_LAZY | RTLD_LOCAL)
+    }()
+
+    static func withLibraryHandle<T>(_ body: (UnsafeMutableRawPointer?) -> T) -> T {
+        body(handle)
     }
 }

@@ -19,6 +19,7 @@ let package = Package(
             dependencies: ["CMpv"],
             path: "Sources/BZPlayerApp",
             linkerSettings: [
+                .linkedFramework("OpenGL"),
                 .unsafeFlags([
                     "-L/opt/homebrew/lib",
                     "-L/usr/local/lib"

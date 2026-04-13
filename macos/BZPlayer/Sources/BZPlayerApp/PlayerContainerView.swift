@@ -1,4 +1,5 @@
 import AppKit
+import OpenGL.GL3
 import SwiftUI
 
 struct PlayerContainerView: NSViewRepresentable {
@@ -29,7 +30,7 @@ struct PlayerContainerView: NSViewRepresentable {
 }
 
 final class PlayerHostView: NSView {
-    let playerSurfaceView = MpvRenderView()
+    let playerSurfaceView = MpvRenderView(frame: .zero)
     let clickView = ClickCaptureView()
     var onViewReady: ((MpvRenderView) -> Void)?
 
@@ -68,19 +69,13 @@ final class PlayerHostView: NSView {
     }
 }
 
-final class MpvRenderView: NSView {
-    private var frameBuffer = Data()
-    private var frameWidth = 0
-    private var frameHeight = 0
-    private var stride = 0
+final class MpvRenderView: NSOpenGLView {
+    private var isReady = false
+    var onRendererReady: ((MpvRenderView) -> Void)?
 
     override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        wantsLayer = true
-        layer = CALayer()
-        layer?.backgroundColor = NSColor.black.cgColor
-        layer?.contentsGravity = .resizeAspect
-        layer?.contentsScale = NSScreen.main?.backingScaleFactor ?? 2
+        super.init(frame: frameRect, pixelFormat: Self.makePixelFormat())!
+        wantsBestResolutionOpenGLSurface = true
     }
 
     @available(*, unavailable)
@@ -92,56 +87,53 @@ final class MpvRenderView: NSView {
         false
     }
 
-    override func viewDidChangeBackingProperties() {
-        super.viewDidChangeBackingProperties()
-        layer?.contentsScale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
+    override func prepareOpenGL() {
+        super.prepareOpenGL()
+        openGLContext?.makeCurrentContext()
+        var swapInterval: GLint = 1
+        openGLContext?.setValues(&swapInterval, for: .swapInterval)
+        glDisable(GLenum(GL_DITHER))
+        isReady = true
+        onRendererReady?(self)
     }
 
-    func renderFrame(_ renderer: (_ size: SIMD2<Int32>, _ stride: Int, _ pointer: UnsafeMutableRawPointer) -> Void) {
+    override func reshape() {
+        super.reshape()
+        openGLContext?.update()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if openGLContext != nil, isReady {
+            onRendererReady?(self)
+        }
+    }
+
+    func renderFrame(_ renderer: (_ size: SIMD2<Int32>, _ fbo: Int32, _ flipY: Int32) -> Void) {
+        guard isReady else { return }
+        openGLContext?.makeCurrentContext()
         let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
         let width = max(Int(bounds.width * scale), 1)
         let height = max(Int(bounds.height * scale), 1)
-        let newStride = ((width * 4) + 63) & ~63
-        let requiredBytes = newStride * height
-
-        if frameBuffer.count != requiredBytes {
-            frameBuffer = Data(count: requiredBytes)
-        }
-        frameWidth = width
-        frameHeight = height
-        stride = newStride
-
-        frameBuffer.withUnsafeMutableBytes { rawBuffer in
-            guard let baseAddress = rawBuffer.baseAddress else { return }
-            renderer(SIMD2(Int32(width), Int32(height)), newStride, baseAddress)
-        }
-
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        layer?.contents = makeRenderedImage()
-        CATransaction.commit()
+        glViewport(0, 0, GLsizei(width), GLsizei(height))
+        renderer(SIMD2(Int32(width), Int32(height)), 0, 1)
+        glFlush()
+        openGLContext?.flushBuffer()
     }
 
-    private func makeRenderedImage() -> CGImage? {
-        let provider = frameBuffer.withUnsafeBytes { rawBuffer -> CGDataProvider? in
-            guard let baseAddress = rawBuffer.baseAddress else { return nil }
-            return CGDataProvider(dataInfo: nil, data: baseAddress, size: frameBuffer.count) { _, _, _ in }
+    private static func makePixelFormat() -> NSOpenGLPixelFormat {
+        let attributes: [NSOpenGLPixelFormatAttribute] = [
+            UInt32(NSOpenGLPFAOpenGLProfile), UInt32(NSOpenGLProfileVersion3_2Core),
+            UInt32(NSOpenGLPFAColorSize), 24,
+            UInt32(NSOpenGLPFAAlphaSize), 8,
+            UInt32(NSOpenGLPFADoubleBuffer),
+            UInt32(NSOpenGLPFAAccelerated),
+            0
+        ]
+        guard let pixelFormat = NSOpenGLPixelFormat(attributes: attributes) else {
+            fatalError("Unable to create NSOpenGLPixelFormat")
         }
-
-        guard let provider else { return nil }
-        return CGImage(
-            width: frameWidth,
-            height: frameHeight,
-            bitsPerComponent: 8,
-            bitsPerPixel: 32,
-            bytesPerRow: stride,
-            space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: [.byteOrder32Little, CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipFirst.rawValue)],
-            provider: provider,
-            decode: nil,
-            shouldInterpolate: false,
-            intent: .defaultIntent
-        )
+        return pixelFormat
     }
 }
 
