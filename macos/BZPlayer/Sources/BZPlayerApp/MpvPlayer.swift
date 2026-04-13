@@ -20,6 +20,10 @@ final class MpvPlayer: NSObject {
     private var isRenderScheduled = false
     private var needsAnotherRender = false
     private var lastRenderAt: CFTimeInterval = 0
+    private var latestPlaybackTime: Double = 0
+    private var lastPresentedPlaybackTime: Double?
+    private var sourceFPS: Double = 30
+    private var displayFPS: Double = 60
 
     override init() {
         super.init()
@@ -67,6 +71,7 @@ final class MpvPlayer: NSObject {
 
     func seek(seconds: Double) {
         guard seconds.isFinite else { return }
+        resetSamplingState()
         setDoubleProperty("time-pos", seconds)
     }
 
@@ -148,6 +153,9 @@ final class MpvPlayer: NSObject {
         _ = mpv_observe_property(handle, 1, "time-pos", MPV_FORMAT_DOUBLE)
         _ = mpv_observe_property(handle, 2, "duration", MPV_FORMAT_DOUBLE)
         _ = mpv_observe_property(handle, 3, "pause", MPV_FORMAT_FLAG)
+        _ = mpv_observe_property(handle, 4, "estimated-vf-fps", MPV_FORMAT_DOUBLE)
+        _ = mpv_observe_property(handle, 5, "container-fps", MPV_FORMAT_DOUBLE)
+        _ = mpv_observe_property(handle, 6, "display-fps", MPV_FORMAT_DOUBLE)
     }
 
     func processEvents() {
@@ -162,6 +170,7 @@ final class MpvPlayer: NSObject {
 
             switch eventID {
             case MPV_EVENT_FILE_LOADED:
+                resetSamplingState()
                 setDoubleProperty("speed", configuredSpeed)
                 if let pendingResumeTime, pendingResumeTime > 0 {
                     setDoubleProperty("time-pos", pendingResumeTime)
@@ -186,7 +195,11 @@ final class MpvPlayer: NSObject {
     func renderCurrentFrame() {
         guard let renderContext, let attachedView else { return }
         isRenderScheduled = false
-        lastRenderAt = CACurrentMediaTime()
+        let profile = renderProfile(for: configuredSpeed)
+        if let remainingDelay = remainingWallDelay(for: profile), remainingDelay > 0 {
+            scheduleRender(after: remainingDelay)
+            return
+        }
 
         attachedView.renderFrame { size, fbo, flipY in
             var target = mpv_opengl_fbo(fbo: fbo, w: size.x, h: size.y, internal_format: 0)
@@ -205,6 +218,10 @@ final class MpvPlayer: NSObject {
                 }
             }
         }
+        lastRenderAt = CACurrentMediaTime()
+        if latestPlaybackTime.isFinite {
+            lastPresentedPlaybackTime = latestPlaybackTime
+        }
 
         if needsAnotherRender {
             needsAnotherRender = false
@@ -218,40 +235,22 @@ final class MpvPlayer: NSObject {
             needsAnotherRender = true
             return
         }
-        let now = CACurrentMediaTime()
-        let minInterval = renderInterval(for: configuredSpeed)
-        let elapsed = now - lastRenderAt
         isRenderScheduled = true
-        let delay = max(0, minInterval - elapsed)
-        if delay > 0 {
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-                self?.renderCurrentFrame()
-            }
-        } else {
-            DispatchQueue.main.async { [weak self] in
-                self?.renderCurrentFrame()
-            }
-        }
+        scheduleRender(after: remainingWallDelay(for: renderProfile(for: configuredSpeed)) ?? 0)
     }
 
     private func applyPlaybackProfile(for speed: Double) {
-        setFlagProperty("mute", speed >= 12)
-        if speed >= 12 {
-            setFlagProperty("audio-pitch-correction", false)
-        } else {
-            setFlagProperty("audio-pitch-correction", true)
-        }
-    }
-
-    private func renderInterval(for speed: Double) -> CFTimeInterval {
-        switch speed {
-        case 16...:
-            return 1.0 / 24.0
-        case 12...:
-            return 1.0 / 30.0
-        default:
-            return 0
-        }
+        let profile = renderProfile(for: speed)
+        setFlagProperty("mute", profile.muteAudio)
+        setFlagProperty("audio-pitch-correction", profile.pitchCorrection)
+        setStringProperty("video-sync", profile.videoSync)
+        setStringProperty("framedrop", profile.framedrop)
+        setStringProperty("vd-lavc-framedrop", profile.decoderFramedrop)
+        setStringProperty("vd-lavc-skipframe", profile.skipFrame)
+        setStringProperty("vd-lavc-skiploopfilter", profile.skipLoopFilter)
+        setFlagProperty("vd-lavc-fast", profile.fastDecode)
+        setFlagProperty("interpolation", false)
+        resetSamplingState()
     }
 
     private func prepareRenderer(for view: MpvRenderView) {
@@ -273,13 +272,30 @@ final class MpvPlayer: NSObject {
         switch name {
         case "time-pos":
             guard property.format == MPV_FORMAT_DOUBLE, let data = property.data?.assumingMemoryBound(to: Double.self) else { return }
-            onTimeChanged?(max(0, data.pointee))
+            let value = max(0, data.pointee)
+            if value + 0.25 < latestPlaybackTime {
+                lastPresentedPlaybackTime = nil
+            }
+            latestPlaybackTime = value
+            onTimeChanged?(value)
         case "duration":
             guard property.format == MPV_FORMAT_DOUBLE, let data = property.data?.assumingMemoryBound(to: Double.self) else { return }
             onDurationChanged?(max(0, data.pointee))
         case "pause":
             guard property.format == MPV_FORMAT_FLAG, let data = property.data?.assumingMemoryBound(to: Int32.self) else { return }
             onPauseChanged?(data.pointee != 0)
+        case "estimated-vf-fps", "container-fps":
+            guard property.format == MPV_FORMAT_DOUBLE, let data = property.data?.assumingMemoryBound(to: Double.self) else { return }
+            let fps = data.pointee
+            if fps.isFinite, fps > 1 {
+                sourceFPS = fps
+            }
+        case "display-fps":
+            guard property.format == MPV_FORMAT_DOUBLE, let data = property.data?.assumingMemoryBound(to: Double.self) else { return }
+            let fps = data.pointee
+            if fps.isFinite, fps > 1 {
+                displayFPS = fps
+            }
         default:
             return
         }
@@ -301,6 +317,13 @@ final class MpvPlayer: NSObject {
         }
     }
 
+    private func setStringProperty(_ name: String, _ value: String) {
+        guard let handle else { return }
+        _ = value.withCString { stringPtr in
+            mpv_set_property_string(handle, name, stringPtr)
+        }
+    }
+
     private func command(_ args: [String], on handle: OpaquePointer) {
         let cStrings = args.map { strdup($0) }
         defer {
@@ -314,6 +337,132 @@ final class MpvPlayer: NSObject {
         pointers.withUnsafeMutableBufferPointer { buffer in
             _ = mpv_command(handle, buffer.baseAddress)
         }
+    }
+}
+
+private extension MpvPlayer {
+    struct RenderProfile {
+        let targetOutputFPS: Double
+        let contentStep: Double
+        let wallInterval: CFTimeInterval
+        let muteAudio: Bool
+        let pitchCorrection: Bool
+        let videoSync: String
+        let framedrop: String
+        let decoderFramedrop: String
+        let skipFrame: String
+        let skipLoopFilter: String
+        let fastDecode: Bool
+    }
+
+    func renderProfile(for speed: Double) -> RenderProfile {
+        let effectiveSourceFPS = sourceFPS.isFinite && sourceFPS > 1 ? sourceFPS : 30
+        let effectiveDisplayFPS = displayFPS.isFinite && displayFPS > 1 ? displayFPS : 60
+        let renderBudgetFPS: Double
+        switch speed {
+        case 16...:
+            renderBudgetFPS = min(effectiveDisplayFPS, 48)
+        case 8...:
+            renderBudgetFPS = min(effectiveDisplayFPS, 60)
+        default:
+            renderBudgetFPS = min(effectiveDisplayFPS, 60)
+        }
+
+        let contentFPS = max(effectiveSourceFPS * max(speed, 0.25), 1)
+        let targetOutputFPS = max(12, min(renderBudgetFPS, contentFPS))
+        let wallInterval = 1.0 / targetOutputFPS
+        let contentStep = max(speed, 0.25) / targetOutputFPS
+
+        switch speed {
+        case 16...:
+            return RenderProfile(
+                targetOutputFPS: targetOutputFPS,
+                contentStep: contentStep,
+                wallInterval: wallInterval,
+                muteAudio: true,
+                pitchCorrection: false,
+                videoSync: "display-vdrop",
+                framedrop: "decoder+vo",
+                decoderFramedrop: "nonref",
+                skipFrame: "nonref",
+                skipLoopFilter: "nonref",
+                fastDecode: true
+            )
+        case 8...:
+            return RenderProfile(
+                targetOutputFPS: targetOutputFPS,
+                contentStep: contentStep,
+                wallInterval: wallInterval,
+                muteAudio: false,
+                pitchCorrection: true,
+                videoSync: "audio",
+                framedrop: "decoder+vo",
+                decoderFramedrop: "bidir",
+                skipFrame: "bidir",
+                skipLoopFilter: "nonref",
+                fastDecode: true
+            )
+        case 4...:
+            return RenderProfile(
+                targetOutputFPS: targetOutputFPS,
+                contentStep: contentStep,
+                wallInterval: wallInterval,
+                muteAudio: false,
+                pitchCorrection: true,
+                videoSync: "audio",
+                framedrop: "vo",
+                decoderFramedrop: "nonref",
+                skipFrame: "default",
+                skipLoopFilter: "default",
+                fastDecode: false
+            )
+        default:
+            return RenderProfile(
+                targetOutputFPS: targetOutputFPS,
+                contentStep: contentStep,
+                wallInterval: wallInterval,
+                muteAudio: false,
+                pitchCorrection: true,
+                videoSync: "audio",
+                framedrop: "vo",
+                decoderFramedrop: "nonref",
+                skipFrame: "default",
+                skipLoopFilter: "default",
+                fastDecode: false
+            )
+        }
+    }
+
+    func remainingWallDelay(for profile: RenderProfile) -> CFTimeInterval? {
+        let now = CACurrentMediaTime()
+        let wallDelay = max(0, profile.wallInterval - (now - lastRenderAt))
+
+        guard configuredSpeed >= 8, let lastPresentedPlaybackTime else {
+            return wallDelay
+        }
+
+        let advanced = max(0, latestPlaybackTime - lastPresentedPlaybackTime)
+        let remainingContent = max(0, profile.contentStep - advanced)
+        let contentDelay = remainingContent / max(configuredSpeed, 0.25)
+        return max(wallDelay, contentDelay)
+    }
+
+    func scheduleRender(after delay: CFTimeInterval) {
+        if delay > 0 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                self?.renderCurrentFrame()
+            }
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                self?.renderCurrentFrame()
+            }
+        }
+    }
+
+    func resetSamplingState() {
+        latestPlaybackTime = 0
+        lastPresentedPlaybackTime = nil
+        lastRenderAt = 0
     }
 }
 
