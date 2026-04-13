@@ -132,10 +132,14 @@ final class PlayerViewModel: NSObject, ObservableObject {
             return
         }
 
+        let wasPlaying = !isPaused
         Task {
             let text = await buildFileInfoText(url: url)
             await MainActor.run {
                 self.showAlert(title: "文件信息", message: text)
+                if wasPlaying {
+                    self.play()
+                }
             }
         }
     }
@@ -200,11 +204,14 @@ final class PlayerViewModel: NSObject, ObservableObject {
             forInterval: CMTime(seconds: 0.1, preferredTimescale: 600),
             queue: .main
         ) { [weak self] time in
-            guard let self, self.playbackBackend == .native else { return }
-            let seconds = time.seconds
-            self.currentTime = seconds.isFinite ? max(0, seconds) : 0
-            if Int(self.currentTime * 10) % 30 == 0 {
-                self.saveCurrentProgress()
+            guard let self else { return }
+            Task { @MainActor [weak self] in
+                guard let self, self.playbackBackend == .native else { return }
+                let seconds = time.seconds
+                self.currentTime = seconds.isFinite ? max(0, seconds) : 0
+                if Int(self.currentTime * 10) % 30 == 0 {
+                    self.saveCurrentProgress()
+                }
             }
         }
 
@@ -213,9 +220,12 @@ final class PlayerViewModel: NSObject, ObservableObject {
             object: nil,
             queue: .main
         ) { [weak self] notification in
-            guard let self, self.playbackBackend == .native else { return }
-            guard notification.object as? AVPlayerItem === self.nativePlayer.currentItem else { return }
-            self.isPaused = true
+            guard let self else { return }
+            Task { @MainActor [weak self] in
+                guard let self, self.playbackBackend == .native else { return }
+                guard notification.object as? AVPlayerItem === self.nativePlayer.currentItem else { return }
+                self.isPaused = true
+            }
         }
     }
 
@@ -256,18 +266,21 @@ final class PlayerViewModel: NSObject, ObservableObject {
     private func openWithNative(url: URL, resumeAt: Double?) {
         let item = AVPlayerItem(url: url)
         nativeItemStatusObserver = item.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in
-            guard let self, self.playbackBackend == .native else { return }
-            if item.status == .readyToPlay {
-                let seconds = item.duration.seconds
-                self.duration = seconds.isFinite ? max(0, seconds) : 0
-                self.syncText = "播放链路：系统原生"
-                self.playbackEngineStatus = "播放引擎：AVPlayer"
-                self.isPaused = false
-                if let resumeAt, resumeAt > 0 {
-                    self.nativePlayer.seek(to: CMTime(seconds: resumeAt, preferredTimescale: 600))
+            guard let self else { return }
+            Task { @MainActor [weak self] in
+                guard let self, self.playbackBackend == .native else { return }
+                if item.status == .readyToPlay {
+                    let seconds = item.duration.seconds
+                    self.duration = seconds.isFinite ? max(0, seconds) : 0
+                    self.syncText = "播放链路：系统原生"
+                    self.playbackEngineStatus = "播放引擎：AVPlayer"
+                    self.isPaused = false
+                    if let resumeAt, resumeAt > 0 {
+                        self.nativePlayer.seek(to: CMTime(seconds: resumeAt, preferredTimescale: 600))
+                    }
+                    self.nativePlayer.play()
+                    self.nativePlayer.rate = Float(self.speed)
                 }
-                self.nativePlayer.play()
-                self.nativePlayer.rate = Float(self.speed)
             }
         }
         nativePlayer.replaceCurrentItem(with: item)
