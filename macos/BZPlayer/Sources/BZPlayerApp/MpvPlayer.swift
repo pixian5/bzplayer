@@ -25,6 +25,8 @@ final class MpvPlayer: NSObject {
     private var sourceFPS: Double = 30
     private var displayFPS: Double = 60
     private var renderWarmupUntil: CFTimeInterval = 0
+    private var effectiveSpeed: Double = 1.0
+    private var speedTransitionTask: DispatchWorkItem?
 
     override init() {
         super.init()
@@ -58,17 +60,20 @@ final class MpvPlayer: NSObject {
 
         pendingResumeTime = resumeAt
         configuredSpeed = max(0.25, configuredSpeed)
+        speedTransitionTask?.cancel()
         onStatusChanged?("播放引擎：mpv/libmpv")
         command(["loadfile", url.path, "replace"], on: handle)
     }
 
     func play() {
         armRenderWarmup()
+        applySpeedTransitionIfNeeded()
         setFlagProperty("pause", false)
         requestRender()
     }
 
     func pause() {
+        speedTransitionTask?.cancel()
         setFlagProperty("pause", true)
     }
 
@@ -81,14 +86,14 @@ final class MpvPlayer: NSObject {
         } else {
             setDoubleProperty("time-pos", seconds)
         }
+        applySpeedTransitionIfNeeded()
         requestRender()
     }
 
     func setSpeed(_ speed: Double) {
         configuredSpeed = speed
-        applyPlaybackProfile(for: speed)
-        setDoubleProperty("speed", speed)
         armRenderWarmup()
+        applySpeedTransitionIfNeeded()
         requestRender()
     }
 
@@ -185,7 +190,7 @@ final class MpvPlayer: NSObject {
             case MPV_EVENT_FILE_LOADED:
                 resetSamplingState()
                 armRenderWarmup(duration: 0.35)
-                setDoubleProperty("speed", configuredSpeed)
+                applySpeedTransitionIfNeeded()
                 if let pendingResumeTime, pendingResumeTime > 0 {
                     setDoubleProperty("time-pos", pendingResumeTime)
                 }
@@ -267,6 +272,29 @@ final class MpvPlayer: NSObject {
         setDoubleProperty("audio-buffer", profile.audioBuffer)
         setFlagProperty("interpolation", false)
         resetSamplingState()
+    }
+
+    private func applyEffectiveSpeed(_ speed: Double) {
+        effectiveSpeed = speed
+        applyPlaybackProfile(for: speed)
+        setDoubleProperty("speed", speed)
+    }
+
+    private func applySpeedTransitionIfNeeded() {
+        speedTransitionTask?.cancel()
+        if configuredSpeed >= 8 {
+            applyEffectiveSpeed(1.0)
+            let task = DispatchWorkItem { [weak self] in
+                guard let self else { return }
+                self.armRenderWarmup(duration: 0.2)
+                self.applyEffectiveSpeed(self.configuredSpeed)
+                self.requestRender()
+            }
+            speedTransitionTask = task
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: task)
+        } else {
+            applyEffectiveSpeed(configuredSpeed)
+        }
     }
 
     private func prepareRenderer(for view: MpvRenderView) {
