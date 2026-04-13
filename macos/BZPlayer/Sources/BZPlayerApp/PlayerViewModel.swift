@@ -264,7 +264,9 @@ final class PlayerViewModel: NSObject, ObservableObject {
                     lines.append("提示：AVFoundation 未识别到音轨，但 ffprobe 检测到 \(ffprobeInfo.audioStreams.count) 条音轨。")
                     lines.append("实际播放已切换为 mpv/libmpv，兼容性以 mpv 结果为准。")
                 } else {
-                    lines.append("提示：未检测到音频轨道，这个视频本身可能就是无声的。")
+                    lines.append("提示：AVFoundation 未检测到音轨。")
+                    lines.append("若文件在其它播放器有声音，通常是当前系统媒体解析兼容性问题，而不一定是源文件无声。")
+                    lines.append("当前未拿到 ffprobe 音轨结果，因此暂时无法进一步确认。")
                 }
             }
 

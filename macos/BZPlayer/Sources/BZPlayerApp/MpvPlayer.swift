@@ -231,6 +231,7 @@ final class MpvPlayer: NSObject {
     }
 
     private func applyPlaybackProfile(for speed: Double) {
+        setFlagProperty("mute", speed >= 12)
         if speed >= 12 {
             setFlagProperty("audio-pitch-correction", false)
         } else {
