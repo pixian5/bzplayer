@@ -9,7 +9,6 @@ struct PlayerRootView: View {
     @State private var isHoveringPlaylist = false
     @State private var isHoveringControlBar = false
     @State private var isControlsVisible = false
-    @State private var hideControlsTask: DispatchWorkItem?
     @State private var controlBarFrame: CGRect = .zero
     @State private var playerAreaFrame: CGRect = .zero
 
@@ -38,7 +37,6 @@ struct PlayerRootView: View {
             if let eventMonitor {
                 NSEvent.removeMonitor(eventMonitor)
             }
-            hideControlsTask?.cancel()
         }
         .onReceive(viewModel.$currentTime) { current in
             guard viewModel.duration > 0 else {
@@ -284,41 +282,34 @@ struct PlayerRootView: View {
             isControlsVisible = true
         }
         if shouldPinControlsVisible {
-            hideControlsTask?.cancel()
             return
         }
-        scheduleControlsHide()
     }
 
     private func scheduleControlsHide() {
         if shouldPinControlsVisible {
-            hideControlsTask?.cancel()
             if !isControlsVisible {
                 isControlsVisible = true
             }
             return
         }
-        hideControlsTask?.cancel()
-        let task = DispatchWorkItem {
-            if shouldKeepControlsVisible() {
-                scheduleControlsHide()
-                return
+        if shouldKeepControlsVisible() {
+            if !isControlsVisible {
+                isControlsVisible = true
             }
+            return
+        }
 
-            withAnimation(.easeOut(duration: 0.12)) {
-                isControlsVisible = false
-                if !isHoveringPlaylist {
-                    shouldShowPlaylist = false
-                }
+        withAnimation(.easeOut(duration: 0.12)) {
+            isControlsVisible = false
+            if !isHoveringPlaylist {
+                shouldShowPlaylist = false
             }
         }
-        hideControlsTask = task
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: task)
     }
 
     private func syncControlsVisibilityWithPlaybackState() {
         if shouldPinControlsVisible {
-            hideControlsTask?.cancel()
             if !isControlsVisible {
                 isControlsVisible = true
             }
