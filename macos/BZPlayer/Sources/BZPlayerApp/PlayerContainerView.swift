@@ -79,6 +79,7 @@ final class MpvRenderView: NSView {
         wantsLayer = true
         layer = CALayer()
         layer?.backgroundColor = NSColor.black.cgColor
+        layer?.isGeometryFlipped = true
         layer?.contentsGravity = .resizeAspect
         layer?.contentsScale = NSScreen.main?.backingScaleFactor ?? 2
     }
