@@ -12,11 +12,14 @@ struct PlayerRootView: View {
     @State private var hideControlsTask: DispatchWorkItem?
 
     var body: some View {
-        VStack(spacing: 0) {
+        ZStack(alignment: .bottom) {
             playerArea
             if isControlsVisible {
                 controlBar
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 12)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .zIndex(2)
             }
         }
         .animation(.easeInOut(duration: 0.2), value: isControlsVisible)
@@ -63,6 +66,7 @@ struct PlayerRootView: View {
             ZStack(alignment: .trailing) {
                 PlayerContainerView(viewModel: viewModel)
                     .background(Color.black)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .onContinuousHover { phase in
                         switch phase {
                         case .active(let location):
@@ -81,6 +85,7 @@ struct PlayerRootView: View {
             }
             .animation(.easeInOut(duration: 0.15), value: shouldShowPlaylist)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var playlistPanel: some View {
@@ -175,8 +180,18 @@ struct PlayerRootView: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .padding(12)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color.black.opacity(0.72))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+        )
+        .foregroundStyle(.white)
+        .shadow(color: .black.opacity(0.28), radius: 16, y: 8)
     }
 
     private func handleKey(_ event: NSEvent) -> NSEvent? {
