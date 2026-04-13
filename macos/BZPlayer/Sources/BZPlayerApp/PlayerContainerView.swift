@@ -116,7 +116,10 @@ final class MpvRenderView: NSView {
             renderer(SIMD2(Int32(width), Int32(height)), newStride, baseAddress)
         }
 
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
         layer?.contents = makeRenderedImage()
+        CATransaction.commit()
     }
 
     private func makeRenderedImage() -> CGImage? {
