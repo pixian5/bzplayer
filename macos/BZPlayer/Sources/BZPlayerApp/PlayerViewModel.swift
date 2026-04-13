@@ -155,30 +155,94 @@ final class PlayerViewModel: NSObject, ObservableObject {
     func associateCommonVideoFormats() {
         let bundleID = (Bundle.main.bundleIdentifier ?? "tech.sbbz.bzplayer") as CFString
         let commonExtensions = ["mp4", "m4v", "mov", "mkv", "avi", "wmv", "flv", "webm", "ts", "mpeg", "mpg"]
+        let bundleURL = Bundle.main.bundleURL as CFURL
 
+        _ = LSRegisterURL(bundleURL, true)
+
+        let typeMappings = commonExtensions.compactMap { ext -> (ext: String, type: UTType)? in
+            guard let type = UTType(filenameExtension: ext) else { return nil }
+            return (ext, type)
+        }
+
+        for (_, type) in typeMappings {
+            let status = LSSetDefaultRoleHandlerForContentType(type.identifier as CFString, .all, bundleID)
+            if status != noErr {
+                fileAssociationStatus = "关联失败：系统拒绝更新 LaunchServices。"
+                return
+            }
+        }
+
+        let initialVerification = verifyAssociations(typeMappings: typeMappings, bundleID: bundleID as String)
+        if initialVerification.failed.isEmpty {
+            fileAssociationStatus = "已注册并关联：\(initialVerification.associated.joined(separator: ", "))"
+            return
+        }
+
+        forceRefreshAssociationCache(typeMappings: typeMappings, bundleID: bundleID as String)
+        let finalVerification = verifyAssociations(typeMappings: typeMappings, bundleID: bundleID as String)
+
+        if finalVerification.failed.isEmpty {
+            fileAssociationStatus = "已强制刷新并关联：\(finalVerification.associated.joined(separator: ", "))"
+        } else if finalVerification.associated.isEmpty {
+            fileAssociationStatus = "关联失败：\(finalVerification.failed.joined(separator: ", "))；请确认程序位于 /Applications/BZPlayer.app"
+        } else {
+            fileAssociationStatus = "部分成功，已关联：\(finalVerification.associated.joined(separator: ", "))；失败：\(finalVerification.failed.joined(separator: ", "))；请确认程序位于 /Applications/BZPlayer.app"
+        }
+    }
+
+    private func verifyAssociations(typeMappings: [(ext: String, type: UTType)], bundleID: String) -> (associated: [String], failed: [String]) {
         var associated: [String] = []
         var failed: [String] = []
 
-        for ext in commonExtensions {
-            guard let type = UTType(filenameExtension: ext) else {
-                failed.append(ext)
-                continue
-            }
-            let status = LSSetDefaultRoleHandlerForContentType(type.identifier as CFString, .viewer, bundleID)
-            if status == noErr {
+        for (ext, type) in typeMappings {
+            let viewer = LSCopyDefaultRoleHandlerForContentType(type.identifier as CFString, .viewer)?.takeRetainedValue() as String?
+            let all = LSCopyDefaultRoleHandlerForContentType(type.identifier as CFString, .all)?.takeRetainedValue() as String?
+            if viewer == bundleID && all == bundleID {
                 associated.append(ext)
             } else {
                 failed.append(ext)
             }
         }
+        return (associated, failed)
+    }
 
-        if failed.isEmpty {
-            fileAssociationStatus = "已关联：\(associated.joined(separator: ", "))"
-        } else if associated.isEmpty {
-            fileAssociationStatus = "关联失败：\(failed.joined(separator: ", "))"
-        } else {
-            fileAssociationStatus = "部分成功，已关联：\(associated.joined(separator: ", "))；失败：\(failed.joined(separator: ", "))"
-        }
+    private func forceRefreshAssociationCache(typeMappings: [(ext: String, type: UTType)], bundleID: String) {
+        let typeIDs = typeMappings.map(\.type.identifier)
+        let python = """
+import os, plistlib, time
+path = os.path.expanduser('~/Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.secure.plist')
+bundle_id = \(bundleID.debugDescription)
+targets = set(\(typeIDs.debugDescription))
+with open(path, 'rb') as f:
+    data = plistlib.load(f)
+handlers = data.get('LSHandlers', [])
+filtered = [h for h in handlers if h.get('LSHandlerContentType') not in targets]
+now = int(time.time())
+prefix = []
+for content_type in sorted(targets):
+    prefix.append({
+        'LSHandlerContentType': content_type,
+        'LSHandlerRoleAll': bundle_id,
+        'LSHandlerRoleViewer': bundle_id,
+        'LSHandlerModificationDate': now,
+        'LSHandlerPreferredVersions': {'LSHandlerRoleAll': '-', 'LSHandlerRoleViewer': '-'},
+    })
+data['LSHandlers'] = prefix + filtered
+with open(path, 'wb') as f:
+    plistlib.dump(data, f, fmt=plistlib.FMT_BINARY)
+"""
+        let shellScript = """
+/usr/bin/python3 - <<'PY'
+\(python)
+PY
+killall cfprefsd >/dev/null 2>&1 || true
+killall lsd >/dev/null 2>&1 || true
+"""
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        process.arguments = ["-lc", shellScript]
+        try? process.run()
+        process.waitUntilExit()
     }
 
     private func bindMpvCallbacks() {
