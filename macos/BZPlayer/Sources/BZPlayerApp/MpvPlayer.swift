@@ -16,6 +16,8 @@ final class MpvPlayer: NSObject {
     private weak var attachedView: MpvRenderView?
     private var pendingResumeTime: Double?
     private var configuredSpeed: Double = 1.0
+    private var isRenderScheduled = false
+    private var needsAnotherRender = false
 
     override init() {
         super.init()
@@ -38,7 +40,7 @@ final class MpvPlayer: NSObject {
         if handle == nil {
             createPlayer()
         }
-        renderCurrentFrame()
+        requestRender()
     }
 
     func load(url: URL, resumeAt: Double?) {
@@ -153,7 +155,7 @@ final class MpvPlayer: NSObject {
                 pendingResumeTime = nil
                 onPauseChanged?(false)
                 onFileLoaded?()
-                renderCurrentFrame()
+                requestRender()
             case MPV_EVENT_END_FILE:
                 onPauseChanged?(true)
             case MPV_EVENT_PROPERTY_CHANGE:
@@ -169,19 +171,21 @@ final class MpvPlayer: NSObject {
 
     func renderCurrentFrame() {
         guard let renderContext, let attachedView else { return }
+        isRenderScheduled = false
 
         attachedView.renderFrame { size, stride, pointer in
             var sizeStorage = [Int32(size.x), Int32(size.y)]
-            var strideStorage = stride
+            var strideStorage = -stride
             let format = strdup("bgr0")
             defer { free(format) }
             sizeStorage.withUnsafeMutableBytes { sizeBytes in
                 withUnsafeMutablePointer(to: &strideStorage) { stridePtr in
+                    let lastRowPointer = pointer.advanced(by: stride * (Int(size.y) - 1))
                     var params = [
                         mpv_render_param(type: MPV_RENDER_PARAM_SW_SIZE, data: sizeBytes.baseAddress),
                         mpv_render_param(type: MPV_RENDER_PARAM_SW_FORMAT, data: UnsafeMutableRawPointer(format)),
                         mpv_render_param(type: MPV_RENDER_PARAM_SW_STRIDE, data: stridePtr),
-                        mpv_render_param(type: MPV_RENDER_PARAM_SW_POINTER, data: pointer),
+                        mpv_render_param(type: MPV_RENDER_PARAM_SW_POINTER, data: lastRowPointer),
                         mpv_render_param(type: MPV_RENDER_PARAM_INVALID, data: nil)
                     ]
 
@@ -190,6 +194,23 @@ final class MpvPlayer: NSObject {
                     }
                 }
             }
+        }
+
+        if needsAnotherRender {
+            needsAnotherRender = false
+            requestRender()
+        }
+    }
+
+    func requestRender() {
+        guard renderContext != nil, attachedView != nil else { return }
+        if isRenderScheduled {
+            needsAnotherRender = true
+            return
+        }
+        isRenderScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            self?.renderCurrentFrame()
         }
     }
 
@@ -256,6 +277,6 @@ private let mpvRenderUpdateCallback: @convention(c) (UnsafeMutableRawPointer?) -
     guard let context else { return }
     let player = Unmanaged<MpvPlayer>.fromOpaque(context).takeUnretainedValue()
     DispatchQueue.main.async {
-        player.renderCurrentFrame()
+        player.requestRender()
     }
 }

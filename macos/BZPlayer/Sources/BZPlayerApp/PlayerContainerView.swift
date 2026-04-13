@@ -73,12 +73,14 @@ final class MpvRenderView: NSView {
     private var frameWidth = 0
     private var frameHeight = 0
     private var stride = 0
-    private var renderedImage: CGImage?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
+        layer = CALayer()
         layer?.backgroundColor = NSColor.black.cgColor
+        layer?.contentsGravity = .resizeAspect
+        layer?.contentsScale = NSScreen.main?.backingScaleFactor ?? 2
     }
 
     @available(*, unavailable)
@@ -88,6 +90,11 @@ final class MpvRenderView: NSView {
 
     override var isFlipped: Bool {
         true
+    }
+
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        layer?.contentsScale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
     }
 
     func renderFrame(_ renderer: (_ size: SIMD2<Int32>, _ stride: Int, _ pointer: UnsafeMutableRawPointer) -> Void) {
@@ -109,27 +116,17 @@ final class MpvRenderView: NSView {
             renderer(SIMD2(Int32(width), Int32(height)), newStride, baseAddress)
         }
 
-        updateRenderedImage()
-        needsDisplay = true
+        layer?.contents = makeRenderedImage()
     }
 
-    override func draw(_ dirtyRect: NSRect) {
-        NSColor.black.setFill()
-        dirtyRect.fill()
-
-        guard let context = NSGraphicsContext.current?.cgContext, let renderedImage else { return }
-        context.interpolationQuality = .high
-        context.draw(renderedImage, in: bounds)
-    }
-
-    private func updateRenderedImage() {
+    private func makeRenderedImage() -> CGImage? {
         let provider = frameBuffer.withUnsafeBytes { rawBuffer -> CGDataProvider? in
             guard let baseAddress = rawBuffer.baseAddress else { return nil }
             return CGDataProvider(dataInfo: nil, data: baseAddress, size: frameBuffer.count) { _, _, _ in }
         }
 
-        guard let provider else { return }
-        renderedImage = CGImage(
+        guard let provider else { return nil }
+        return CGImage(
             width: frameWidth,
             height: frameHeight,
             bitsPerComponent: 8,
@@ -139,7 +136,7 @@ final class MpvRenderView: NSView {
             bitmapInfo: [.byteOrder32Little, CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipFirst.rawValue)],
             provider: provider,
             decode: nil,
-            shouldInterpolate: true,
+            shouldInterpolate: false,
             intent: .defaultIntent
         )
     }
