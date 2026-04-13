@@ -6,6 +6,9 @@ struct PlayerContainerView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> PlayerHostView {
         let view = PlayerHostView()
+        view.onViewReady = { playerSurfaceView in
+            viewModel.attachPlayerView(playerSurfaceView)
+        }
         view.clickView.onSingleClick = {
             viewModel.togglePause()
         }
@@ -27,6 +30,7 @@ struct PlayerContainerView: NSViewRepresentable {
 final class PlayerHostView: NSView {
     let playerSurfaceView = NSView()
     let clickView = ClickCaptureView()
+    var onViewReady: ((NSView) -> Void)?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -54,6 +58,12 @@ final class PlayerHostView: NSView {
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard window != nil else { return }
+        onViewReady?(playerSurfaceView)
     }
 }
 

@@ -31,6 +31,10 @@ final class MpvPlayer: NSObject {
 
     func attach(to view: NSView) {
         attachedView = view
+        guard view.window != nil else {
+            onStatusChanged?("播放引擎：等待主窗口挂载")
+            return
+        }
         if handle == nil {
             createPlayer(attachedTo: view)
         } else {
