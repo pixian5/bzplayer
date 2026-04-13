@@ -14,15 +14,15 @@ struct PlayerRootView: View {
     var body: some View {
         ZStack(alignment: .bottom) {
             playerArea
-            if isControlsVisible {
-                controlBar
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 12)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-                    .zIndex(2)
-            }
+            controlBar
+                .padding(.horizontal, 12)
+                .padding(.bottom, 12)
+                .opacity(isControlsVisible ? 1 : 0)
+                .offset(y: isControlsVisible ? 0 : 18)
+                .allowsHitTesting(isControlsVisible)
+                .zIndex(2)
         }
-        .animation(.easeInOut(duration: 0.2), value: isControlsVisible)
+        .animation(.easeOut(duration: 0.12), value: isControlsVisible)
         .onAppear {
             eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
                 handleKey(event)
@@ -199,13 +199,13 @@ struct PlayerRootView: View {
                 .stroke(Color.white.opacity(0.08), lineWidth: 1)
         )
         .foregroundStyle(.white)
-        .shadow(color: .black.opacity(0.28), radius: 16, y: 8)
+        .shadow(color: .black.opacity(0.18), radius: 8, y: 4)
         .onHover { hovering in
             isHoveringControlBar = hovering
             if hovering {
                 revealControlsAndScheduleHide()
             } else {
-                revealControlsAndScheduleHide()
+                scheduleControlsHide()
             }
         }
     }
@@ -243,10 +243,16 @@ struct PlayerRootView: View {
     }
 
     private func revealControlsAndScheduleHide() {
-        isControlsVisible = true
+        if !isControlsVisible {
+            isControlsVisible = true
+        }
+        scheduleControlsHide()
+    }
+
+    private func scheduleControlsHide() {
         hideControlsTask?.cancel()
         let task = DispatchWorkItem {
-            withAnimation(.easeInOut(duration: 0.2)) {
+            withAnimation(.easeOut(duration: 0.12)) {
                 isControlsVisible = false
                 if !isHoveringPlaylist {
                     shouldShowPlaylist = false
