@@ -11,6 +11,7 @@ struct PlayerRootView: View {
     @State private var isControlsVisible = false
     @State private var hideControlsTask: DispatchWorkItem?
     @State private var controlBarFrame: CGRect = .zero
+    @State private var playerAreaFrame: CGRect = .zero
 
     private var shouldPinControlsVisible: Bool {
         !viewModel.hasOpenedFile || viewModel.hasReachedEndOfPlayback
@@ -23,7 +24,6 @@ struct PlayerRootView: View {
                 .padding(.horizontal, 12)
                 .padding(.bottom, 12)
                 .opacity(isControlsVisible ? 1 : 0)
-                .offset(y: isControlsVisible ? 0 : 18)
                 .allowsHitTesting(isControlsVisible)
                 .zIndex(2)
         }
@@ -71,17 +71,13 @@ struct PlayerRootView: View {
                         switch phase {
                         case .active(let location):
                             let triggerWidth = max(proxy.size.width * 0.05, 24)
-                            let triggerHeight = max(proxy.size.height * 0.15, 24)
                             shouldShowPlaylist = isHoveringPlaylist || location.x >= proxy.size.width - triggerWidth
                             if shouldPinControlsVisible {
                                 revealControlsAndScheduleHide()
-                            } else if isHoveringControlBar || location.y >= proxy.size.height - triggerHeight {
+                            } else if shouldKeepControlsVisible() {
                                 revealControlsAndScheduleHide()
-                            } else if !isHoveringControlBar {
-                                hideControlsTask?.cancel()
-                                withAnimation(.easeInOut(duration: 0.2)) {
-                                    isControlsVisible = false
-                                }
+                            } else if isControlsVisible {
+                                scheduleControlsHide()
                             }
                         case .ended:
                             if !isHoveringPlaylist {
@@ -89,11 +85,8 @@ struct PlayerRootView: View {
                             }
                             if shouldPinControlsVisible {
                                 revealControlsAndScheduleHide()
-                            } else if !isHoveringControlBar {
-                                hideControlsTask?.cancel()
-                                withAnimation(.easeInOut(duration: 0.2)) {
-                                    isControlsVisible = false
-                                }
+                            } else if isControlsVisible {
+                                scheduleControlsHide()
                             }
                         }
                     }
@@ -105,6 +98,17 @@ struct PlayerRootView: View {
                 }
             }
             .animation(.easeInOut(duration: 0.15), value: shouldShowPlaylist)
+            .background(
+                GeometryReader { innerProxy in
+                    Color.clear
+                        .onAppear {
+                            playerAreaFrame = innerProxy.frame(in: .global)
+                        }
+                        .onChange(of: innerProxy.frame(in: .global)) { frame in
+                            playerAreaFrame = frame
+                        }
+                }
+            )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -293,11 +297,8 @@ struct PlayerRootView: View {
         }
         hideControlsTask?.cancel()
         let task = DispatchWorkItem {
-            let mouseLocation = NSEvent.mouseLocation
-            let cursorIsInsideControlBar = controlBarFrame.contains(mouseLocation)
-            if cursorIsInsideControlBar {
-                isHoveringControlBar = true
-                revealControlsAndScheduleHide()
+            if shouldKeepControlsVisible() {
+                scheduleControlsHide()
                 return
             }
 
@@ -319,5 +320,26 @@ struct PlayerRootView: View {
                 isControlsVisible = true
             }
         }
+    }
+
+    private func cursorIsInsideControlBar() -> Bool {
+        controlBarFrame.contains(NSEvent.mouseLocation)
+    }
+
+    private func cursorIsInsideBottomControlRegion() -> Bool {
+        guard !playerAreaFrame.isEmpty else { return false }
+        let triggerHeight = max(playerAreaFrame.height * 0.15, 24)
+        let controlRegionHeight = max(triggerHeight, controlBarFrame.height + 32)
+        let region = CGRect(
+            x: playerAreaFrame.minX,
+            y: playerAreaFrame.maxY - controlRegionHeight,
+            width: playerAreaFrame.width,
+            height: controlRegionHeight
+        )
+        return region.contains(NSEvent.mouseLocation)
+    }
+
+    private func shouldKeepControlsVisible() -> Bool {
+        shouldPinControlsVisible || isHoveringControlBar || cursorIsInsideBottomControlRegion() || cursorIsInsideControlBar()
     }
 }
