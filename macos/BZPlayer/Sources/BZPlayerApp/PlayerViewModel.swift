@@ -27,7 +27,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         bindPlayerCallbacks()
     }
 
-    func attachPlayerView(_ view: NSView) {
+    func attachPlayerView(_ view: MpvRenderView) {
         player.attach(to: view)
     }
 

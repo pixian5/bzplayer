@@ -12,10 +12,10 @@ final class MpvPlayer: NSObject {
     var onStatusChanged: ((String) -> Void)?
 
     private var handle: OpaquePointer?
-    private weak var attachedView: NSView?
+    private var renderContext: OpaquePointer?
+    private weak var attachedView: MpvRenderView?
     private var pendingResumeTime: Double?
     private var configuredSpeed: Double = 1.0
-    private var isInitialized = false
 
     override init() {
         super.init()
@@ -23,23 +23,22 @@ final class MpvPlayer: NSObject {
     }
 
     deinit {
+        if let renderContext {
+            mpv_render_context_set_update_callback(renderContext, nil, nil)
+            mpv_render_context_free(renderContext)
+        }
         if let handle {
             mpv_set_wakeup_callback(handle, nil, nil)
             mpv_terminate_destroy(handle)
         }
     }
 
-    func attach(to view: NSView) {
+    func attach(to view: MpvRenderView) {
         attachedView = view
-        guard view.window != nil else {
-            onStatusChanged?("播放引擎：等待主窗口挂载")
-            return
-        }
         if handle == nil {
-            createPlayer(attachedTo: view)
-        } else {
-            setWindowID(for: view, asOption: false)
+            createPlayer()
         }
+        renderCurrentFrame()
     }
 
     func load(url: URL, resumeAt: Double?) {
@@ -72,14 +71,13 @@ final class MpvPlayer: NSObject {
         setDoubleProperty("speed", speed)
     }
 
-    private func createPlayer(attachedTo view: NSView) {
+    private func createPlayer() {
         guard let handle = mpv_create() else {
             onStatusChanged?("播放引擎：mpv 创建失败")
             return
         }
 
         self.handle = handle
-        setWindowID(for: view, asOption: true)
         mpv_set_option_string(handle, "config", "no")
         mpv_set_option_string(handle, "terminal", "no")
         mpv_set_option_string(handle, "osc", "no")
@@ -87,8 +85,9 @@ final class MpvPlayer: NSObject {
         mpv_set_option_string(handle, "idle", "yes")
         mpv_set_option_string(handle, "input-default-bindings", "no")
         mpv_set_option_string(handle, "input-vo-keyboard", "no")
+        mpv_set_option_string(handle, "force-window", "no")
         mpv_set_option_string(handle, "hwdec", "auto-safe")
-        mpv_set_option_string(handle, "vo", "gpu-next")
+        mpv_set_option_string(handle, "vo", "libmpv")
 
         let result = mpv_initialize(handle)
         guard result >= 0 else {
@@ -98,24 +97,35 @@ final class MpvPlayer: NSObject {
             return
         }
 
-        isInitialized = true
         mpv_set_wakeup_callback(handle, mpvWakeupCallback, Unmanaged.passUnretained(self).toOpaque())
         observeProperties(on: handle)
+        createRenderContextIfNeeded()
         onStatusChanged?("播放引擎：mpv/libmpv")
     }
 
-    private func setWindowID(for view: NSView, asOption: Bool) {
-        guard let handle else { return }
-        var wid = Int64(bitPattern: UInt64(UInt(bitPattern: Unmanaged.passUnretained(view).toOpaque())))
-        if asOption {
-            withUnsafeMutablePointer(to: &wid) {
-                _ = mpv_set_option(handle, "wid", MPV_FORMAT_INT64, $0)
-            }
-        } else if isInitialized {
-            withUnsafeMutablePointer(to: &wid) {
-                _ = mpv_set_property(handle, "wid", MPV_FORMAT_INT64, $0)
-            }
+    private func createRenderContextIfNeeded() {
+        guard let handle, renderContext == nil else { return }
+
+        let apiType = strdup(MPV_RENDER_API_TYPE_SW)
+        defer { free(apiType) }
+
+        var params = [
+            mpv_render_param(type: MPV_RENDER_PARAM_API_TYPE, data: UnsafeMutableRawPointer(apiType)),
+            mpv_render_param(type: MPV_RENDER_PARAM_INVALID, data: nil)
+        ]
+
+        var context: OpaquePointer?
+        let result = params.withUnsafeMutableBufferPointer { buffer -> Int32 in
+            mpv_render_context_create(&context, handle, buffer.baseAddress)
         }
+
+        guard result >= 0, let context else {
+            onStatusChanged?("播放引擎：mpv render 初始化失败")
+            return
+        }
+
+        renderContext = context
+        mpv_render_context_set_update_callback(context, mpvRenderUpdateCallback, Unmanaged.passUnretained(self).toOpaque())
     }
 
     private func observeProperties(on handle: OpaquePointer) {
@@ -143,6 +153,7 @@ final class MpvPlayer: NSObject {
                 pendingResumeTime = nil
                 onPauseChanged?(false)
                 onFileLoaded?()
+                renderCurrentFrame()
             case MPV_EVENT_END_FILE:
                 onPauseChanged?(true)
             case MPV_EVENT_PROPERTY_CHANGE:
@@ -152,6 +163,32 @@ final class MpvPlayer: NSObject {
                 handlePropertyChange(data.pointee)
             default:
                 continue
+            }
+        }
+    }
+
+    func renderCurrentFrame() {
+        guard let renderContext, let attachedView else { return }
+
+        attachedView.renderFrame { size, stride, pointer in
+            var sizeStorage = [Int32(size.x), Int32(size.y)]
+            var strideStorage = stride
+            let format = strdup("bgr0")
+            defer { free(format) }
+            sizeStorage.withUnsafeMutableBytes { sizeBytes in
+                withUnsafeMutablePointer(to: &strideStorage) { stridePtr in
+                    var params = [
+                        mpv_render_param(type: MPV_RENDER_PARAM_SW_SIZE, data: sizeBytes.baseAddress),
+                        mpv_render_param(type: MPV_RENDER_PARAM_SW_FORMAT, data: UnsafeMutableRawPointer(format)),
+                        mpv_render_param(type: MPV_RENDER_PARAM_SW_STRIDE, data: stridePtr),
+                        mpv_render_param(type: MPV_RENDER_PARAM_SW_POINTER, data: pointer),
+                        mpv_render_param(type: MPV_RENDER_PARAM_INVALID, data: nil)
+                    ]
+
+                    params.withUnsafeMutableBufferPointer { buffer in
+                        _ = mpv_render_context_render(renderContext, buffer.baseAddress)
+                    }
+                }
             }
         }
     }
@@ -212,5 +249,13 @@ private let mpvWakeupCallback: @convention(c) (UnsafeMutableRawPointer?) -> Void
     let player = Unmanaged<MpvPlayer>.fromOpaque(context).takeUnretainedValue()
     DispatchQueue.main.async {
         player.processEvents()
+    }
+}
+
+private let mpvRenderUpdateCallback: @convention(c) (UnsafeMutableRawPointer?) -> Void = { context in
+    guard let context else { return }
+    let player = Unmanaged<MpvPlayer>.fromOpaque(context).takeUnretainedValue()
+    DispatchQueue.main.async {
+        player.renderCurrentFrame()
     }
 }

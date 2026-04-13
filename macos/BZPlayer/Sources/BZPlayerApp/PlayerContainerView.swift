@@ -18,19 +18,20 @@ struct PlayerContainerView: NSViewRepresentable {
         view.clickView.onRequestFileInfo = {
             viewModel.showFileInfo()
         }
-        viewModel.attachPlayerView(view.playerSurfaceView)
         return view
     }
 
     func updateNSView(_ nsView: PlayerHostView, context: Context) {
-        viewModel.attachPlayerView(nsView.playerSurfaceView)
+        if nsView.window != nil {
+            viewModel.attachPlayerView(nsView.playerSurfaceView)
+        }
     }
 }
 
 final class PlayerHostView: NSView {
-    let playerSurfaceView = NSView()
+    let playerSurfaceView = MpvRenderView()
     let clickView = ClickCaptureView()
-    var onViewReady: ((NSView) -> Void)?
+    var onViewReady: ((MpvRenderView) -> Void)?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -64,6 +65,83 @@ final class PlayerHostView: NSView {
         super.viewDidMoveToWindow()
         guard window != nil else { return }
         onViewReady?(playerSurfaceView)
+    }
+}
+
+final class MpvRenderView: NSView {
+    private var frameBuffer = Data()
+    private var frameWidth = 0
+    private var frameHeight = 0
+    private var stride = 0
+    private var renderedImage: CGImage?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.black.cgColor
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override var isFlipped: Bool {
+        true
+    }
+
+    func renderFrame(_ renderer: (_ size: SIMD2<Int32>, _ stride: Int, _ pointer: UnsafeMutableRawPointer) -> Void) {
+        let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
+        let width = max(Int(bounds.width * scale), 1)
+        let height = max(Int(bounds.height * scale), 1)
+        let newStride = ((width * 4) + 63) & ~63
+        let requiredBytes = newStride * height
+
+        if frameBuffer.count != requiredBytes {
+            frameBuffer = Data(count: requiredBytes)
+        }
+        frameWidth = width
+        frameHeight = height
+        stride = newStride
+
+        frameBuffer.withUnsafeMutableBytes { rawBuffer in
+            guard let baseAddress = rawBuffer.baseAddress else { return }
+            renderer(SIMD2(Int32(width), Int32(height)), newStride, baseAddress)
+        }
+
+        updateRenderedImage()
+        needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.black.setFill()
+        dirtyRect.fill()
+
+        guard let context = NSGraphicsContext.current?.cgContext, let renderedImage else { return }
+        context.interpolationQuality = .high
+        context.draw(renderedImage, in: bounds)
+    }
+
+    private func updateRenderedImage() {
+        let provider = frameBuffer.withUnsafeBytes { rawBuffer -> CGDataProvider? in
+            guard let baseAddress = rawBuffer.baseAddress else { return nil }
+            return CGDataProvider(dataInfo: nil, data: baseAddress, size: frameBuffer.count) { _, _, _ in }
+        }
+
+        guard let provider else { return }
+        renderedImage = CGImage(
+            width: frameWidth,
+            height: frameHeight,
+            bitsPerComponent: 8,
+            bitsPerPixel: 32,
+            bytesPerRow: stride,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: [.byteOrder32Little, CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipFirst.rawValue)],
+            provider: provider,
+            decode: nil,
+            shouldInterpolate: true,
+            intent: .defaultIntent
+        )
     }
 }
 
