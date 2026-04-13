@@ -56,7 +56,7 @@ struct PlayerRootView: View {
                         switch phase {
                         case .active(let location):
                             let triggerWidth = max(proxy.size.width * 0.05, 24)
-                            let triggerHeight = max(proxy.size.height * 0.05, 24)
+                            let triggerHeight = max(proxy.size.height * 0.10, 24)
                             shouldShowPlaylist = isHoveringPlaylist || location.x >= proxy.size.width - triggerWidth
                             if isHoveringControlBar || location.y >= proxy.size.height - triggerHeight {
                                 revealControlsAndScheduleHide()
