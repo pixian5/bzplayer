@@ -13,10 +13,6 @@ struct PlayerRootView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if isControlsVisible {
-                topBar
-                    .transition(.move(edge: .top).combined(with: .opacity))
-            }
             playerArea
             if isControlsVisible {
                 controlBar
@@ -127,61 +123,57 @@ struct PlayerRootView: View {
         .cornerRadius(10)
     }
 
-    private var topBar: some View {
-        HStack(spacing: 12) {
-            Button("打开文件") {
-                revealControlsAndScheduleHide()
-                viewModel.openFile()
-            }
-
-            Slider(value: Binding(
-                get: { seekValue },
-                set: { newValue in
-                    revealControlsAndScheduleHide()
-                    seekValue = newValue
-                    viewModel.seek(to: newValue)
-                }
-            ), in: 0...1)
-            .frame(minWidth: 280)
-
-            Text("\(format(viewModel.currentTime)) / \(format(viewModel.duration))")
-                .font(.system(.body, design: .monospaced))
-
-            Spacer()
-            Text(viewModel.playbackEngineStatus)
-                .foregroundStyle(.secondary)
-            Text("双击或按f全屏，点击画面暂停/播放")
-                .foregroundStyle(.secondary)
-        }
-        .padding(12)
-        .background(Color(nsColor: .windowBackgroundColor))
-    }
-
     private var controlBar: some View {
-        HStack(spacing: 8) {
-            Text("速度：")
-            ForEach(viewModel.speedCandidates, id: \.self) { speed in
-                Button("\(speed, specifier: "%g")x") {
+        VStack(spacing: 10) {
+            HStack(spacing: 12) {
+                Button("打开文件") {
                     revealControlsAndScheduleHide()
-                    viewModel.setSpeed(speed)
+                    viewModel.openFile()
                 }
-                .buttonStyle(.bordered)
-                .tint(abs(viewModel.speed - speed) < 0.001 ? .blue : .gray)
+
+                Slider(value: Binding(
+                    get: { seekValue },
+                    set: { newValue in
+                        revealControlsAndScheduleHide()
+                        seekValue = newValue
+                        viewModel.seek(to: newValue)
+                    }
+                ), in: 0...1)
+                .frame(minWidth: 280)
+
+                Text("\(format(viewModel.currentTime)) / \(format(viewModel.duration))")
+                    .font(.system(.body, design: .monospaced))
             }
 
-            Button("-0.25x") {
-                revealControlsAndScheduleHide()
-                viewModel.adjustSpeed(by: -0.25)
-            }
-            Button("+0.25x") {
-                revealControlsAndScheduleHide()
-                viewModel.adjustSpeed(by: 0.25)
-            }
+            HStack(spacing: 8) {
+                Text("速度：")
+                ForEach(viewModel.speedCandidates, id: \.self) { speed in
+                    Button("\(speed, specifier: "%g")x") {
+                        revealControlsAndScheduleHide()
+                        viewModel.setSpeed(speed)
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(abs(viewModel.speed - speed) < 0.001 ? .blue : .gray)
+                }
 
-            Text(String(format: "当前：%.2fx", viewModel.speed))
-            Text(viewModel.syncText)
-                .foregroundStyle(viewModel.syncText.contains("稳定") ? .green : .orange)
-            Spacer()
+                Button("-0.25x") {
+                    revealControlsAndScheduleHide()
+                    viewModel.adjustSpeed(by: -0.25)
+                }
+                Button("+0.25x") {
+                    revealControlsAndScheduleHide()
+                    viewModel.adjustSpeed(by: 0.25)
+                }
+
+                Text(String(format: "当前：%.2fx", viewModel.speed))
+                Text(viewModel.syncText)
+                    .foregroundStyle(viewModel.syncText.contains("稳定") ? .green : .orange)
+                Spacer()
+                Text(viewModel.playbackEngineStatus)
+                    .foregroundStyle(.secondary)
+                Text("双击或按f全屏，点击画面暂停/播放")
+                    .foregroundStyle(.secondary)
+            }
         }
         .padding(12)
         .background(Color(nsColor: .windowBackgroundColor))
