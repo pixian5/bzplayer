@@ -76,7 +76,11 @@ final class MpvPlayer: NSObject {
         guard seconds.isFinite else { return }
         resetSamplingState()
         armRenderWarmup()
-        setDoubleProperty("time-pos", seconds)
+        if configuredSpeed >= 8, let handle {
+            command(["seek", String(seconds), "absolute+keyframes"], on: handle)
+        } else {
+            setDoubleProperty("time-pos", seconds)
+        }
         requestRender()
     }
 
@@ -108,6 +112,8 @@ final class MpvPlayer: NSObject {
         mpv_set_option_string(handle, "framedrop", "vo")
         mpv_set_option_string(handle, "video-latency-hacks", "yes")
         mpv_set_option_string(handle, "audio-pitch-correction", "yes")
+        mpv_set_option_string(handle, "demuxer-thread", "yes")
+        mpv_set_option_string(handle, "cache-pause-wait", "0.05")
 
         let result = mpv_initialize(handle)
         guard result >= 0 else {
@@ -256,7 +262,9 @@ final class MpvPlayer: NSObject {
         setStringProperty("vd-lavc-framedrop", profile.decoderFramedrop)
         setStringProperty("vd-lavc-skipframe", profile.skipFrame)
         setStringProperty("vd-lavc-skiploopfilter", profile.skipLoopFilter)
+        setStringProperty("hr-seek", profile.hrSeek)
         setFlagProperty("vd-lavc-fast", profile.fastDecode)
+        setDoubleProperty("audio-buffer", profile.audioBuffer)
         setFlagProperty("interpolation", false)
         resetSamplingState()
     }
@@ -360,6 +368,8 @@ private extension MpvPlayer {
         let decoderFramedrop: String
         let skipFrame: String
         let skipLoopFilter: String
+        let hrSeek: String
+        let audioBuffer: Double
         let fastDecode: Bool
     }
 
@@ -394,6 +404,8 @@ private extension MpvPlayer {
                 decoderFramedrop: "nonref",
                 skipFrame: "nonref",
                 skipLoopFilter: "nonref",
+                hrSeek: "no",
+                audioBuffer: 0.05,
                 fastDecode: true
             )
         case 8...:
@@ -403,11 +415,13 @@ private extension MpvPlayer {
                 wallInterval: wallInterval,
                 muteAudio: false,
                 pitchCorrection: true,
-                videoSync: "audio",
+                videoSync: "display-vdrop",
                 framedrop: "decoder+vo",
                 decoderFramedrop: "bidir",
                 skipFrame: "bidir",
                 skipLoopFilter: "nonref",
+                hrSeek: "no",
+                audioBuffer: 0.08,
                 fastDecode: true
             )
         case 4...:
@@ -422,6 +436,8 @@ private extension MpvPlayer {
                 decoderFramedrop: "nonref",
                 skipFrame: "default",
                 skipLoopFilter: "default",
+                hrSeek: "default",
+                audioBuffer: 0.12,
                 fastDecode: false
             )
         default:
@@ -436,6 +452,8 @@ private extension MpvPlayer {
                 decoderFramedrop: "nonref",
                 skipFrame: "default",
                 skipLoopFilter: "default",
+                hrSeek: "default",
+                audioBuffer: 0.2,
                 fastDecode: false
             )
         }
