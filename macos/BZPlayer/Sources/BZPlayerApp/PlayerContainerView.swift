@@ -79,7 +79,6 @@ final class MpvRenderView: NSView {
         wantsLayer = true
         layer = CALayer()
         layer?.backgroundColor = NSColor.black.cgColor
-        layer?.isGeometryFlipped = true
         layer?.contentsGravity = .resizeAspect
         layer?.contentsScale = NSScreen.main?.backingScaleFactor ?? 2
     }
@@ -117,7 +116,25 @@ final class MpvRenderView: NSView {
             renderer(SIMD2(Int32(width), Int32(height)), newStride, baseAddress)
         }
 
+        flipFrameBufferVertically()
         layer?.contents = makeRenderedImage()
+    }
+
+    private func flipFrameBufferVertically() {
+        guard frameHeight > 1, stride > 0 else { return }
+        let halfRows = frameHeight / 2
+        frameBuffer.withUnsafeMutableBytes { rawBuffer in
+            guard let baseAddress = rawBuffer.baseAddress else { return }
+            let scratch = UnsafeMutableRawPointer.allocate(byteCount: stride, alignment: MemoryLayout<UInt8>.alignment)
+            defer { scratch.deallocate() }
+            for row in 0..<halfRows {
+                let top = baseAddress.advanced(by: row * stride)
+                let bottom = baseAddress.advanced(by: (frameHeight - row - 1) * stride)
+                memcpy(scratch, top, stride)
+                memcpy(top, bottom, stride)
+                memcpy(bottom, scratch, stride)
+            }
+        }
     }
 
     private func makeRenderedImage() -> CGImage? {

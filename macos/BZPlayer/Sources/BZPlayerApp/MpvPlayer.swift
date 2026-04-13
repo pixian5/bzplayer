@@ -175,17 +175,16 @@ final class MpvPlayer: NSObject {
 
         attachedView.renderFrame { size, stride, pointer in
             var sizeStorage = [Int32(size.x), Int32(size.y)]
-            var strideStorage = -stride
+            var strideStorage = stride
             let format = strdup("bgr0")
             defer { free(format) }
             sizeStorage.withUnsafeMutableBytes { sizeBytes in
                 withUnsafeMutablePointer(to: &strideStorage) { stridePtr in
-                    let lastRowPointer = pointer.advanced(by: stride * (Int(size.y) - 1))
                     var params = [
                         mpv_render_param(type: MPV_RENDER_PARAM_SW_SIZE, data: sizeBytes.baseAddress),
                         mpv_render_param(type: MPV_RENDER_PARAM_SW_FORMAT, data: UnsafeMutableRawPointer(format)),
                         mpv_render_param(type: MPV_RENDER_PARAM_SW_STRIDE, data: stridePtr),
-                        mpv_render_param(type: MPV_RENDER_PARAM_SW_POINTER, data: lastRowPointer),
+                        mpv_render_param(type: MPV_RENDER_PARAM_SW_POINTER, data: pointer),
                         mpv_render_param(type: MPV_RENDER_PARAM_INVALID, data: nil)
                     ]
 
