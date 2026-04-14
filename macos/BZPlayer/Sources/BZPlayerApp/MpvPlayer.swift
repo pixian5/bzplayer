@@ -20,6 +20,7 @@ final class MpvPlayer: NSObject {
     private var configuredSpeed: Double = 1.0
     private var isRenderScheduled = false
     private var needsAnotherRender = false
+    private var isPlaybackActive = false
     private var lastRenderAt: CFTimeInterval = 0
     private var latestPlaybackTime: Double = 0
     private var lastPresentedPlaybackTime: Double?
@@ -45,6 +46,7 @@ final class MpvPlayer: NSObject {
     }
 
     func attach(to view: MpvRenderView) {
+        if attachedView === view { return }
         attachedView = view
         view.onRendererReady = { [weak self] readyView in
             self?.prepareRenderer(for: readyView)
@@ -65,24 +67,20 @@ final class MpvPlayer: NSObject {
     }
 
     func play() {
+        isPlaybackActive = true
         resetSamplingState()
         armRenderWarmup(duration: 0.5)
         setFlagProperty("pause", false)
-        // 连续请求多帧渲染，确保暂停恢复后画面刷新
         requestRender()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
-            self?.requestRender()
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
-            self?.requestRender()
-        }
     }
 
     func pause() {
+        isPlaybackActive = false
         setFlagProperty("pause", true)
     }
 
     func stop() {
+        isPlaybackActive = false
         setFlagProperty("pause", true)
         guard let handle else { return }
         command(["stop"], on: handle)
@@ -267,7 +265,8 @@ final class MpvPlayer: NSObject {
             lastPresentedPlaybackTime = latestPlaybackTime
         }
 
-        if needsAnotherRender {
+        // 播放中保持渲染循环自驱动，不依赖 mpv 回调来维持
+        if isPlaybackActive || needsAnotherRender {
             needsAnotherRender = false
             requestRender()
         }
@@ -277,7 +276,10 @@ final class MpvPlayer: NSObject {
         guard renderContext != nil,
               let view = attachedView,
               !view.isHidden,
-              view.window != nil else { return }
+              view.window != nil else { 
+            isRenderScheduled = false
+            return 
+        }
         if isRenderScheduled {
             needsAnotherRender = true
             return

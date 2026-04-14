@@ -28,7 +28,8 @@ struct PlayerContainerView: NSViewRepresentable {
 
     func updateNSView(_ nsView: PlayerHostView, context: Context) {
         nsView.updateBackend(viewModel.playbackBackend, player: viewModel.nativePlayer)
-        if nsView.window != nil, viewModel.playbackBackend == .mpv {
+        // Only attach the view for mpv backend to avoid unnecessary rendering calls to a hidden view
+        if nsView.window != nil && viewModel.playbackBackend == .mpv {
             viewModel.attachPlayerView(nsView.playerSurfaceView)
         }
     }
@@ -142,8 +143,13 @@ final class MpvRenderView: NSOpenGLView {
     }
 
     func renderFrame(_ renderer: (_ size: SIMD2<Int32>, _ fbo: Int32, _ flipY: Int32) -> Void) {
-        guard isReady, !isHidden, let ctx = openGLContext else { return }
+        // Critical safeguard: stop rendering if view is hidden, detached from window, or context is invalid
+        guard isReady, !isHidden, window != nil, let ctx = openGLContext else { return }
+        
         ctx.makeCurrentContext()
+        // verify context was actually made current to avoid EXC_BAD_ACCESS in glFlush
+        guard NSOpenGLContext.current == ctx else { return }
+        
         let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
         let width = max(Int(bounds.width * scale), 1)
         let height = max(Int(bounds.height * scale), 1)

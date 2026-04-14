@@ -600,20 +600,16 @@ killall lsd >/dev/null 2>&1 || true
         let previousBackend = playbackBackend
         playbackBackend = backend
 
-        // 先彻底停止旧后端
-        if previousBackend == .native && backend == .mpv {
-            nativePlayer.pause()
-            nativeItemStatusObserver = nil
-            nativePlayer.replaceCurrentItem(with: nil)
-        } else if previousBackend == .mpv && backend == .native {
+        // Extensive cleanup for previous backends to prevent cross-engine interference and crashes
+        if previousBackend == .mpv {
             mpvPlayer.stop()
             mpvPlayer.cancelPendingRender()
-        } else if previousBackend == .native && backend == .native {
+        }
+        
+        if previousBackend == .native {
             nativePlayer.pause()
             nativeItemStatusObserver = nil
             nativePlayer.replaceCurrentItem(with: nil)
-        } else {
-            // mpv → mpv: mpv loadfile replace 会自行处理
         }
 
         switch backend {
