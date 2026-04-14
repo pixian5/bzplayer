@@ -26,6 +26,7 @@ final class MpvPlayer: NSObject {
     private var sourceFPS: Double = 30
     private var displayFPS: Double = 60
     private var renderWarmupUntil: CFTimeInterval = 0
+    private var preferredHwdecMode = "auto-safe"
 
     override init() {
         super.init()
@@ -64,9 +65,17 @@ final class MpvPlayer: NSObject {
     }
 
     func play() {
-        armRenderWarmup()
+        resetSamplingState()
+        armRenderWarmup(duration: 0.5)
         setFlagProperty("pause", false)
+        // 连续请求多帧渲染，确保暂停恢复后画面刷新
         requestRender()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            self?.requestRender()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+            self?.requestRender()
+        }
     }
 
     func pause() {
@@ -103,6 +112,12 @@ final class MpvPlayer: NSObject {
         requestRender()
     }
 
+    func setHardwareDecodingEnabled(_ enabled: Bool) {
+        let mode = enabled ? "auto-safe" : "no"
+        preferredHwdecMode = mode
+        setStringProperty("hwdec", mode)
+    }
+
     private func createPlayer() {
         guard let handle = mpv_create() else {
             onStatusChanged?("播放引擎：mpv 创建失败")
@@ -118,7 +133,7 @@ final class MpvPlayer: NSObject {
         mpv_set_option_string(handle, "input-default-bindings", "no")
         mpv_set_option_string(handle, "input-vo-keyboard", "no")
         mpv_set_option_string(handle, "force-window", "no")
-        mpv_set_option_string(handle, "hwdec", "auto-safe")
+        mpv_set_option_string(handle, "hwdec", preferredHwdecMode)
         mpv_set_option_string(handle, "vo", "libmpv")
         mpv_set_option_string(handle, "framedrop", "vo")
         mpv_set_option_string(handle, "video-latency-hacks", "yes")

@@ -628,13 +628,21 @@ killall lsd >/dev/null 2>&1 || true
         }
 
         let resumeTime = forceStartAtBeginning ? nil : loadSavedProgress(for: url)
-        let backend = chooseBackend(for: url)
+        let ffprobeInfo = probeMediaInfo(url: url)
+        let backend = chooseBackend(for: url, ffprobeInfo: ffprobeInfo)
         selectBackend(backend)
 
         switch backend {
         case .native:
             openWithNative(url: url, resumeAt: resumeTime)
         case .mpv:
+            let hardwareDecodingEnabled: Bool
+            if let ffprobeInfo {
+                hardwareDecodingEnabled = !shouldForceSoftwareDecode(ffprobeInfo: ffprobeInfo)
+            } else {
+                hardwareDecodingEnabled = true
+            }
+            mpvPlayer.setHardwareDecodingEnabled(hardwareDecodingEnabled)
             mpvPlayer.setSpeed(speed)
             mpvPlayer.load(url: url, resumeAt: resumeTime)
         }
@@ -663,9 +671,9 @@ killall lsd >/dev/null 2>&1 || true
         nativePlayer.replaceCurrentItem(with: item)
     }
 
-    private func chooseBackend(for url: URL) -> PlaybackBackend {
+    private func chooseBackend(for url: URL, ffprobeInfo: FFprobeInfo? = nil) -> PlaybackBackend {
         let asset = AVURLAsset(url: url)
-        let ffprobeInfo = probeMediaInfo(url: url)
+        let ffprobeInfo = ffprobeInfo ?? probeMediaInfo(url: url)
 
         if let ffprobeInfo, shouldPreferMpv(ffprobeInfo: ffprobeInfo) {
             return .mpv
@@ -699,6 +707,14 @@ killall lsd >/dev/null 2>&1 || true
         }
 
         return false
+    }
+
+    private func shouldForceSoftwareDecode(ffprobeInfo: FFprobeInfo) -> Bool {
+        let softwareDecodeVideoCodecs: Set<String> = ["vp8", "vp9", "av1", "theora"]
+        let softwareDecodeVideoTags: Set<String> = ["vp08", "vp09", "av01"]
+        return ffprobeInfo.videoStreams.contains(where: {
+            softwareDecodeVideoCodecs.contains($0.codecName) || softwareDecodeVideoTags.contains($0.codecTag)
+        })
     }
 
     private func loadPlaylist(with selectedURL: URL) {
