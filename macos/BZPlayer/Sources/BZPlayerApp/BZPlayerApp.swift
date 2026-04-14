@@ -53,6 +53,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 private struct SettingsView: View {
     @ObservedObject var viewModel: PlayerViewModel
+    @State private var seekSecondsText = ""
+    @State private var frameStepText = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -72,9 +74,76 @@ private struct SettingsView: View {
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
+            Divider()
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text("快捷键")
+                    .font(.headline)
+
+                HStack {
+                    Text("左右方向键跳转秒数")
+                        .frame(width: 150, alignment: .leading)
+                    TextField("秒数", text: $seekSecondsText)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 90)
+                        .onSubmit(applyShortcutSettings)
+                    Stepper("", value: Binding(
+                        get: { viewModel.shortcutSeekSeconds },
+                        set: { viewModel.setShortcutSeekSeconds($0) }
+                    ), in: 0.5...60, step: 0.5)
+                    .labelsHidden()
+                }
+
+                HStack {
+                    Text("上下方向键跳转帧数")
+                        .frame(width: 150, alignment: .leading)
+                    TextField("帧数", text: $frameStepText)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 90)
+                        .onSubmit(applyShortcutSettings)
+                    Stepper("", value: Binding(
+                        get: { viewModel.shortcutFrameStepCount },
+                        set: { viewModel.setShortcutFrameStepCount($0) }
+                    ), in: 1...240, step: 1)
+                    .labelsHidden()
+                }
+
+                Text("左/右：按设定秒数后退/前进；上/下：按设定帧数后退/前进。")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            }
+
             Spacer()
         }
         .padding(16)
-        .frame(width: 420, height: 220)
+        .frame(width: 460, height: 320)
+        .onAppear {
+            syncShortcutFields()
+        }
+        .onChange(of: viewModel.shortcutSeekSeconds) { _ in
+            syncShortcutFields()
+        }
+        .onChange(of: viewModel.shortcutFrameStepCount) { _ in
+            syncShortcutFields()
+        }
+    }
+
+    private func syncShortcutFields() {
+        seekSecondsText = String(format: "%.1f", viewModel.shortcutSeekSeconds)
+        frameStepText = "\(viewModel.shortcutFrameStepCount)"
+    }
+
+    private func applyShortcutSettings() {
+        if let seek = Double(seekSecondsText) {
+            viewModel.setShortcutSeekSeconds(seek)
+        } else {
+            seekSecondsText = String(format: "%.1f", viewModel.shortcutSeekSeconds)
+        }
+
+        if let frames = Int(frameStepText) {
+            viewModel.setShortcutFrameStepCount(frames)
+        } else {
+            frameStepText = "\(viewModel.shortcutFrameStepCount)"
+        }
     }
 }

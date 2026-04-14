@@ -23,6 +23,8 @@ final class PlayerViewModel: NSObject, ObservableObject {
     @Published var fileAssociationStatus = "未执行格式关联"
     @Published var playbackEngineStatus = "播放引擎：AVPlayer"
     @Published var playbackBackend: PlaybackBackend = .native
+    @Published var shortcutSeekSeconds: Double
+    @Published var shortcutFrameStepCount: Int
 
     let mpvPlayer = MpvPlayer()
     let nativePlayer = AVPlayer()
@@ -37,11 +39,19 @@ final class PlayerViewModel: NSObject, ObservableObject {
     }
 
     private var currentFileURL: URL?
+    private var currentNominalFPS: Double = 30
     private var nativeTimeObserver: Any?
     private var nativeItemStatusObserver: NSKeyValueObservation?
     private var nativeEndObserver: NSObjectProtocol?
 
+    private static let shortcutSeekSecondsKey = "settings.shortcutSeekSeconds"
+    private static let shortcutFrameStepCountKey = "settings.shortcutFrameStepCount"
+
     override init() {
+        let storedSeekSeconds = UserDefaults.standard.object(forKey: Self.shortcutSeekSecondsKey) as? Double
+        let storedFrameStepCount = UserDefaults.standard.object(forKey: Self.shortcutFrameStepCountKey) as? Int
+        shortcutSeekSeconds = max(storedSeekSeconds ?? 5, 0.1)
+        shortcutFrameStepCount = max(storedFrameStepCount ?? 1, 1)
         super.init()
         bindMpvCallbacks()
         bindNativePlayer()
@@ -136,6 +146,39 @@ final class PlayerViewModel: NSObject, ObservableObject {
 
     func adjustSpeed(by delta: Double) {
         setSpeed((speed + delta).rounded(toPlaces: 2))
+    }
+
+    func setShortcutSeekSeconds(_ value: Double) {
+        let normalized = max(value, 0.1)
+        shortcutSeekSeconds = normalized
+        UserDefaults.standard.set(normalized, forKey: Self.shortcutSeekSecondsKey)
+    }
+
+    func setShortcutFrameStepCount(_ value: Int) {
+        let normalized = max(value, 1)
+        shortcutFrameStepCount = normalized
+        UserDefaults.standard.set(normalized, forKey: Self.shortcutFrameStepCountKey)
+    }
+
+    func seekBy(seconds delta: Double) {
+        guard hasOpenedFile else { return }
+        let baseTime = currentTime.isFinite ? currentTime : 0
+        let target = max(0, min(duration > 0 ? duration : .greatestFiniteMagnitude, baseTime + delta))
+        switch playbackBackend {
+        case .native:
+            nativePlayer.seek(to: CMTime(seconds: target, preferredTimescale: 600))
+            currentTime = target
+        case .mpv:
+            mpvPlayer.seek(seconds: target)
+            currentTime = target
+        }
+    }
+
+    func seekByConfiguredFrameStep(_ direction: Int) {
+        guard direction != 0 else { return }
+        let fps = max(currentNominalFPS, 1)
+        let seconds = Double(shortcutFrameStepCount) / fps * Double(direction)
+        seekBy(seconds: seconds)
     }
 
     func toggleFullscreen(in window: NSWindow? = nil) {
@@ -329,6 +372,7 @@ killall lsd >/dev/null 2>&1 || true
         currentIndex = playlist.firstIndex(of: url) ?? -1
         currentTime = 0
         duration = 0
+        currentNominalFPS = estimateFPS(for: url)
         updateWindowTitle(url.lastPathComponent)
         let resumeTime = loadSavedProgress(for: url)
         let backend = chooseBackend(for: url)
@@ -396,6 +440,22 @@ killall lsd >/dev/null 2>&1 || true
 
         playlist = allVideos.isEmpty ? [selectedURL] : allVideos
         currentIndex = playlist.firstIndex(of: selectedURL) ?? 0
+    }
+
+    private func estimateFPS(for url: URL) -> Double {
+        let asset = AVURLAsset(url: url)
+        if let track = asset.tracks(withMediaType: .video).first {
+            let fps = Double(track.nominalFrameRate)
+            if fps.isFinite, fps > 0 {
+                return fps
+            }
+        }
+        if let ffprobeInfo = probeMediaInfo(url: url),
+           let summary = ffprobeInfo.videoStreams.first?.summary,
+           let fps = parseFPS(fromFFprobeSummary: summary) {
+            return fps
+        }
+        return 30
     }
 
     private func updateWindowTitle(_ title: String) {
@@ -663,4 +723,21 @@ private func ffprobeStreamSummary(from json: [String: Any]) -> (type: String, su
     }
 
     return (type, parts.joined(separator: "，"))
+}
+
+private func parseFPS(fromFFprobeSummary summary: String) -> Double? {
+    guard let range = summary.range(of: "帧率 ") else { return nil }
+    let suffix = summary[range.upperBound...]
+    let token = suffix.split(separator: "，", maxSplits: 1).first.map(String.init) ?? ""
+    if token.contains("/") {
+        let parts = token.split(separator: "/", maxSplits: 1).compactMap { Double($0) }
+        if parts.count == 2, parts[1] != 0 {
+            let fps = parts[0] / parts[1]
+            return fps.isFinite && fps > 0 ? fps : nil
+        }
+    }
+    if let value = Double(token), value.isFinite, value > 0 {
+        return value
+    }
+    return nil
 }

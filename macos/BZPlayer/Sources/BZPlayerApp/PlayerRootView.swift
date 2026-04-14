@@ -253,6 +253,23 @@ struct PlayerRootView: View {
             return event
         }
 
+        switch event.keyCode {
+        case 123:
+            viewModel.seekBy(seconds: -viewModel.shortcutSeekSeconds)
+            return nil
+        case 124:
+            viewModel.seekBy(seconds: viewModel.shortcutSeekSeconds)
+            return nil
+        case 125:
+            viewModel.seekByConfiguredFrameStep(-1)
+            return nil
+        case 126:
+            viewModel.seekByConfiguredFrameStep(1)
+            return nil
+        default:
+            break
+        }
+
         switch event.charactersIgnoringModifiers?.lowercased() {
         case "f":
             viewModel.toggleFullscreen()
