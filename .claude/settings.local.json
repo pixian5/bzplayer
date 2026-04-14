@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(swift build:*)",
+      "Bash(.build/debug/BZPlayerApp)",
+      "Bash(pkill -f BZPlayerApp)"
+    ]
+  }
+}

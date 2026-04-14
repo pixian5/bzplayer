@@ -1,0 +1,120 @@
+name: Build and Release macOS App
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  build-release:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Install mpv
+        shell: bash
+        run: brew install mpv
+
+      - name: Compute version
+        id: version
+        shell: bash
+        run: |
+          VERSION=$((GITHUB_RUN_NUMBER - 1))
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Build release binary
+        shell: bash
+        run: |
+          cd macos/BZPlayer
+          swift build -c release
+
+      - name: Create .app bundle
+        shell: bash
+        run: |
+          APP_NAME="BZPlayer"
+          APP_DIR="dist/${APP_NAME}.app"
+          mkdir -p "${APP_DIR}/Contents/MacOS"
+          mkdir -p "${APP_DIR}/Contents/Resources"
+
+          cp "macos/BZPlayer/.build/release/BZPlayer" "${APP_DIR}/Contents/MacOS/BZPlayer"
+          chmod +x "${APP_DIR}/Contents/MacOS/BZPlayer"
+
+          INFO_PLIST="${APP_DIR}/Contents/Info.plist"
+          {
+            echo '<?xml version="1.0" encoding="UTF-8"?>'
+            echo '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">'
+            echo '<plist version="1.0">'
+            echo '<dict>'
+            echo '  <key>CFBundleName</key>'
+            echo '  <string>BZPlayer</string>'
+            echo '  <key>CFBundleDisplayName</key>'
+            echo '  <string>BZPlayer</string>'
+            echo '  <key>CFBundleIdentifier</key>'
+            echo '  <string>tech.sbbz.bzplayer</string>'
+            echo '  <key>CFBundleVersion</key>'
+            echo '  <string>${{ steps.version.outputs.version }}</string>'
+            echo '  <key>CFBundleShortVersionString</key>'
+            echo '  <string>${{ steps.version.outputs.version }}</string>'
+            echo '  <key>CFBundleExecutable</key>'
+            echo '  <string>BZPlayer</string>'
+            echo '  <key>CFBundlePackageType</key>'
+            echo '  <string>APPL</string>'
+            echo '  <key>LSMinimumSystemVersion</key>'
+            echo '  <string>13.0</string>'
+            echo '</dict>'
+            echo '</plist>'
+          } > "${INFO_PLIST}"
+
+      - name: Build DMG
+        shell: bash
+        run: |
+          mkdir -p release
+          DMG_STAGING="dist/dmg"
+          rm -rf "${DMG_STAGING}"
+          mkdir -p "${DMG_STAGING}"
+          cp -R "dist/BZPlayer.app" "${DMG_STAGING}/BZPlayer.app"
+          ln -s /Applications "${DMG_STAGING}/Applications"
+
+          hdiutil create \
+            -volname "BZPlayer" \
+            -srcfolder "${DMG_STAGING}" \
+            -ov \
+            -format UDZO \
+            "release/BZPlayer-${{ steps.version.outputs.tag }}.dmg"
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: bzplayer-${{ steps.version.outputs.tag }}
+          path: |
+            dist/BZPlayer.app
+            release/BZPlayer-${{ steps.version.outputs.tag }}.dmg
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2.3.3
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: BZPlayer ${{ steps.version.outputs.tag }}
+          generate_release_notes: true
+          files: |
+            release/BZPlayer-${{ steps.version.outputs.tag }}.dmg
