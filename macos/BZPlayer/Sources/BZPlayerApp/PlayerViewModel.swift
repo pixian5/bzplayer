@@ -73,6 +73,14 @@ final class PlayerViewModel: NSObject, ObservableObject {
         }
     }
 
+    func openExternalFiles(_ urls: [URL]) {
+        guard let url = urls.first else { return }
+        let normalizedURL = url.standardizedFileURL
+        guard FileManager.default.fileExists(atPath: normalizedURL.path) else { return }
+        loadPlaylist(with: normalizedURL)
+        openFromPlaylist(normalizedURL)
+    }
+
     func play() {
         switch playbackBackend {
         case .native:

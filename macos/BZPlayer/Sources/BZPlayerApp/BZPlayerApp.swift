@@ -11,6 +11,13 @@ struct BZPlayerApp: App {
             PlayerRootView()
                 .environmentObject(viewModel)
                 .frame(minWidth: 980, minHeight: 620)
+                .onAppear {
+                    appDelegate.consumePendingURLsIfNeeded(using: viewModel)
+                }
+                .onReceive(NotificationCenter.default.publisher(for: AppDelegate.openFilesNotification)) { notification in
+                    guard let urls = notification.object as? [URL], !urls.isEmpty else { return }
+                    viewModel.openExternalFiles(urls)
+                }
         }
         .windowResizability(.contentMinSize)
 
@@ -21,8 +28,26 @@ struct BZPlayerApp: App {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    static let openFilesNotification = Notification.Name("BZPlayerOpenFilesNotification")
+    private var pendingURLs: [URL] = []
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
+    }
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        guard !urls.isEmpty else { return }
+        pendingURLs = urls
+        NotificationCenter.default.post(name: Self.openFilesNotification, object: urls)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @MainActor
+    func consumePendingURLsIfNeeded(using viewModel: PlayerViewModel) {
+        guard !pendingURLs.isEmpty else { return }
+        let urls = pendingURLs
+        pendingURLs.removeAll()
+        viewModel.openExternalFiles(urls)
     }
 }
 
