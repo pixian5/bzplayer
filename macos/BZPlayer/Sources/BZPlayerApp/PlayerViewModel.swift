@@ -597,18 +597,32 @@ killall lsd >/dev/null 2>&1 || true
     }
 
     private func selectBackend(_ backend: PlaybackBackend) {
+        let previousBackend = playbackBackend
         playbackBackend = backend
+
+        // 先彻底停止旧后端
+        if previousBackend == .native && backend == .mpv {
+            nativePlayer.pause()
+            nativeItemStatusObserver = nil
+            nativePlayer.replaceCurrentItem(with: nil)
+        } else if previousBackend == .mpv && backend == .native {
+            mpvPlayer.stop()
+            mpvPlayer.cancelPendingRender()
+        } else if previousBackend == .native && backend == .native {
+            nativePlayer.pause()
+            nativeItemStatusObserver = nil
+            nativePlayer.replaceCurrentItem(with: nil)
+        } else {
+            // mpv → mpv: mpv loadfile replace 会自行处理
+        }
+
         switch backend {
         case .native:
             playbackEngineStatus = "播放引擎：AVPlayer"
             syncText = "播放链路：系统原生"
-            mpvPlayer.pause()
-            mpvPlayer.cancelPendingRender()
         case .mpv:
             playbackEngineStatus = "播放引擎：mpv/libmpv"
             syncText = "播放链路：mpv/libmpv"
-            nativePlayer.pause()
-            nativePlayer.replaceCurrentItem(with: nil)
         }
     }
 

@@ -234,7 +234,10 @@ final class MpvPlayer: NSObject {
     }
 
     func renderCurrentFrame() {
-        guard let renderContext, let attachedView else { return }
+        guard let renderContext, let attachedView, !attachedView.isHidden else {
+            isRenderScheduled = false
+            return
+        }
         isRenderScheduled = false
         let profile = renderProfile(for: configuredSpeed)
         if let remainingDelay = remainingWallDelay(for: profile), remainingDelay > 0 {

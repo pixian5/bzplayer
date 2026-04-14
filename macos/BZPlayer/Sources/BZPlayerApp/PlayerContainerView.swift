@@ -86,12 +86,15 @@ final class PlayerHostView: NSView {
     }
 
     func updateBackend(_ backend: PlayerViewModel.PlaybackBackend, player: AVPlayer) {
-        nativePlayerView.player = player
         switch backend {
         case .native:
+            if nativePlayerView.player !== player {
+                nativePlayerView.player = player
+            }
             nativePlayerView.isHidden = false
             playerSurfaceView.isHidden = true
         case .mpv:
+            nativePlayerView.player = nil
             nativePlayerView.isHidden = true
             playerSurfaceView.isHidden = false
         }
