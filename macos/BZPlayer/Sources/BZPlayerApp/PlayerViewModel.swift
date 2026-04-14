@@ -89,7 +89,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
 
     let mpvPlayer = MpvPlayer()
     let nativePlayer = AVPlayer()
-    let speedCandidates: [Double] = [0.25, 0.5, 1, 1.5, 2, 4, 8, 16]
+    let speedCandidates: [Double] = [0.25, 0.5, 1, 1.25, 1.5, 1.75, 2, 3, 4, 8, 16]
 
     var hasOpenedFile: Bool {
         currentFileURL != nil
@@ -263,6 +263,9 @@ final class PlayerViewModel: NSObject, ObservableObject {
 
     func setSpeed(_ value: Double) {
         speed = min(max(value, 0.25), 16)
+        if let url = currentFileURL {
+            saveSpeedForFile(url)
+        }
         switch playbackBackend {
         case .native:
             nativePlayer.rate = isPaused ? 0 : Float(speed)
@@ -368,6 +371,58 @@ final class PlayerViewModel: NSObject, ObservableObject {
 
     func toggleFullscreen(in window: NSWindow? = nil) {
         (window ?? attachedWindow ?? NSApp.keyWindow ?? NSApp.mainWindow)?.toggleFullScreen(nil)
+    }
+
+    func handleKeyEvent(_ event: NSEvent, in window: NSWindow?) -> Bool {
+        // 空格键
+        if event.keyCode == 49 {
+            togglePause()
+            return true
+        }
+        // Cmd+O
+        if event.modifierFlags.contains(.command),
+           !event.modifierFlags.contains(.control),
+           !event.modifierFlags.contains(.option),
+           event.keyCode == 31 {
+            openFile()
+            return true
+        }
+        guard !event.modifierFlags.contains(.command),
+              !event.modifierFlags.contains(.control),
+              !event.modifierFlags.contains(.option) else {
+            return false
+        }
+        switch event.keyCode {
+        case 123:
+            seekBy(seconds: -shortcutSeekSeconds)
+            return true
+        case 124:
+            seekBy(seconds: shortcutSeekSeconds)
+            return true
+        case 125:
+            seekByConfiguredFrameStep(-1)
+            return true
+        case 126:
+            seekByConfiguredFrameStep(1)
+            return true
+        default:
+            break
+        }
+        switch event.charactersIgnoringModifiers?.lowercased() {
+        case "f":
+            toggleFullscreen(in: window)
+            return true
+        default:
+            if event.keyCode == previousFileKeyCode {
+                previousFile()
+                return true
+            }
+            if event.keyCode == nextFileKeyCode {
+                nextFile()
+                return true
+            }
+            return false
+        }
     }
 
     func showFileInfo() {
@@ -566,6 +621,12 @@ killall lsd >/dev/null 2>&1 || true
         currentNominalFPS = estimateFPS(for: url)
         updateWindowTitle(url.lastPathComponent)
         applyWindowBehaviorForCurrentMedia()
+
+        // 恢复该文件记忆的速度
+        if let savedSpeed = loadSpeedForFile(url) {
+            speed = savedSpeed
+        }
+
         let resumeTime = forceStartAtBeginning ? nil : loadSavedProgress(for: url)
         let backend = chooseBackend(for: url)
         selectBackend(backend)
@@ -606,6 +667,10 @@ killall lsd >/dev/null 2>&1 || true
         let asset = AVURLAsset(url: url)
         let ffprobeInfo = probeMediaInfo(url: url)
 
+        if let ffprobeInfo, shouldPreferMpv(ffprobeInfo: ffprobeInfo) {
+            return .mpv
+        }
+
         if let ffprobeInfo, ffprobeInfo.audioStreams.isEmpty == false {
             let audioTracks = asset.tracks(withMediaType: .audio)
             if audioTracks.isEmpty {
@@ -614,6 +679,26 @@ killall lsd >/dev/null 2>&1 || true
         }
 
         return .native
+    }
+
+    private func shouldPreferMpv(ffprobeInfo: FFprobeInfo) -> Bool {
+        let nativeFragileVideoCodecs: Set<String> = ["vp8", "vp9", "av1", "theora"]
+        let nativeFragileVideoTags: Set<String> = ["vp08", "vp09", "av01"]
+        let nativeFragileAudioCodecs: Set<String> = ["opus", "vorbis", "flac"]
+
+        if ffprobeInfo.videoStreams.contains(where: {
+            nativeFragileVideoCodecs.contains($0.codecName) || nativeFragileVideoTags.contains($0.codecTag)
+        }) {
+            return true
+        }
+
+        if ffprobeInfo.audioStreams.contains(where: {
+            nativeFragileAudioCodecs.contains($0.codecName)
+        }) {
+            return true
+        }
+
+        return false
     }
 
     private func loadPlaylist(with selectedURL: URL) {
@@ -694,6 +779,19 @@ killall lsd >/dev/null 2>&1 || true
     private func saveCurrentProgress() {
         guard let url = currentFileURL, currentTime.isFinite, currentTime > 0 else { return }
         UserDefaults.standard.set(currentTime, forKey: progressKey(for: url))
+    }
+
+    private func speedKey(for url: URL) -> String {
+        "playback.speed.\(url.path)"
+    }
+
+    private func loadSpeedForFile(_ url: URL) -> Double? {
+        let value = UserDefaults.standard.double(forKey: speedKey(for: url))
+        return value > 0 ? value : nil
+    }
+
+    private func saveSpeedForFile(_ url: URL) {
+        UserDefaults.standard.set(speed, forKey: speedKey(for: url))
     }
 
     private func applyInitialWindowBehaviorIfNeeded(force: Bool = false) {
@@ -1023,6 +1121,8 @@ private struct FFprobeInfo {
 }
 
 private struct FFprobeStream {
+    let codecName: String
+    let codecTag: String
     let summary: String
 }
 
@@ -1056,16 +1156,22 @@ private func probeMediaInfo(url: URL) -> FFprobeInfo? {
 
         let mapped = streams.compactMap(ffprobeStreamSummary(from:))
         return FFprobeInfo(
-            videoStreams: mapped.filter { $0.type == "video" }.map { FFprobeStream(summary: $0.summary) },
-            audioStreams: mapped.filter { $0.type == "audio" }.map { FFprobeStream(summary: $0.summary) }
+            videoStreams: mapped.filter { $0.type == "video" }.map {
+                FFprobeStream(codecName: $0.codecName, codecTag: $0.codecTag, summary: $0.summary)
+            },
+            audioStreams: mapped.filter { $0.type == "audio" }.map {
+                FFprobeStream(codecName: $0.codecName, codecTag: $0.codecTag, summary: $0.summary)
+            }
         )
     } catch {
         return nil
     }
 }
 
-private func ffprobeStreamSummary(from json: [String: Any]) -> (type: String, summary: String)? {
+private func ffprobeStreamSummary(from json: [String: Any]) -> (type: String, codecName: String, codecTag: String, summary: String)? {
     guard let type = json["codec_type"] as? String else { return nil }
+    let codecName = (json["codec_name"] as? String)?.lowercased() ?? ""
+    let codecTag = (json["codec_tag_string"] as? String)?.lowercased() ?? ""
 
     var parts: [String] = []
     if let codec = json["codec_name"] as? String {
@@ -1109,7 +1215,7 @@ private func ffprobeStreamSummary(from json: [String: Any]) -> (type: String, su
         parts.append("语言 \(language)")
     }
 
-    return (type, parts.joined(separator: "，"))
+    return (type, codecName, codecTag, parts.joined(separator: "，"))
 }
 
 private func parseFPS(fromFFprobeSummary summary: String) -> Double? {
