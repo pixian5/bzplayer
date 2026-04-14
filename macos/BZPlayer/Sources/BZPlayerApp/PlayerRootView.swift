@@ -116,9 +116,21 @@ struct PlayerRootView: View {
 
     private var playlistPanel: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("播放列表")
-                .font(.headline)
-                .foregroundStyle(.white)
+            HStack(spacing: 8) {
+                Text("播放列表")
+                    .font(.headline)
+                    .foregroundStyle(.white)
+                Spacer()
+                Button(viewModel.playlistOrder.buttonTitle) {
+                    viewModel.togglePlaylistOrder()
+                }
+                .buttonStyle(.bordered)
+
+                Button(viewModel.loopMode.buttonTitle) {
+                    viewModel.cycleLoopMode()
+                }
+                .buttonStyle(.bordered)
+            }
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 4) {
@@ -163,11 +175,6 @@ struct PlayerRootView: View {
     private var controlBar: some View {
         VStack(spacing: 10) {
             HStack(spacing: 12) {
-                Button("打开文件") {
-                    revealControlsAndScheduleHide()
-                    viewModel.openFile()
-                }
-
                 Slider(value: Binding(
                     get: { seekValue },
                     set: { newValue in
@@ -184,6 +191,12 @@ struct PlayerRootView: View {
 
             HStack(spacing: 8) {
                 Text("速度：")
+                Button("打开文件") {
+                    revealControlsAndScheduleHide()
+                    viewModel.openFile()
+                }
+                .keyboardShortcut("o", modifiers: [.command])
+
                 ForEach(viewModel.speedCandidates, id: \.self) { speed in
                     Button("\(speed, specifier: "%g")x") {
                         revealControlsAndScheduleHide()
@@ -247,6 +260,13 @@ struct PlayerRootView: View {
 
     private func handleKey(_ event: NSEvent) -> NSEvent? {
         revealControlsAndScheduleHide()
+        if event.modifierFlags.contains(.command),
+           !event.modifierFlags.contains(.control),
+           !event.modifierFlags.contains(.option),
+           event.keyCode == 31 {
+            viewModel.openFile()
+            return nil
+        }
         guard !event.modifierFlags.contains(.command),
               !event.modifierFlags.contains(.control),
               !event.modifierFlags.contains(.option) else {
@@ -278,6 +298,14 @@ struct PlayerRootView: View {
             viewModel.togglePause()
             return nil
         default:
+            if event.keyCode == viewModel.previousFileKeyCode {
+                viewModel.previousFile()
+                return nil
+            }
+            if event.keyCode == viewModel.nextFileKeyCode {
+                viewModel.nextFile()
+                return nil
+            }
             return event
         }
     }

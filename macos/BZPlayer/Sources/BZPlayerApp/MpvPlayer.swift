@@ -11,6 +11,7 @@ final class MpvPlayer: NSObject {
     var onPauseChanged: ((Bool) -> Void)?
     var onFileLoaded: (() -> Void)?
     var onStatusChanged: ((String) -> Void)?
+    var onEndReached: (() -> Void)?
 
     private var handle: OpaquePointer?
     private var renderContext: OpaquePointer?
@@ -195,6 +196,7 @@ final class MpvPlayer: NSObject {
                 requestRender()
             case MPV_EVENT_END_FILE:
                 onPauseChanged?(true)
+                onEndReached?()
             case MPV_EVENT_PROPERTY_CHANGE:
                 guard let data = event.pointee.data?.assumingMemoryBound(to: mpv_event_property.self) else {
                     continue

@@ -111,6 +111,38 @@ private struct SettingsView: View {
                 Text("左/右：按设定秒数后退/前进；上/下：按设定帧数后退/前进。")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
+
+                HStack {
+                    Text("上一文件快捷键")
+                        .frame(width: 150, alignment: .leading)
+                    Picker("上一文件快捷键", selection: Binding(
+                        get: { Int(viewModel.previousFileKeyCode) },
+                        set: { viewModel.setPreviousFileKeyCode(UInt16($0)) }
+                    )) {
+                        ForEach(keyShortcutOptions, id: \.keyCode) { option in
+                            Text(option.label).tag(Int(option.keyCode))
+                        }
+                    }
+                    .frame(width: 140)
+                }
+
+                HStack {
+                    Text("下一文件快捷键")
+                        .frame(width: 150, alignment: .leading)
+                    Picker("下一文件快捷键", selection: Binding(
+                        get: { Int(viewModel.nextFileKeyCode) },
+                        set: { viewModel.setNextFileKeyCode(UInt16($0)) }
+                    )) {
+                        ForEach(keyShortcutOptions, id: \.keyCode) { option in
+                            Text(option.label).tag(Int(option.keyCode))
+                        }
+                    }
+                    .frame(width: 140)
+                }
+
+                Text("默认上一文件是 `;`，下一文件是 `'`，按物理键位处理，不受中英文输入影响。")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
             }
 
             Spacer()
@@ -146,4 +178,24 @@ private struct SettingsView: View {
             frameStepText = "\(viewModel.shortcutFrameStepCount)"
         }
     }
+
+    private var keyShortcutOptions: [KeyShortcutOption] {
+        [
+            .init(label: ";", keyCode: 41),
+            .init(label: "'", keyCode: 39),
+            .init(label: ",", keyCode: 43),
+            .init(label: ".", keyCode: 47),
+            .init(label: "/", keyCode: 44),
+            .init(label: "[", keyCode: 33),
+            .init(label: "]", keyCode: 30),
+            .init(label: "-", keyCode: 27),
+            .init(label: "=", keyCode: 24),
+            .init(label: "\\", keyCode: 42)
+        ]
+    }
+}
+
+private struct KeyShortcutOption {
+    let label: String
+    let keyCode: UInt16
 }

@@ -12,6 +12,37 @@ final class PlayerViewModel: NSObject, ObservableObject {
         case mpv
     }
 
+    enum PlaylistOrder: String, CaseIterable {
+        case ascending
+        case descending
+
+        var buttonTitle: String {
+            switch self {
+            case .ascending:
+                "正序"
+            case .descending:
+                "倒序"
+            }
+        }
+    }
+
+    enum LoopMode: String, CaseIterable {
+        case singleFile
+        case playlist
+        case none
+
+        var buttonTitle: String {
+            switch self {
+            case .singleFile:
+                "单文件"
+            case .playlist:
+                "列表循环"
+            case .none:
+                "不循环"
+            }
+        }
+    }
+
     @Published var isPaused = true
     @Published var speed: Double = 1.0
     @Published var currentTime: Double = 0
@@ -25,6 +56,10 @@ final class PlayerViewModel: NSObject, ObservableObject {
     @Published var playbackBackend: PlaybackBackend = .native
     @Published var shortcutSeekSeconds: Double
     @Published var shortcutFrameStepCount: Int
+    @Published var previousFileKeyCode: UInt16
+    @Published var nextFileKeyCode: UInt16
+    @Published var playlistOrder: PlaylistOrder
+    @Published var loopMode: LoopMode
 
     let mpvPlayer = MpvPlayer()
     let nativePlayer = AVPlayer()
@@ -46,12 +81,24 @@ final class PlayerViewModel: NSObject, ObservableObject {
 
     private static let shortcutSeekSecondsKey = "settings.shortcutSeekSeconds"
     private static let shortcutFrameStepCountKey = "settings.shortcutFrameStepCount"
+    private static let previousFileKeyCodeKey = "settings.previousFileKeyCode"
+    private static let nextFileKeyCodeKey = "settings.nextFileKeyCode"
+    private static let playlistOrderKey = "settings.playlistOrder"
+    private static let loopModeKey = "settings.loopMode"
 
     override init() {
         let storedSeekSeconds = UserDefaults.standard.object(forKey: Self.shortcutSeekSecondsKey) as? Double
         let storedFrameStepCount = UserDefaults.standard.object(forKey: Self.shortcutFrameStepCountKey) as? Int
+        let storedPreviousFileKeyCode = UserDefaults.standard.object(forKey: Self.previousFileKeyCodeKey) as? Int
+        let storedNextFileKeyCode = UserDefaults.standard.object(forKey: Self.nextFileKeyCodeKey) as? Int
+        let storedPlaylistOrder = UserDefaults.standard.string(forKey: Self.playlistOrderKey).flatMap(PlaylistOrder.init(rawValue:))
+        let storedLoopMode = UserDefaults.standard.string(forKey: Self.loopModeKey).flatMap(LoopMode.init(rawValue:))
         shortcutSeekSeconds = max(storedSeekSeconds ?? 5, 0.1)
         shortcutFrameStepCount = max(storedFrameStepCount ?? 1, 1)
+        previousFileKeyCode = UInt16(storedPreviousFileKeyCode ?? 41)
+        nextFileKeyCode = UInt16(storedNextFileKeyCode ?? 39)
+        playlistOrder = storedPlaylistOrder ?? .ascending
+        loopMode = storedLoopMode ?? .playlist
         super.init()
         bindMpvCallbacks()
         bindNativePlayer()
@@ -123,6 +170,14 @@ final class PlayerViewModel: NSObject, ObservableObject {
         openFromPlaylist(playlist[index])
     }
 
+    func previousFile() {
+        moveInPlaylist(step: -1)
+    }
+
+    func nextFile() {
+        moveInPlaylist(step: 1)
+    }
+
     func seek(to progress: Double) {
         guard duration > 0 else { return }
         let target = duration * progress
@@ -158,6 +213,37 @@ final class PlayerViewModel: NSObject, ObservableObject {
         let normalized = max(value, 1)
         shortcutFrameStepCount = normalized
         UserDefaults.standard.set(normalized, forKey: Self.shortcutFrameStepCountKey)
+    }
+
+    func setPreviousFileKeyCode(_ value: UInt16) {
+        previousFileKeyCode = value
+        UserDefaults.standard.set(Int(value), forKey: Self.previousFileKeyCodeKey)
+    }
+
+    func setNextFileKeyCode(_ value: UInt16) {
+        nextFileKeyCode = value
+        UserDefaults.standard.set(Int(value), forKey: Self.nextFileKeyCodeKey)
+    }
+
+    func togglePlaylistOrder() {
+        playlist.reverse()
+        playlistOrder = playlistOrder == .ascending ? .descending : .ascending
+        UserDefaults.standard.set(playlistOrder.rawValue, forKey: Self.playlistOrderKey)
+        if let currentFileURL {
+            currentIndex = playlist.firstIndex(of: currentFileURL) ?? -1
+        }
+    }
+
+    func cycleLoopMode() {
+        switch loopMode {
+        case .singleFile:
+            loopMode = .playlist
+        case .playlist:
+            loopMode = .none
+        case .none:
+            loopMode = .singleFile
+        }
+        UserDefaults.standard.set(loopMode.rawValue, forKey: Self.loopModeKey)
     }
 
     func seekBy(seconds delta: Double) {
@@ -320,6 +406,10 @@ killall lsd >/dev/null 2>&1 || true
             guard let self, self.playbackBackend == .mpv else { return }
             self.playbackEngineStatus = status
         }
+        mpvPlayer.onEndReached = { [weak self] in
+            guard let self, self.playbackBackend == .mpv else { return }
+            self.handlePlaybackFinished()
+        }
     }
 
     private func bindNativePlayer() {
@@ -347,7 +437,7 @@ killall lsd >/dev/null 2>&1 || true
             Task { @MainActor [weak self] in
                 guard let self, self.playbackBackend == .native else { return }
                 guard notification.object as? AVPlayerItem === self.nativePlayer.currentItem else { return }
-                self.isPaused = true
+                self.handlePlaybackFinished()
             }
         }
     }
@@ -366,7 +456,7 @@ killall lsd >/dev/null 2>&1 || true
         }
     }
 
-    private func openFromPlaylist(_ url: URL) {
+    private func openFromPlaylist(_ url: URL, forceStartAtBeginning: Bool = false) {
         saveCurrentProgress()
         currentFileURL = url
         currentIndex = playlist.firstIndex(of: url) ?? -1
@@ -374,7 +464,7 @@ killall lsd >/dev/null 2>&1 || true
         duration = 0
         currentNominalFPS = estimateFPS(for: url)
         updateWindowTitle(url.lastPathComponent)
-        let resumeTime = loadSavedProgress(for: url)
+        let resumeTime = forceStartAtBeginning ? nil : loadSavedProgress(for: url)
         let backend = chooseBackend(for: url)
         selectBackend(backend)
 
@@ -440,6 +530,20 @@ killall lsd >/dev/null 2>&1 || true
 
         playlist = allVideos.isEmpty ? [selectedURL] : allVideos
         currentIndex = playlist.firstIndex(of: selectedURL) ?? 0
+        if playlistOrder == .descending {
+            playlist.reverse()
+            currentIndex = playlist.firstIndex(of: selectedURL) ?? 0
+        }
+    }
+
+    private func moveInPlaylist(step: Int) {
+        guard !playlist.isEmpty else { return }
+        let currentURL = currentFileURL ?? (playlist.indices.contains(currentIndex) ? playlist[currentIndex] : playlist.first!)
+        let current = playlist.firstIndex(of: currentURL) ?? currentIndex
+        guard current >= 0 else { return }
+        let next = current + step
+        guard playlist.indices.contains(next) else { return }
+        openFromPlaylist(playlist[next])
     }
 
     private func estimateFPS(for url: URL) -> Double {
@@ -576,6 +680,28 @@ killall lsd >/dev/null 2>&1 || true
             return lines.joined(separator: "\n")
         } catch {
             return "读取媒体信息失败：\(error.localizedDescription)"
+        }
+    }
+
+    private func handlePlaybackFinished() {
+        switch loopMode {
+        case .singleFile:
+            if let currentFileURL {
+                openFromPlaylist(currentFileURL, forceStartAtBeginning: true)
+            } else {
+                isPaused = true
+            }
+        case .playlist:
+            let current = currentFileURL.flatMap { playlist.firstIndex(of: $0) } ?? currentIndex
+            if playlist.indices.contains(current + 1) {
+                openFromPlaylist(playlist[current + 1])
+            } else if let first = playlist.first {
+                openFromPlaylist(first)
+            } else {
+                isPaused = true
+            }
+        case .none:
+            isPaused = true
         }
     }
 }
