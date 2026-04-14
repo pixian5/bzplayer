@@ -46,6 +46,12 @@ private struct PlayerWindowRootView: View {
                 viewModel.attachWindow(window)
                 appDelegate.setActiveViewModel(viewModel)
             }
+            .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { notification in
+                guard let window = notification.object as? NSWindow else { return }
+                guard window.windowNumber == windowNumber else { return }
+                viewModel.prepareForWindowClose()
+                appDelegate.unregister(window: window)
+            }
             .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in
                 viewModel.refreshPreferences()
             }
@@ -107,6 +113,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @MainActor
+    func unregister(window: NSWindow) {
+        registeredWindows.removeValue(forKey: ObjectIdentifier(window))
+        cleanupDeadWindowBindings()
+    }
+
+    @MainActor
     func rerouteIfMultipleWindowsDisabled(source: PlayerViewModel) {
         guard !isReroutingOpen else { return }
         guard shouldAllowMultipleWindows() == false else { return }
@@ -122,6 +134,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         isReroutingOpen = true
+        source.prepareForWindowClose()
         source.currentWindow?.performClose(nil)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self, weak targetViewModel] in
             guard let self, let targetViewModel else { return }

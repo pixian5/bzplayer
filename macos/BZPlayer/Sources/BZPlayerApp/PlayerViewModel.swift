@@ -215,6 +215,24 @@ final class PlayerViewModel: NSObject, ObservableObject {
         saveCurrentProgress()
     }
 
+    func prepareForWindowClose() {
+        saveCurrentProgress()
+        switch playbackBackend {
+        case .native:
+            nativePlayer.pause()
+            nativePlayer.replaceCurrentItem(with: nil)
+        case .mpv:
+            mpvPlayer.stop()
+        }
+        currentFileURL = nil
+        openedFilePath = ""
+        currentTime = 0
+        duration = 0
+        isPaused = true
+        windowTitle = "BZPlayer"
+        attachedWindow?.title = windowTitle
+    }
+
     func togglePause() {
         isPaused ? play() : pause()
     }

@@ -73,6 +73,16 @@ final class MpvPlayer: NSObject {
         setFlagProperty("pause", true)
     }
 
+    func stop() {
+        setFlagProperty("pause", true)
+        guard let handle else { return }
+        command(["stop"], on: handle)
+        resetSamplingState()
+        onPauseChanged?(true)
+        onTimeChanged?(0)
+        onDurationChanged?(0)
+    }
+
     func seek(seconds: Double) {
         guard seconds.isFinite else { return }
         resetSamplingState()
