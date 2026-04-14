@@ -225,6 +225,18 @@ final class PlayerViewModel: NSObject, ObservableObject {
         UserDefaults.standard.set(Int(value), forKey: Self.nextFileKeyCodeKey)
     }
 
+    func refreshShortcutPreferences() {
+        let storedSeekSeconds = UserDefaults.standard.object(forKey: Self.shortcutSeekSecondsKey) as? Double
+        let storedFrameStepCount = UserDefaults.standard.object(forKey: Self.shortcutFrameStepCountKey) as? Int
+        let storedPreviousFileKeyCode = UserDefaults.standard.object(forKey: Self.previousFileKeyCodeKey) as? Int
+        let storedNextFileKeyCode = UserDefaults.standard.object(forKey: Self.nextFileKeyCodeKey) as? Int
+
+        shortcutSeekSeconds = max(storedSeekSeconds ?? shortcutSeekSeconds, 0.1)
+        shortcutFrameStepCount = max(storedFrameStepCount ?? shortcutFrameStepCount, 1)
+        previousFileKeyCode = UInt16(storedPreviousFileKeyCode ?? Int(previousFileKeyCode))
+        nextFileKeyCode = UInt16(storedNextFileKeyCode ?? Int(nextFileKeyCode))
+    }
+
     func togglePlaylistOrder() {
         playlist.reverse()
         playlistOrder = playlistOrder == .ascending ? .descending : .ascending

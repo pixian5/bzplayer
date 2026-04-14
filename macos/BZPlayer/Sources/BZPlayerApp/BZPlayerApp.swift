@@ -4,32 +4,51 @@ import AppKit
 @main
 struct BZPlayerApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @StateObject private var viewModel = PlayerViewModel()
+    @StateObject private var settingsViewModel = PlayerViewModel()
 
     var body: some Scene {
         WindowGroup {
-            PlayerRootView()
-                .environmentObject(viewModel)
-                .frame(minWidth: 980, minHeight: 620)
-                .onAppear {
-                    appDelegate.consumePendingURLsIfNeeded(using: viewModel)
-                }
-                .onReceive(NotificationCenter.default.publisher(for: AppDelegate.openFilesNotification)) { notification in
-                    guard let urls = notification.object as? [URL], !urls.isEmpty else { return }
-                    viewModel.openExternalFiles(urls)
-                }
+            PlayerWindowRootView(appDelegate: appDelegate)
         }
         .windowResizability(.contentMinSize)
 
         Settings {
-            SettingsView(viewModel: viewModel)
+            SettingsView(viewModel: settingsViewModel)
         }
     }
 }
 
+private struct PlayerWindowRootView: View {
+    let appDelegate: AppDelegate
+    @StateObject private var viewModel = PlayerViewModel()
+    @State private var windowNumber: Int?
+
+    var body: some View {
+        PlayerRootView()
+            .environmentObject(viewModel)
+            .frame(minWidth: 980, minHeight: 620)
+            .background(
+                WindowAccessor { window in
+                    windowNumber = window.windowNumber
+                    appDelegate.setActiveViewModel(viewModel)
+                }
+            )
+            .onAppear {
+                viewModel.refreshShortcutPreferences()
+                appDelegate.setActiveViewModel(viewModel)
+                appDelegate.consumePendingURLsIfNeeded(using: viewModel)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notification in
+                guard let window = notification.object as? NSWindow else { return }
+                guard window.windowNumber == windowNumber else { return }
+                appDelegate.setActiveViewModel(viewModel)
+            }
+    }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    static let openFilesNotification = Notification.Name("BZPlayerOpenFilesNotification")
     private var pendingURLs: [URL] = []
+    private weak var activeViewModel: PlayerViewModel?
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
@@ -37,8 +56,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func application(_ application: NSApplication, open urls: [URL]) {
         guard !urls.isEmpty else { return }
-        pendingURLs = urls
-        NotificationCenter.default.post(name: Self.openFilesNotification, object: urls)
+        if let activeViewModel {
+            activeViewModel.openExternalFiles(urls)
+        } else {
+            pendingURLs = urls
+        }
         NSApp.activate(ignoringOtherApps: true)
     }
 
@@ -48,6 +70,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let urls = pendingURLs
         pendingURLs.removeAll()
         viewModel.openExternalFiles(urls)
+    }
+
+    @MainActor
+    func setActiveViewModel(_ viewModel: PlayerViewModel) {
+        activeViewModel = viewModel
     }
 }
 
@@ -198,4 +225,36 @@ private struct SettingsView: View {
 private struct KeyShortcutOption {
     let label: String
     let keyCode: UInt16
+}
+
+private struct WindowAccessor: NSViewRepresentable {
+    let onResolve: (NSWindow) -> Void
+
+    func makeNSView(context: Context) -> WindowAccessorView {
+        let view = WindowAccessorView()
+        view.onResolve = onResolve
+        return view
+    }
+
+    func updateNSView(_ nsView: WindowAccessorView, context: Context) {
+        nsView.onResolve = onResolve
+        nsView.resolveWindowIfNeeded()
+    }
+}
+
+private final class WindowAccessorView: NSView {
+    var onResolve: ((NSWindow) -> Void)?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        resolveWindowIfNeeded()
+    }
+
+    func resolveWindowIfNeeded() {
+        guard let window else { return }
+        DispatchQueue.main.async { [weak self, weak window] in
+            guard let self, let window else { return }
+            self.onResolve?(window)
+        }
+    }
 }
