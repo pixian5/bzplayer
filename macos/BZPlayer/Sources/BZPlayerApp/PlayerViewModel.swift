@@ -684,19 +684,19 @@ killall lsd >/dev/null 2>&1 || true
     }
 
     private func shouldPreferMpv(ffprobeInfo: FFprobeInfo) -> Bool {
-        let nativeFragileVideoCodecs: Set<String> = ["vp8", "vp9", "av1", "theora"]
-        let nativeFragileVideoTags: Set<String> = ["vp08", "vp09", "av01"]
-        let nativeFragileAudioCodecs: Set<String> = ["opus", "vorbis", "flac"]
+        let nativeSafeVideoCodecs: Set<String> = [
+            "h264", "hevc", "mpeg4", "mjpeg", "prores", "jpeg2000", "dvvideo", "h263"
+        ]
+        let nativeSafeAudioCodecs: Set<String> = [
+            "aac", "ac3", "eac3", "alac", "mp3",
+            "pcm_s16le", "pcm_s24le", "pcm_s32le", "pcm_f32le", "pcm_f64le", "pcm_u8"
+        ]
 
-        if ffprobeInfo.videoStreams.contains(where: {
-            nativeFragileVideoCodecs.contains($0.codecName) || nativeFragileVideoTags.contains($0.codecTag)
-        }) {
+        if ffprobeInfo.videoStreams.contains(where: { !nativeSafeVideoCodecs.contains($0.codecName) }) {
             return true
         }
 
-        if ffprobeInfo.audioStreams.contains(where: {
-            nativeFragileAudioCodecs.contains($0.codecName)
-        }) {
+        if ffprobeInfo.audioStreams.contains(where: { !nativeSafeAudioCodecs.contains($0.codecName) }) {
             return true
         }
 
@@ -974,6 +974,14 @@ killall lsd >/dev/null 2>&1 || true
             }
 
             lines.append("建议播放后端：\(recommendedBackend == .native ? "系统原生" : "mpv/libmpv")")
+            if let ffprobeInfo {
+                if !ffprobeInfo.videoStreams.isEmpty {
+                    lines.append("视频编码：\(codecHeadline(from: ffprobeInfo.videoStreams))")
+                }
+                if !ffprobeInfo.audioStreams.isEmpty {
+                    lines.append("音频编码：\(codecHeadline(from: ffprobeInfo.audioStreams))")
+                }
+            }
 
             let videoTracks = tracks.filter { $0.mediaType == .video }
             lines.append("")
@@ -1125,6 +1133,7 @@ private struct FFprobeInfo {
 private struct FFprobeStream {
     let codecName: String
     let codecTag: String
+    let profile: String
     let summary: String
 }
 
@@ -1159,10 +1168,10 @@ private func probeMediaInfo(url: URL) -> FFprobeInfo? {
         let mapped = streams.compactMap(ffprobeStreamSummary(from:))
         return FFprobeInfo(
             videoStreams: mapped.filter { $0.type == "video" }.map {
-                FFprobeStream(codecName: $0.codecName, codecTag: $0.codecTag, summary: $0.summary)
+                FFprobeStream(codecName: $0.codecName, codecTag: $0.codecTag, profile: $0.profile, summary: $0.summary)
             },
             audioStreams: mapped.filter { $0.type == "audio" }.map {
-                FFprobeStream(codecName: $0.codecName, codecTag: $0.codecTag, summary: $0.summary)
+                FFprobeStream(codecName: $0.codecName, codecTag: $0.codecTag, profile: $0.profile, summary: $0.summary)
             }
         )
     } catch {
@@ -1170,10 +1179,11 @@ private func probeMediaInfo(url: URL) -> FFprobeInfo? {
     }
 }
 
-private func ffprobeStreamSummary(from json: [String: Any]) -> (type: String, codecName: String, codecTag: String, summary: String)? {
+private func ffprobeStreamSummary(from json: [String: Any]) -> (type: String, codecName: String, codecTag: String, profile: String, summary: String)? {
     guard let type = json["codec_type"] as? String else { return nil }
     let codecName = (json["codec_name"] as? String)?.lowercased() ?? ""
     let codecTag = (json["codec_tag_string"] as? String)?.lowercased() ?? ""
+    let profile = (json["profile"] as? String) ?? ""
 
     var parts: [String] = []
     if let codec = json["codec_name"] as? String {
@@ -1217,7 +1227,22 @@ private func ffprobeStreamSummary(from json: [String: Any]) -> (type: String, co
         parts.append("语言 \(language)")
     }
 
-    return (type, codecName, codecTag, parts.joined(separator: "，"))
+    return (type, codecName, codecTag, profile, parts.joined(separator: "，"))
+}
+
+private func codecHeadline(from streams: [FFprobeStream]) -> String {
+    let parts = streams.map { stream in
+        var items: [String] = []
+        items.append(stream.codecName.isEmpty ? "未知" : stream.codecName)
+        if !stream.codecTag.isEmpty {
+            items.append("标签 \(stream.codecTag)")
+        }
+        if !stream.profile.isEmpty, stream.profile != "unknown" {
+            items.append("Profile \(stream.profile)")
+        }
+        return items.joined(separator: "，")
+    }
+    return parts.joined(separator: "；")
 }
 
 private func parseFPS(fromFFprobeSummary summary: String) -> Double? {
