@@ -69,26 +69,13 @@ struct PlayerRootView: View {
                         switch phase {
                         case .active(let location):
                             let triggerWidth = max(proxy.size.width * 0.05, 24)
-                            let triggerHeight = max(proxy.size.height * 0.15, 24)
-                            let controlRegionHeight = max(triggerHeight, controlBarFrame.height + 32)
-                            let isInControlRegion = location.y >= proxy.size.height - controlRegionHeight
                             shouldShowPlaylist = isHoveringPlaylist || location.x >= proxy.size.width - triggerWidth
-                            if shouldPinControlsVisible {
-                                revealControlsAndScheduleHide()
-                            } else if isInControlRegion || isHoveringControlBar || cursorIsInsideControlBar() {
-                                revealControlsAndScheduleHide()
-                            } else if isControlsVisible {
-                                scheduleControlsHide()
-                            }
+                            updateControlsVisibility(pointerLocation: location, playerSize: proxy.size)
                         case .ended:
                             if !isHoveringPlaylist {
                                 shouldShowPlaylist = false
                             }
-                            if shouldPinControlsVisible {
-                                revealControlsAndScheduleHide()
-                            } else if isControlsVisible {
-                                scheduleControlsHide()
-                            }
+                            updateControlsVisibility()
                         }
                     }
 
@@ -250,11 +237,7 @@ struct PlayerRootView: View {
         )
         .onHover { hovering in
             isHoveringControlBar = hovering
-            if hovering {
-                revealControlsAndScheduleHide()
-            } else {
-                scheduleControlsHide()
-            }
+            updateControlsVisibility()
         }
     }
 
@@ -323,41 +306,18 @@ struct PlayerRootView: View {
     }
 
     private func revealControlsAndScheduleHide() {
-        if !isControlsVisible {
-            isControlsVisible = true
-        }
-        if shouldPinControlsVisible {
-            return
-        }
+        setControlsVisible(true)
     }
 
     private func scheduleControlsHide() {
-        if shouldPinControlsVisible {
-            if !isControlsVisible {
-                isControlsVisible = true
-            }
-            return
-        }
-        if shouldKeepControlsVisible() {
-            if !isControlsVisible {
-                isControlsVisible = true
-            }
-            return
-        }
-
-        withAnimation(.easeOut(duration: 0.12)) {
-            isControlsVisible = false
-            if !isHoveringPlaylist {
-                shouldShowPlaylist = false
-            }
-        }
+        updateControlsVisibility()
     }
 
     private func syncControlsVisibilityWithPlaybackState() {
         if shouldPinControlsVisible {
-            if !isControlsVisible {
-                isControlsVisible = true
-            }
+            setControlsVisible(true)
+        } else if !shouldKeepControlsVisible() {
+            setControlsVisible(false)
         }
     }
 
@@ -365,20 +325,47 @@ struct PlayerRootView: View {
         controlBarFrame.contains(NSEvent.mouseLocation)
     }
 
-    private func cursorIsInsideBottomControlRegion() -> Bool {
+    private func cursorIsInsideBottomTriggerRegion() -> Bool {
         guard !playerAreaFrame.isEmpty else { return false }
         let triggerHeight = max(playerAreaFrame.height * 0.15, 24)
-        let controlRegionHeight = max(triggerHeight, controlBarFrame.height + 32)
         let region = CGRect(
             x: playerAreaFrame.minX,
-            y: playerAreaFrame.maxY - controlRegionHeight,
+            y: playerAreaFrame.maxY - triggerHeight,
             width: playerAreaFrame.width,
-            height: controlRegionHeight
+            height: triggerHeight
         )
         return region.contains(NSEvent.mouseLocation)
     }
 
     private func shouldKeepControlsVisible() -> Bool {
-        shouldPinControlsVisible || isHoveringControlBar || cursorIsInsideBottomControlRegion() || cursorIsInsideControlBar()
+        shouldPinControlsVisible || isHoveringControlBar || cursorIsInsideControlBar() || cursorIsInsideBottomTriggerRegion()
+    }
+
+    private func updateControlsVisibility(pointerLocation: CGPoint? = nil, playerSize: CGSize? = nil) {
+        if shouldPinControlsVisible {
+            setControlsVisible(true)
+            return
+        }
+
+        let isInBottomTriggerRegion: Bool
+        if let pointerLocation, let playerSize {
+            let triggerHeight = max(playerSize.height * 0.15, 24)
+            isInBottomTriggerRegion = pointerLocation.y >= playerSize.height - triggerHeight
+        } else {
+            isInBottomTriggerRegion = cursorIsInsideBottomTriggerRegion()
+        }
+
+        let shouldShow = isHoveringControlBar || cursorIsInsideControlBar() || isInBottomTriggerRegion
+        setControlsVisible(shouldShow)
+        if !shouldShow, !isHoveringPlaylist {
+            shouldShowPlaylist = false
+        }
+    }
+
+    private func setControlsVisible(_ visible: Bool) {
+        guard isControlsVisible != visible else { return }
+        withAnimation(.easeOut(duration: 0.12)) {
+            isControlsVisible = visible
+        }
     }
 }
