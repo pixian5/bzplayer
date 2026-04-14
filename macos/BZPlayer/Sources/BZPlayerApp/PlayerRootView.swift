@@ -189,16 +189,25 @@ struct PlayerRootView: View {
     private var controlBar: some View {
         VStack(spacing: 10) {
             HStack(spacing: 12) {
-                Slider(value: Binding(
-                    get: { seekValue },
-                    set: { newValue in
-                        revealControlsAndScheduleHide()
-                        seekValue = newValue
-                        viewModel.seek(to: newValue)
-                    }
-                ), in: 0...1)
-                .accentColor(.white)
-                .frame(minWidth: 280)
+                ZStack(alignment: .leading) {
+                    // Thicker background track for better visibility
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(Color.white.opacity(0.2))
+                        .frame(height: 4)
+                        .padding(.horizontal, 2)
+
+                    Slider(value: Binding(
+                        get: { seekValue },
+                        set: { newValue in
+                            revealControlsAndScheduleHide()
+                            seekValue = newValue
+                            viewModel.seek(to: newValue)
+                        }
+                    ), in: 0...1)
+                    .tint(.blue)
+                    .accentColor(.blue)
+                    .frame(minWidth: 280)
+                }
 
                 Text("\(format(viewModel.currentTime)) / \(format(viewModel.duration))")
                     .font(.system(.body, design: .monospaced))
