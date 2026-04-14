@@ -636,13 +636,7 @@ killall lsd >/dev/null 2>&1 || true
         case .native:
             openWithNative(url: url, resumeAt: resumeTime)
         case .mpv:
-            let hardwareDecodingEnabled: Bool
-            if let ffprobeInfo {
-                hardwareDecodingEnabled = !shouldForceSoftwareDecode(ffprobeInfo: ffprobeInfo)
-            } else {
-                hardwareDecodingEnabled = true
-            }
-            mpvPlayer.setHardwareDecodingEnabled(hardwareDecodingEnabled)
+            mpvPlayer.setHardwareDecodingEnabled(false)
             mpvPlayer.setSpeed(speed)
             mpvPlayer.load(url: url, resumeAt: resumeTime)
         }
@@ -707,14 +701,6 @@ killall lsd >/dev/null 2>&1 || true
         }
 
         return false
-    }
-
-    private func shouldForceSoftwareDecode(ffprobeInfo: FFprobeInfo) -> Bool {
-        let softwareDecodeVideoCodecs: Set<String> = ["vp8", "vp9", "av1", "theora"]
-        let softwareDecodeVideoTags: Set<String> = ["vp08", "vp09", "av01"]
-        return ffprobeInfo.videoStreams.contains(where: {
-            softwareDecodeVideoCodecs.contains($0.codecName) || softwareDecodeVideoTags.contains($0.codecTag)
-        })
     }
 
     private func loadPlaylist(with selectedURL: URL) {

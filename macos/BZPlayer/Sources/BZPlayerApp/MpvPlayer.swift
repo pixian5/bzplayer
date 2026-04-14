@@ -26,7 +26,7 @@ final class MpvPlayer: NSObject {
     private var sourceFPS: Double = 30
     private var displayFPS: Double = 60
     private var renderWarmupUntil: CFTimeInterval = 0
-    private var preferredHwdecMode = "auto-safe"
+    private var preferredHwdecMode = "no"
 
     override init() {
         super.init()
