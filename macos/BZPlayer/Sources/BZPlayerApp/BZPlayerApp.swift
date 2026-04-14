@@ -30,18 +30,23 @@ private struct PlayerWindowRootView: View {
             .background(
                 WindowAccessor { window in
                     windowNumber = window.windowNumber
+                    viewModel.attachWindow(window)
                     appDelegate.setActiveViewModel(viewModel)
                 }
             )
             .onAppear {
-                viewModel.refreshShortcutPreferences()
+                viewModel.refreshPreferences()
                 appDelegate.setActiveViewModel(viewModel)
                 appDelegate.consumePendingURLsIfNeeded(using: viewModel)
             }
             .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notification in
                 guard let window = notification.object as? NSWindow else { return }
                 guard window.windowNumber == windowNumber else { return }
+                viewModel.attachWindow(window)
                 appDelegate.setActiveViewModel(viewModel)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in
+                viewModel.refreshPreferences()
             }
     }
 }
@@ -170,12 +175,30 @@ private struct SettingsView: View {
                 Text("默认上一文件是 `;`，下一文件是 `'`，按物理键位处理，不受中英文输入影响。")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
+
+                HStack {
+                    Text("打开文件时窗口")
+                        .frame(width: 150, alignment: .leading)
+                    Picker("打开文件时窗口", selection: Binding(
+                        get: { viewModel.windowOpenBehavior },
+                        set: { viewModel.setWindowOpenBehavior($0) }
+                    )) {
+                        ForEach(PlayerViewModel.WindowOpenBehavior.allCases, id: \.self) { behavior in
+                            Text(behavior.title).tag(behavior)
+                        }
+                    }
+                    .frame(width: 180)
+                }
+
+                Text("默认最大化。尽量大表示按视频比例尽可能铺满屏幕可视区域，不强行加黑边占满。")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
             }
 
             Spacer()
         }
         .padding(16)
-        .frame(width: 460, height: 320)
+        .frame(width: 500, height: 400)
         .onAppear {
             syncShortcutFields()
         }

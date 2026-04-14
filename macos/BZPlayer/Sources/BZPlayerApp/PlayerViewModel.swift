@@ -43,6 +43,29 @@ final class PlayerViewModel: NSObject, ObservableObject {
         }
     }
 
+    enum WindowOpenBehavior: String, CaseIterable {
+        case fullscreen
+        case maximized
+        case videoSize
+        case rememberLast
+        case fitLargest
+
+        var title: String {
+            switch self {
+            case .fullscreen:
+                "全屏"
+            case .maximized:
+                "最大化"
+            case .videoSize:
+                "视频大小"
+            case .rememberLast:
+                "记忆上次"
+            case .fitLargest:
+                "尽量大"
+            }
+        }
+    }
+
     @Published var isPaused = true
     @Published var speed: Double = 1.0
     @Published var currentTime: Double = 0
@@ -60,6 +83,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
     @Published var nextFileKeyCode: UInt16
     @Published var playlistOrder: PlaylistOrder
     @Published var loopMode: LoopMode
+    @Published var windowOpenBehavior: WindowOpenBehavior
 
     let mpvPlayer = MpvPlayer()
     let nativePlayer = AVPlayer()
@@ -74,10 +98,14 @@ final class PlayerViewModel: NSObject, ObservableObject {
     }
 
     private var currentFileURL: URL?
+    private var currentVideoSize: CGSize?
     private var currentNominalFPS: Double = 30
     private var nativeTimeObserver: Any?
     private var nativeItemStatusObserver: NSKeyValueObservation?
     private var nativeEndObserver: NSObjectProtocol?
+    private weak var attachedWindow: NSWindow?
+    private var windowFrameObservers: [NSObjectProtocol] = []
+    private var hasAppliedInitialWindowBehavior = false
 
     private static let shortcutSeekSecondsKey = "settings.shortcutSeekSeconds"
     private static let shortcutFrameStepCountKey = "settings.shortcutFrameStepCount"
@@ -85,6 +113,8 @@ final class PlayerViewModel: NSObject, ObservableObject {
     private static let nextFileKeyCodeKey = "settings.nextFileKeyCode"
     private static let playlistOrderKey = "settings.playlistOrder"
     private static let loopModeKey = "settings.loopMode"
+    private static let windowOpenBehaviorKey = "settings.windowOpenBehavior"
+    private static let lastWindowFrameKey = "settings.lastWindowFrame"
 
     override init() {
         let storedSeekSeconds = UserDefaults.standard.object(forKey: Self.shortcutSeekSecondsKey) as? Double
@@ -93,12 +123,14 @@ final class PlayerViewModel: NSObject, ObservableObject {
         let storedNextFileKeyCode = UserDefaults.standard.object(forKey: Self.nextFileKeyCodeKey) as? Int
         let storedPlaylistOrder = UserDefaults.standard.string(forKey: Self.playlistOrderKey).flatMap(PlaylistOrder.init(rawValue:))
         let storedLoopMode = UserDefaults.standard.string(forKey: Self.loopModeKey).flatMap(LoopMode.init(rawValue:))
+        let storedWindowOpenBehavior = UserDefaults.standard.string(forKey: Self.windowOpenBehaviorKey).flatMap(WindowOpenBehavior.init(rawValue:))
         shortcutSeekSeconds = max(storedSeekSeconds ?? 5, 0.1)
         shortcutFrameStepCount = max(storedFrameStepCount ?? 1, 1)
         previousFileKeyCode = UInt16(storedPreviousFileKeyCode ?? 41)
         nextFileKeyCode = UInt16(storedNextFileKeyCode ?? 39)
         playlistOrder = storedPlaylistOrder ?? .ascending
         loopMode = storedLoopMode ?? .playlist
+        windowOpenBehavior = storedWindowOpenBehavior ?? .maximized
         super.init()
         bindMpvCallbacks()
         bindNativePlayer()
@@ -116,6 +148,15 @@ final class PlayerViewModel: NSObject, ObservableObject {
 
     func attachPlayerView(_ view: MpvRenderView) {
         mpvPlayer.attach(to: view)
+    }
+
+    func attachWindow(_ window: NSWindow) {
+        if attachedWindow !== window {
+            attachedWindow = window
+            hasAppliedInitialWindowBehavior = false
+            installWindowFrameObservers(for: window)
+        }
+        applyInitialWindowBehaviorIfNeeded()
     }
 
     func openFile() {
@@ -225,16 +266,24 @@ final class PlayerViewModel: NSObject, ObservableObject {
         UserDefaults.standard.set(Int(value), forKey: Self.nextFileKeyCodeKey)
     }
 
-    func refreshShortcutPreferences() {
+    func setWindowOpenBehavior(_ behavior: WindowOpenBehavior) {
+        windowOpenBehavior = behavior
+        UserDefaults.standard.set(behavior.rawValue, forKey: Self.windowOpenBehaviorKey)
+        applyInitialWindowBehaviorIfNeeded(force: true)
+    }
+
+    func refreshPreferences() {
         let storedSeekSeconds = UserDefaults.standard.object(forKey: Self.shortcutSeekSecondsKey) as? Double
         let storedFrameStepCount = UserDefaults.standard.object(forKey: Self.shortcutFrameStepCountKey) as? Int
         let storedPreviousFileKeyCode = UserDefaults.standard.object(forKey: Self.previousFileKeyCodeKey) as? Int
         let storedNextFileKeyCode = UserDefaults.standard.object(forKey: Self.nextFileKeyCodeKey) as? Int
+        let storedWindowOpenBehavior = UserDefaults.standard.string(forKey: Self.windowOpenBehaviorKey).flatMap(WindowOpenBehavior.init(rawValue:))
 
         shortcutSeekSeconds = max(storedSeekSeconds ?? shortcutSeekSeconds, 0.1)
         shortcutFrameStepCount = max(storedFrameStepCount ?? shortcutFrameStepCount, 1)
         previousFileKeyCode = UInt16(storedPreviousFileKeyCode ?? Int(previousFileKeyCode))
         nextFileKeyCode = UInt16(storedNextFileKeyCode ?? Int(nextFileKeyCode))
+        windowOpenBehavior = storedWindowOpenBehavior ?? windowOpenBehavior
     }
 
     func togglePlaylistOrder() {
@@ -280,7 +329,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
     }
 
     func toggleFullscreen(in window: NSWindow? = nil) {
-        (window ?? NSApp.keyWindow ?? NSApp.mainWindow)?.toggleFullScreen(nil)
+        (window ?? attachedWindow ?? NSApp.keyWindow ?? NSApp.mainWindow)?.toggleFullScreen(nil)
     }
 
     func showFileInfo() {
@@ -474,8 +523,10 @@ killall lsd >/dev/null 2>&1 || true
         currentIndex = playlist.firstIndex(of: url) ?? -1
         currentTime = 0
         duration = 0
+        currentVideoSize = estimateVideoSize(for: url)
         currentNominalFPS = estimateFPS(for: url)
         updateWindowTitle(url.lastPathComponent)
+        applyWindowBehaviorForCurrentMedia()
         let resumeTime = forceStartAtBeginning ? nil : loadSavedProgress(for: url)
         let backend = chooseBackend(for: url)
         selectBackend(backend)
@@ -574,11 +625,22 @@ killall lsd >/dev/null 2>&1 || true
         return 30
     }
 
+    private func estimateVideoSize(for url: URL) -> CGSize? {
+        let asset = AVURLAsset(url: url)
+        if let track = asset.tracks(withMediaType: .video).first {
+            let transformed = track.naturalSize.applying(track.preferredTransform)
+            let width = abs(transformed.width.rounded())
+            let height = abs(transformed.height.rounded())
+            if width > 0, height > 0 {
+                return CGSize(width: width, height: height)
+            }
+        }
+        return nil
+    }
+
     private func updateWindowTitle(_ title: String) {
         windowTitle = title
-        for window in NSApp.windows {
-            window.title = title
-        }
+        attachedWindow?.title = title
     }
 
     private func progressKey(for url: URL) -> String {
@@ -593,6 +655,154 @@ killall lsd >/dev/null 2>&1 || true
     private func saveCurrentProgress() {
         guard let url = currentFileURL, currentTime.isFinite, currentTime > 0 else { return }
         UserDefaults.standard.set(currentTime, forKey: progressKey(for: url))
+    }
+
+    private func applyInitialWindowBehaviorIfNeeded(force: Bool = false) {
+        guard let attachedWindow else { return }
+        guard force || !hasAppliedInitialWindowBehavior else { return }
+        hasAppliedInitialWindowBehavior = true
+
+        switch windowOpenBehavior {
+        case .fullscreen:
+            enterFullscreenIfNeeded(for: attachedWindow)
+        case .maximized:
+            maximize(window: attachedWindow)
+        case .rememberLast:
+            if !restoreRememberedWindowFrame(on: attachedWindow) {
+                maximize(window: attachedWindow)
+            }
+        case .videoSize, .fitLargest:
+            break
+        }
+    }
+
+    private func applyWindowBehaviorForCurrentMedia() {
+        guard let attachedWindow else { return }
+        switch windowOpenBehavior {
+        case .fullscreen:
+            enterFullscreenIfNeeded(for: attachedWindow)
+        case .maximized:
+            maximize(window: attachedWindow)
+        case .videoSize:
+            resizeWindowToVideoSize(attachedWindow)
+        case .rememberLast:
+            if !restoreRememberedWindowFrame(on: attachedWindow) {
+                resizeWindowToLargestFit(attachedWindow)
+            }
+        case .fitLargest:
+            resizeWindowToLargestFit(attachedWindow)
+        }
+    }
+
+    private func maximize(window: NSWindow) {
+        guard let screen = window.screen ?? NSScreen.main else { return }
+        exitFullscreenIfNeeded(window) {
+            let frame = screen.visibleFrame
+            window.setFrame(frame, display: true, animate: true)
+            self.persistWindowFrameIfNeeded(window)
+        }
+    }
+
+    private func resizeWindowToVideoSize(_ window: NSWindow) {
+        guard let videoSize = currentVideoSize, let screen = window.screen ?? NSScreen.main else { return }
+        exitFullscreenIfNeeded(window) {
+            let visible = screen.visibleFrame
+            let maxContentWidth = max(visible.width * 0.9, 400)
+            let maxContentHeight = max(visible.height * 0.9, 300)
+            let width = min(videoSize.width, maxContentWidth)
+            let height = min(videoSize.height, maxContentHeight)
+            self.resize(window: window, contentSize: CGSize(width: width, height: height))
+        }
+    }
+
+    private func resizeWindowToLargestFit(_ window: NSWindow) {
+        guard let videoSize = currentVideoSize, let screen = window.screen ?? NSScreen.main else { return }
+        exitFullscreenIfNeeded(window) {
+            let visible = screen.visibleFrame.insetBy(dx: 12, dy: 12)
+            let scale = min(visible.width / videoSize.width, visible.height / videoSize.height)
+            let fitted = CGSize(
+                width: max(min(videoSize.width * scale, visible.width), 400),
+                height: max(min(videoSize.height * scale, visible.height), 300)
+            )
+            self.resize(window: window, contentSize: fitted)
+        }
+    }
+
+    private func resize(window: NSWindow, contentSize: CGSize) {
+        let clamped = CGSize(width: max(contentSize.width, 980), height: max(contentSize.height, 620))
+        let frame = window.frameRect(forContentRect: CGRect(origin: .zero, size: clamped))
+        guard let screen = window.screen ?? NSScreen.main else {
+            window.setContentSize(clamped)
+            persistWindowFrameIfNeeded(window)
+            return
+        }
+        let visible = screen.visibleFrame
+        let origin = CGPoint(
+            x: visible.midX - frame.width / 2,
+            y: visible.midY - frame.height / 2
+        )
+        window.setFrame(CGRect(origin: origin, size: frame.size), display: true, animate: true)
+        persistWindowFrameIfNeeded(window)
+    }
+
+    private func enterFullscreenIfNeeded(for window: NSWindow) {
+        guard !window.styleMask.contains(.fullScreen) else { return }
+        window.toggleFullScreen(nil)
+    }
+
+    private func exitFullscreenIfNeeded(_ window: NSWindow, completion: @escaping () -> Void) {
+        guard window.styleMask.contains(.fullScreen) else {
+            completion()
+            return
+        }
+        window.toggleFullScreen(nil)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+            completion()
+        }
+    }
+
+    private func restoreRememberedWindowFrame(on window: NSWindow) -> Bool {
+        guard let frameString = UserDefaults.standard.string(forKey: Self.lastWindowFrameKey) else { return false }
+        let frame = NSRectFromString(frameString)
+        guard !frame.isEmpty else { return false }
+        exitFullscreenIfNeeded(window) {
+            window.setFrame(frame, display: true, animate: true)
+            self.persistWindowFrameIfNeeded(window)
+        }
+        return true
+    }
+
+    private func installWindowFrameObservers(for window: NSWindow) {
+        removeWindowFrameObservers()
+        let center = NotificationCenter.default
+        let moveObserver = center.addObserver(forName: NSWindow.didMoveNotification, object: window, queue: .main) { [weak self, weak window] _ in
+            guard let self, let window else { return }
+            Task { @MainActor [weak self, weak window] in
+                guard let self, let window else { return }
+                self.persistWindowFrameIfNeeded(window)
+            }
+        }
+        let resizeObserver = center.addObserver(forName: NSWindow.didResizeNotification, object: window, queue: .main) { [weak self, weak window] _ in
+            guard let self, let window else { return }
+            Task { @MainActor [weak self, weak window] in
+                guard let self, let window else { return }
+                self.persistWindowFrameIfNeeded(window)
+            }
+        }
+        windowFrameObservers = [moveObserver, resizeObserver]
+    }
+
+    private func removeWindowFrameObservers() {
+        let center = NotificationCenter.default
+        for observer in windowFrameObservers {
+            center.removeObserver(observer)
+        }
+        windowFrameObservers.removeAll()
+    }
+
+    private func persistWindowFrameIfNeeded(_ window: NSWindow) {
+        guard !window.styleMask.contains(.fullScreen) else { return }
+        UserDefaults.standard.set(NSStringFromRect(window.frame), forKey: Self.lastWindowFrameKey)
     }
 
     private func showAlert(title: String, message: String) {
