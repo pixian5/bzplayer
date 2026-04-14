@@ -81,9 +81,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if self.shouldAllowMultipleWindows(), self.activeViewModel != nil {
                 self.pendingURLs = urls
                 self.scheduleFallbackWindowCreationIfNeeded()
+            } else if let targetBinding = self.singleWindowTargetBinding() {
+                targetBinding.viewModel?.openExternalFiles(urls)
+                self.deactivateOtherPlayerWindows(excludingWindow: targetBinding.window)
             } else if let activeViewModel = self.activeViewModel {
                 activeViewModel.openExternalFiles(urls)
-                self.closeRedundantBlankWindows(excluding: activeViewModel)
             } else {
                 self.pendingURLs = urls
             }
@@ -122,23 +124,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func rerouteIfMultipleWindowsDisabled(source: PlayerViewModel) {
         guard !isReroutingOpen else { return }
         guard shouldAllowMultipleWindows() == false else { return }
-        guard let sourceURL = source.currentMediaURL else { return }
+        guard source.currentMediaURL != nil else { return }
         cleanupDeadWindowBindings()
         guard registeredWindows.count > 1 else { return }
 
-        guard let targetBinding = registeredWindows.values.first(where: {
-            guard let other = $0.viewModel else { return false }
-            return other !== source
-        }), let targetViewModel = targetBinding.viewModel else {
-            return
-        }
-
         isReroutingOpen = true
-        source.prepareForWindowClose()
-        source.currentWindow?.performClose(nil)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self, weak targetViewModel] in
-            guard let self, let targetViewModel else { return }
-            targetViewModel.openExternalFiles([sourceURL])
+        setActiveViewModel(source)
+        DispatchQueue.main.async { [weak self, weak source] in
+            guard let self, let source else { return }
+            self.deactivateOtherPlayerWindows(excludingWindow: source.currentWindow)
             self.isReroutingOpen = false
         }
     }
@@ -191,14 +185,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @MainActor
-    private func closeRedundantBlankWindows(excluding activeViewModel: PlayerViewModel) {
+    private func deactivateOtherPlayerWindows(excludingWindow activeWindow: NSWindow?) {
         cleanupDeadWindowBindings()
         for (_, binding) in registeredWindows {
             guard let window = binding.window, let viewModel = binding.viewModel else { continue }
-            guard viewModel !== activeViewModel else { continue }
-            guard viewModel.hasOpenedFile == false else { continue }
-            window.performClose(nil)
+            guard window !== activeWindow else { continue }
+            viewModel.prepareForWindowClose()
+            window.orderOut(nil)
         }
+    }
+
+    @MainActor
+    private func singleWindowTargetBinding(excluding excludedViewModel: PlayerViewModel? = nil) -> WeakWindowBinding? {
+        cleanupDeadWindowBindings()
+
+        if let keyWindow = NSApp.keyWindow ?? NSApp.mainWindow,
+           let binding = registeredWindows[ObjectIdentifier(keyWindow)],
+           let viewModel = binding.viewModel,
+           viewModel !== excludedViewModel {
+            return binding
+        }
+
+        if let activeViewModel, activeViewModel !== excludedViewModel,
+           let binding = registeredWindows.values.first(where: { $0.viewModel === activeViewModel }) {
+            return binding
+        }
+
+        return registeredWindows.values.first { $0.viewModel !== excludedViewModel }
     }
 
     private func cleanupDeadWindowBindings() {
