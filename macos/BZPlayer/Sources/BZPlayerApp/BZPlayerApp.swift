@@ -31,6 +31,7 @@ private struct PlayerWindowRootView: View {
                 WindowAccessor { window in
                     windowNumber = window.windowNumber
                     viewModel.attachWindow(window)
+                    appDelegate.register(window: window, viewModel: viewModel)
                     appDelegate.setActiveViewModel(viewModel)
                 }
             )
@@ -48,6 +49,9 @@ private struct PlayerWindowRootView: View {
             .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in
                 viewModel.refreshPreferences()
             }
+            .onReceive(viewModel.$openedFilePath) { _ in
+                appDelegate.rerouteIfMultipleWindowsDisabled(source: viewModel)
+            }
     }
 }
 
@@ -56,6 +60,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private weak var activeViewModel: PlayerViewModel?
     private var extraWindowControllers: [NSWindowController] = []
     private var extraWindowCloseObservers: [ObjectIdentifier: NSObjectProtocol] = [:]
+    private var registeredWindows: [ObjectIdentifier: WeakWindowBinding] = [:]
+    private var fallbackCreateWindowTask: DispatchWorkItem?
+    private var isReroutingOpen = false
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
@@ -63,15 +70,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func application(_ application: NSApplication, open urls: [URL]) {
         guard !urls.isEmpty else { return }
-        if shouldAllowMultipleWindows(), activeViewModel != nil {
-            pendingURLs = urls
-            createAdditionalPlayerWindow()
-        } else if let activeViewModel {
-            activeViewModel.openExternalFiles(urls)
-        } else {
-            pendingURLs = urls
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            if self.shouldAllowMultipleWindows(), self.activeViewModel != nil {
+                self.pendingURLs = urls
+                self.scheduleFallbackWindowCreationIfNeeded()
+            } else if let activeViewModel = self.activeViewModel {
+                activeViewModel.openExternalFiles(urls)
+                self.closeRedundantBlankWindows(excluding: activeViewModel)
+            } else {
+                self.pendingURLs = urls
+            }
+            NSApp.activate(ignoringOtherApps: true)
         }
-        NSApp.activate(ignoringOtherApps: true)
     }
 
     @MainActor
@@ -79,6 +90,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !pendingURLs.isEmpty else { return }
         let urls = pendingURLs
         pendingURLs.removeAll()
+        fallbackCreateWindowTask?.cancel()
         viewModel.openExternalFiles(urls)
     }
 
@@ -87,8 +99,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         activeViewModel = viewModel
     }
 
+    @MainActor
+    func register(window: NSWindow, viewModel: PlayerViewModel) {
+        let key = ObjectIdentifier(window)
+        registeredWindows[key] = WeakWindowBinding(window: window, viewModel: viewModel)
+        cleanupDeadWindowBindings()
+    }
+
+    @MainActor
+    func rerouteIfMultipleWindowsDisabled(source: PlayerViewModel) {
+        guard !isReroutingOpen else { return }
+        guard shouldAllowMultipleWindows() == false else { return }
+        guard let sourceURL = source.currentMediaURL else { return }
+        cleanupDeadWindowBindings()
+        guard registeredWindows.count > 1 else { return }
+
+        guard let targetBinding = registeredWindows.values.first(where: {
+            guard let other = $0.viewModel else { return false }
+            return other !== source
+        }), let targetViewModel = targetBinding.viewModel else {
+            return
+        }
+
+        isReroutingOpen = true
+        source.currentWindow?.performClose(nil)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self, weak targetViewModel] in
+            guard let self, let targetViewModel else { return }
+            targetViewModel.openExternalFiles([sourceURL])
+            self.isReroutingOpen = false
+        }
+    }
+
+    @MainActor
     private func shouldAllowMultipleWindows() -> Bool {
-        UserDefaults.standard.object(forKey: PlayerViewModel.allowMultipleWindowsKey) as? Bool ?? true
+        UserDefaults.standard.object(forKey: "settings.allowMultipleWindows") as? Bool ?? true
     }
 
     private func createAdditionalPlayerWindow() {
@@ -121,6 +165,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         extraWindowCloseObservers[windowID] = observer
         controller.showWindow(nil)
         window.makeKeyAndOrderFront(nil)
+    }
+
+    private func scheduleFallbackWindowCreationIfNeeded() {
+        fallbackCreateWindowTask?.cancel()
+        let task = DispatchWorkItem { [weak self] in
+            guard let self, !self.pendingURLs.isEmpty else { return }
+            self.createAdditionalPlayerWindow()
+        }
+        fallbackCreateWindowTask = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: task)
+    }
+
+    @MainActor
+    private func closeRedundantBlankWindows(excluding activeViewModel: PlayerViewModel) {
+        cleanupDeadWindowBindings()
+        for (_, binding) in registeredWindows {
+            guard let window = binding.window, let viewModel = binding.viewModel else { continue }
+            guard viewModel !== activeViewModel else { continue }
+            guard viewModel.hasOpenedFile == false else { continue }
+            window.performClose(nil)
+        }
+    }
+
+    private func cleanupDeadWindowBindings() {
+        registeredWindows = registeredWindows.filter { _, binding in
+            binding.window != nil && binding.viewModel != nil
+        }
     }
 }
 
@@ -330,5 +401,15 @@ private final class WindowAccessorView: NSView {
             guard let self, let window else { return }
             self.onResolve?(window)
         }
+    }
+}
+
+private final class WeakWindowBinding {
+    weak var window: NSWindow?
+    weak var viewModel: PlayerViewModel?
+
+    init(window: NSWindow, viewModel: PlayerViewModel) {
+        self.window = window
+        self.viewModel = viewModel
     }
 }

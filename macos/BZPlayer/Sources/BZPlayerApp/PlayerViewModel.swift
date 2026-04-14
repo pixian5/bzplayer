@@ -70,6 +70,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
     @Published var speed: Double = 1.0
     @Published var currentTime: Double = 0
     @Published var duration: Double = 0
+    @Published var openedFilePath: String = ""
     @Published var syncText = "播放链路：系统原生"
     @Published var playlist: [URL] = []
     @Published var currentIndex: Int = -1
@@ -92,6 +93,14 @@ final class PlayerViewModel: NSObject, ObservableObject {
 
     var hasOpenedFile: Bool {
         currentFileURL != nil
+    }
+
+    var currentMediaURL: URL? {
+        currentFileURL
+    }
+
+    var currentWindow: NSWindow? {
+        attachedWindow
     }
 
     var hasReachedEndOfPlayback: Bool {
@@ -531,6 +540,7 @@ killall lsd >/dev/null 2>&1 || true
     private func openFromPlaylist(_ url: URL, forceStartAtBeginning: Bool = false) {
         saveCurrentProgress()
         currentFileURL = url
+        openedFilePath = url.path
         currentIndex = playlist.firstIndex(of: url) ?? -1
         currentTime = 0
         duration = 0
