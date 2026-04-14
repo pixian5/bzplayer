@@ -682,6 +682,12 @@ killall lsd >/dev/null 2>&1 || true
     }
 
     private func chooseBackend(for url: URL, ffprobeInfo: FFprobeInfo? = nil) -> PlaybackBackend {
+        // MKV, AVI and other containers are not natively supported by AVPlayer on macOS
+        let nonNativeContainers: Set<String> = ["mkv", "avi", "flv", "wmv", "webm", "rmvb", "ts", "mpeg", "mpg"]
+        if nonNativeContainers.contains(url.pathExtension.lowercased()) {
+            return .mpv
+        }
+
         let asset = AVURLAsset(url: url)
         let ffprobeInfo = ffprobeInfo ?? probeMediaInfo(url: url)
 
@@ -689,7 +695,7 @@ killall lsd >/dev/null 2>&1 || true
             return .mpv
         }
 
-        if let ffprobeInfo, ffprobeInfo.audioStreams.isEmpty == false {
+        if let ffprobeInfo, !ffprobeInfo.audioStreams.isEmpty {
             let audioTracks = asset.tracks(withMediaType: .audio)
             if audioTracks.isEmpty {
                 return .mpv
