@@ -84,6 +84,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
     @Published var playlistOrder: PlaylistOrder
     @Published var loopMode: LoopMode
     @Published var windowOpenBehavior: WindowOpenBehavior
+    @Published var allowMultipleWindows: Bool
 
     let mpvPlayer = MpvPlayer()
     let nativePlayer = AVPlayer()
@@ -115,6 +116,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
     private static let loopModeKey = "settings.loopMode"
     private static let windowOpenBehaviorKey = "settings.windowOpenBehavior"
     private static let lastWindowFrameKey = "settings.lastWindowFrame"
+    static let allowMultipleWindowsKey = "settings.allowMultipleWindows"
 
     override init() {
         let storedSeekSeconds = UserDefaults.standard.object(forKey: Self.shortcutSeekSecondsKey) as? Double
@@ -124,6 +126,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         let storedPlaylistOrder = UserDefaults.standard.string(forKey: Self.playlistOrderKey).flatMap(PlaylistOrder.init(rawValue:))
         let storedLoopMode = UserDefaults.standard.string(forKey: Self.loopModeKey).flatMap(LoopMode.init(rawValue:))
         let storedWindowOpenBehavior = UserDefaults.standard.string(forKey: Self.windowOpenBehaviorKey).flatMap(WindowOpenBehavior.init(rawValue:))
+        let storedAllowMultipleWindows = UserDefaults.standard.object(forKey: Self.allowMultipleWindowsKey) as? Bool
         shortcutSeekSeconds = max(storedSeekSeconds ?? 5, 0.1)
         shortcutFrameStepCount = max(storedFrameStepCount ?? 1, 1)
         previousFileKeyCode = UInt16(storedPreviousFileKeyCode ?? 41)
@@ -131,6 +134,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         playlistOrder = storedPlaylistOrder ?? .ascending
         loopMode = storedLoopMode ?? .playlist
         windowOpenBehavior = storedWindowOpenBehavior ?? .maximized
+        allowMultipleWindows = storedAllowMultipleWindows ?? true
         super.init()
         bindMpvCallbacks()
         bindNativePlayer()
@@ -272,18 +276,25 @@ final class PlayerViewModel: NSObject, ObservableObject {
         applyInitialWindowBehaviorIfNeeded(force: true)
     }
 
+    func setAllowMultipleWindows(_ value: Bool) {
+        allowMultipleWindows = value
+        UserDefaults.standard.set(value, forKey: Self.allowMultipleWindowsKey)
+    }
+
     func refreshPreferences() {
         let storedSeekSeconds = UserDefaults.standard.object(forKey: Self.shortcutSeekSecondsKey) as? Double
         let storedFrameStepCount = UserDefaults.standard.object(forKey: Self.shortcutFrameStepCountKey) as? Int
         let storedPreviousFileKeyCode = UserDefaults.standard.object(forKey: Self.previousFileKeyCodeKey) as? Int
         let storedNextFileKeyCode = UserDefaults.standard.object(forKey: Self.nextFileKeyCodeKey) as? Int
         let storedWindowOpenBehavior = UserDefaults.standard.string(forKey: Self.windowOpenBehaviorKey).flatMap(WindowOpenBehavior.init(rawValue:))
+        let storedAllowMultipleWindows = UserDefaults.standard.object(forKey: Self.allowMultipleWindowsKey) as? Bool
 
         shortcutSeekSeconds = max(storedSeekSeconds ?? shortcutSeekSeconds, 0.1)
         shortcutFrameStepCount = max(storedFrameStepCount ?? shortcutFrameStepCount, 1)
         previousFileKeyCode = UInt16(storedPreviousFileKeyCode ?? Int(previousFileKeyCode))
         nextFileKeyCode = UInt16(storedNextFileKeyCode ?? Int(nextFileKeyCode))
         windowOpenBehavior = storedWindowOpenBehavior ?? windowOpenBehavior
+        allowMultipleWindows = storedAllowMultipleWindows ?? allowMultipleWindows
     }
 
     func togglePlaylistOrder() {

@@ -54,6 +54,8 @@ private struct PlayerWindowRootView: View {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var pendingURLs: [URL] = []
     private weak var activeViewModel: PlayerViewModel?
+    private var extraWindowControllers: [NSWindowController] = []
+    private var extraWindowCloseObservers: [ObjectIdentifier: NSObjectProtocol] = [:]
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
@@ -61,7 +63,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func application(_ application: NSApplication, open urls: [URL]) {
         guard !urls.isEmpty else { return }
-        if let activeViewModel {
+        if shouldAllowMultipleWindows(), activeViewModel != nil {
+            pendingURLs = urls
+            createAdditionalPlayerWindow()
+        } else if let activeViewModel {
             activeViewModel.openExternalFiles(urls)
         } else {
             pendingURLs = urls
@@ -80,6 +85,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor
     func setActiveViewModel(_ viewModel: PlayerViewModel) {
         activeViewModel = viewModel
+    }
+
+    private func shouldAllowMultipleWindows() -> Bool {
+        UserDefaults.standard.object(forKey: PlayerViewModel.allowMultipleWindowsKey) as? Bool ?? true
+    }
+
+    private func createAdditionalPlayerWindow() {
+        let host = NSHostingController(rootView: PlayerWindowRootView(appDelegate: self))
+        let window = NSWindow(contentViewController: host)
+        window.title = "BZPlayer"
+        window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+        window.setContentSize(NSSize(width: 980, height: 620))
+        window.center()
+        window.isReleasedWhenClosed = false
+
+        let controller = NSWindowController(window: window)
+        extraWindowControllers.append(controller)
+        let windowID = ObjectIdentifier(window)
+        let observer = NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification,
+            object: window,
+            queue: .main
+        ) { [weak self, weak controller, weak window] _ in
+            guard let self else { return }
+            if let window {
+                self.extraWindowCloseObservers.removeValue(forKey: ObjectIdentifier(window)).map {
+                    NotificationCenter.default.removeObserver($0)
+                }
+            }
+            if let controller {
+                self.extraWindowControllers.removeAll { $0 === controller }
+            }
+        }
+        extraWindowCloseObservers[windowID] = observer
+        controller.showWindow(nil)
+        window.makeKeyAndOrderFront(nil)
     }
 }
 
@@ -147,7 +188,8 @@ private struct SettingsView: View {
                 HStack {
                     Text("上一文件快捷键")
                         .frame(width: 150, alignment: .leading)
-                    Picker("上一文件快捷键", selection: Binding(
+                    Text("上一")
+                    Picker("", selection: Binding(
                         get: { Int(viewModel.previousFileKeyCode) },
                         set: { viewModel.setPreviousFileKeyCode(UInt16($0)) }
                     )) {
@@ -155,13 +197,10 @@ private struct SettingsView: View {
                             Text(option.label).tag(Int(option.keyCode))
                         }
                     }
-                    .frame(width: 140)
-                }
-
-                HStack {
-                    Text("下一文件快捷键")
-                        .frame(width: 150, alignment: .leading)
-                    Picker("下一文件快捷键", selection: Binding(
+                    .labelsHidden()
+                    .frame(width: 72)
+                    Text("下一")
+                    Picker("", selection: Binding(
                         get: { Int(viewModel.nextFileKeyCode) },
                         set: { viewModel.setNextFileKeyCode(UInt16($0)) }
                     )) {
@@ -169,7 +208,8 @@ private struct SettingsView: View {
                             Text(option.label).tag(Int(option.keyCode))
                         }
                     }
-                    .frame(width: 140)
+                    .labelsHidden()
+                    .frame(width: 72)
                 }
 
                 Text("默认上一文件是 `;`，下一文件是 `'`，按物理键位处理，不受中英文输入影响。")
@@ -187,10 +227,21 @@ private struct SettingsView: View {
                             Text(behavior.title).tag(behavior)
                         }
                     }
+                    .labelsHidden()
                     .frame(width: 180)
                 }
 
                 Text("默认最大化。尽量大表示按视频比例尽可能铺满屏幕可视区域，不强行加黑边占满。")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+
+                Toggle("允许多窗口", isOn: Binding(
+                    get: { viewModel.allowMultipleWindows },
+                    set: { viewModel.setAllowMultipleWindows($0) }
+                ))
+                .toggleStyle(.checkbox)
+
+                Text("关闭后，新打开的文件会直接在当前窗口播放，不另开新窗口。")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
             }
