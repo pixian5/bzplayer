@@ -3,7 +3,7 @@ set -euo pipefail
 
 APP_NAME="BZPlayer.app"
 APP_DIR="/Applications/${APP_NAME}"
-BIN_SOURCE="/Users/x/code/bzplayer-main/macos/BZPlayer/.build/release/BZPlayer"
+BIN_SOURCE="/Users/x/code/bzplayer-main/macos/BZPlayer/.build/arm64-apple-macosx/release/BZPlayer"
 LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 
 pkill -x BZPlayer || true

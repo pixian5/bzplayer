@@ -147,8 +147,6 @@ final class MpvRenderView: NSOpenGLView {
         guard isReady, !isHidden, window != nil, let ctx = openGLContext else { return }
         
         ctx.makeCurrentContext()
-        // verify context was actually made current to avoid EXC_BAD_ACCESS in glFlush
-        guard NSOpenGLContext.current == ctx else { return }
         
         let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
         let width = max(Int(bounds.width * scale), 1)

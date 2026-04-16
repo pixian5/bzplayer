@@ -7,7 +7,7 @@ struct BZPlayerApp: App {
     @StateObject private var settingsViewModel = PlayerViewModel()
 
     var body: some Scene {
-        WindowGroup {
+        Window("BZPlayer", id: "main") {
             PlayerWindowRootView(appDelegate: appDelegate)
         }
         .windowResizability(.contentMinSize)
@@ -61,6 +61,7 @@ private struct PlayerWindowRootView: View {
     }
 }
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var pendingURLs: [URL] = []
     private weak var activeViewModel: PlayerViewModel?
@@ -74,16 +75,62 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         true
     }
 
+    func application(_ sender: NSApplication, openFile filename: String) -> Bool {
+        let url = URL(fileURLWithPath: filename)
+        if !shouldAllowMultipleWindows() {
+            if let targetBinding = singleWindowTargetBinding() {
+                let vm = targetBinding.viewModel
+                let window = targetBinding.window
+                DispatchQueue.main.async {
+                    vm?.openExternalFiles([url])
+                    window?.makeKeyAndOrderFront(nil)
+                    NSApp.activate(ignoringOtherApps: true)
+                }
+                return true
+            }
+        } else {
+            // In multi-window mode, handle manually
+            DispatchQueue.main.async {
+                self.pendingURLs = [url]
+                self.createAdditionalPlayerWindow()
+            }
+            return true
+        }
+        return false
+    }
+
+    func application(_ sender: NSApplication, openFiles filenames: [String]) {
+        let urls = filenames.map { URL(fileURLWithPath: $0) }
+        if !shouldAllowMultipleWindows() {
+            if let targetBinding = singleWindowTargetBinding() {
+                let vm = targetBinding.viewModel
+                let window = targetBinding.window
+                DispatchQueue.main.async {
+                    vm?.openExternalFiles(urls)
+                    window?.makeKeyAndOrderFront(nil)
+                    NSApp.activate(ignoringOtherApps: true)
+                }
+                return
+            }
+        } else {
+            DispatchQueue.main.async {
+                self.pendingURLs = urls
+                self.createAdditionalPlayerWindow()
+            }
+            return
+        }
+        self.application(NSApp, open: urls)
+    }
+
     func application(_ application: NSApplication, open urls: [URL]) {
         guard !urls.isEmpty else { return }
+        
         Task { @MainActor [weak self] in
             guard let self else { return }
+            
             if self.shouldAllowMultipleWindows(), self.activeViewModel != nil {
                 self.pendingURLs = urls
                 self.scheduleFallbackWindowCreationIfNeeded()
-            } else if let targetBinding = self.singleWindowTargetBinding() {
-                targetBinding.viewModel?.openExternalFiles(urls)
-                self.deactivateOtherPlayerWindows(excludingWindow: targetBinding.window)
             } else if let activeViewModel = self.activeViewModel {
                 activeViewModel.openExternalFiles(urls)
             } else {
@@ -124,16 +171,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func rerouteIfMultipleWindowsDisabled(source: PlayerViewModel) {
         guard !isReroutingOpen else { return }
         guard shouldAllowMultipleWindows() == false else { return }
-        guard source.currentMediaURL != nil else { return }
         cleanupDeadWindowBindings()
+        
+        // Find if there's another window to reroute to
         guard registeredWindows.count > 1 else { return }
-
-        isReroutingOpen = true
-        setActiveViewModel(source)
-        DispatchQueue.main.async { [weak self, weak source] in
-            guard let self, let source else { return }
-            self.deactivateOtherPlayerWindows(excludingWindow: source.currentWindow)
-            self.isReroutingOpen = false
+        
+        if let targetBinding = self.singleWindowTargetBinding(excluding: source) {
+            isReroutingOpen = true
+            
+            // Re-route the media to the existing window if source has one
+            if let newURL = source.currentMediaURL {
+                targetBinding.viewModel?.openExternalFiles([newURL])
+            }
+            
+            if let targetVM = targetBinding.viewModel {
+                setActiveViewModel(targetVM)
+                targetBinding.window?.makeKeyAndOrderFront(nil)
+            }
+            
+            // Close the current (redundant) window
+            DispatchQueue.main.async { [weak self, weak source] in
+                guard let window = source?.currentWindow else { return }
+                window.close()
+                self?.isReroutingOpen = false
+            }
         }
     }
 
@@ -141,7 +202,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func shouldAllowMultipleWindows() -> Bool {
         UserDefaults.standard.object(forKey: "settings.allowMultipleWindows") as? Bool ?? true
     }
-
     private func createAdditionalPlayerWindow() {
         let host = NSHostingController(rootView: PlayerWindowRootView(appDelegate: self))
         let window = NSWindow(contentViewController: host)
