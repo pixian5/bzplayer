@@ -420,7 +420,7 @@ private struct SettingsView: View {
             }
         }
         .padding(16)
-        .frame(width: 500, height: 400)
+        .frame(width: 550, height: 500)
         .onAppear {
             syncShortcutFields()
             syncAudioDelayField()
