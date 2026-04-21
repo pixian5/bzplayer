@@ -1406,6 +1406,11 @@ killall lsd >/dev/null 2>&1 || true
             return
         }
 
+        // Clear saved progress since video finished naturally
+        if let url = currentFileURL {
+            UserDefaults.standard.removeObject(forKey: progressKey(for: url))
+        }
+
         switch loopMode {
         case .singleFile:
             debugLog("[BZPlayer] Loop mode: singleFile")
