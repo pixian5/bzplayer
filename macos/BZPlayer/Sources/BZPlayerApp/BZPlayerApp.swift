@@ -412,6 +412,25 @@ private struct SettingsView: View {
                     Text("\(Int(viewModel.audioDelayStepMs))ms")
                         .frame(width: 50, alignment: .leading)
                 }
+
+                HStack {
+                    Text("音画延迟")
+                        .frame(width: 150, alignment: .leading)
+                    Button("-") {
+                        viewModel.adjustAudioDelay(by: -viewModel.audioDelayStepMs)
+                    }
+                    .buttonStyle(.bordered)
+                    Text("\(Int(viewModel.audioDelayMs))ms")
+                        .frame(width: 60)
+                    Button("+") {
+                        viewModel.adjustAudioDelay(by: viewModel.audioDelayStepMs)
+                    }
+                    .buttonStyle(.bordered)
+                    Button("重置") {
+                        viewModel.resetAudioDelay()
+                    }
+                    .buttonStyle(.bordered)
+                }
             }
 
             Spacer()
