@@ -404,17 +404,6 @@ private struct SettingsView: View {
                     .foregroundStyle(.secondary)
 
                 HStack {
-                    Text("音频延迟步进")
-                        .frame(width: 150, alignment: .leading)
-                    Stepper("", value: Binding(
-                        get: { viewModel.audioDelayStepMs },
-                        set: { viewModel.setAudioDelayStepMs($0) }
-                    ), in: 1...500, step: 1)
-                    Text("\(Int(viewModel.audioDelayStepMs))ms")
-                        .frame(width: 50, alignment: .leading)
-                }
-
-                HStack {
                     Text("音画延迟")
                         .frame(width: 150, alignment: .leading)
                     TextField("ms", text: $audioDelayMsText)
@@ -432,7 +421,7 @@ private struct SettingsView: View {
             Spacer()
         }
         .padding(16)
-        .frame(width: 500, height: 450)
+        .frame(width: 500, height: 400)
         .onAppear {
             syncShortcutFields()
             syncAudioDelayField()
