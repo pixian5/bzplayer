@@ -1087,6 +1087,10 @@ killall lsd >/dev/null 2>&1 || true
         UserDefaults.standard.set(currentTime, forKey: progressKey(for: url))
     }
 
+    private func clearSavedProgress(for url: URL) {
+        UserDefaults.standard.set(0, forKey: progressKey(for: url))
+    }
+
     private func speedKey(for url: URL) -> String {
         "playback.speed.\(url.path)"
     }
@@ -1359,8 +1363,10 @@ killall lsd >/dev/null 2>&1 || true
     private func handlePlaybackFinished() {
         debugLog("[BZPlayer] handlePlaybackFinished called - Time: \(currentTime), Duration: \(duration), isPaused: \(isPaused), isSeeking: \(isSeeking), loopMode: \(loopMode)")
 
-        // Save progress before auto-advancing
-        saveCurrentProgress()
+        // Clear saved progress when playback completes (reaches the end)
+        if let url = currentFileURL {
+            clearSavedProgress(for: url)
+        }
 
         // Don't auto-advance if there's a playback error
         if playbackError != nil {
