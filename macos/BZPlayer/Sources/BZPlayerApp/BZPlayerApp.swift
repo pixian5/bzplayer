@@ -285,6 +285,7 @@ private struct SettingsView: View {
     @ObservedObject var viewModel: PlayerViewModel
     @State private var seekSecondsText = ""
     @State private var frameStepText = ""
+    @State private var audioDelayMsText = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -416,16 +417,11 @@ private struct SettingsView: View {
                 HStack {
                     Text("音画延迟")
                         .frame(width: 150, alignment: .leading)
-                    Button("-") {
-                        viewModel.adjustAudioDelay(by: -viewModel.audioDelayStepMs)
-                    }
-                    .buttonStyle(.bordered)
-                    Text("\(Int(viewModel.audioDelayMs))ms")
-                        .frame(width: 60)
-                    Button("+") {
-                        viewModel.adjustAudioDelay(by: viewModel.audioDelayStepMs)
-                    }
-                    .buttonStyle(.bordered)
+                    TextField("ms", text: $audioDelayMsText)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 90)
+                        .onSubmit(applyAudioDelayMs)
+                    Text("ms")
                     Button("重置") {
                         viewModel.resetAudioDelay()
                     }
@@ -439,6 +435,7 @@ private struct SettingsView: View {
         .frame(width: 500, height: 400)
         .onAppear {
             syncShortcutFields()
+            syncAudioDelayField()
         }
         .onChange(of: viewModel.shortcutSeekSeconds) { _ in
             syncShortcutFields()
@@ -446,11 +443,28 @@ private struct SettingsView: View {
         .onChange(of: viewModel.shortcutFrameStepCount) { _ in
             syncShortcutFields()
         }
+        .onChange(of: viewModel.audioDelayMs) { _ in
+            syncAudioDelayField()
+        }
     }
 
     private func syncShortcutFields() {
         seekSecondsText = String(format: "%.1f", viewModel.shortcutSeekSeconds)
         frameStepText = "\(viewModel.shortcutFrameStepCount)"
+    }
+
+    private func syncAudioDelayField() {
+        audioDelayMsText = String(format: "%.0f", viewModel.audioDelayMs)
+    }
+
+    private func applyAudioDelayMs() {
+        if let delay = Double(audioDelayMsText) {
+            viewModel.audioDelayMs = delay
+            UserDefaults.standard.set(delay, forKey: "settings.audioDelayMs")
+            viewModel.applyAudioDelay()
+        } else {
+            audioDelayMsText = String(format: "%.0f", viewModel.audioDelayMs)
+        }
     }
 
     private func applyShortcutSettings() {

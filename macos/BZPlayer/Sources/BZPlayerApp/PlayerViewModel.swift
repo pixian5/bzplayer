@@ -437,7 +437,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         UserDefaults.standard.set(normalized, forKey: Self.audioDelayStepMsKey)
     }
 
-    private func applyAudioDelay() {
+    func applyAudioDelay() {
         guard playbackBackend == .mpv, let handle = mpvPlayer.handle else { return }
         var delay = audioDelayMs / 1000.0
         withUnsafeMutablePointer(to: &delay) {
