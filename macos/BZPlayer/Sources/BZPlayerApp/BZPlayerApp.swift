@@ -288,24 +288,25 @@ private struct SettingsView: View {
     @State private var audioDelayMsText = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("设置")
-                .font(.title3)
-                .fontWeight(.semibold)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("设置")
+                    .font(.title3)
+                    .fontWeight(.semibold)
 
-            Text("可通过 ⌘, 打开本页。")
-                .foregroundStyle(.secondary)
+                Text("可通过 ⌘, 打开本页。")
+                    .foregroundStyle(.secondary)
 
-            Button("关联常见视频格式") {
-                viewModel.associateCommonVideoFormats()
-            }
+                Button("关联常见视频格式") {
+                    viewModel.associateCommonVideoFormats()
+                }
 
-            Text(viewModel.fileAssociationStatus)
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                Text(viewModel.fileAssociationStatus)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-            Divider()
+                Divider()
 
             VStack(alignment: .leading, spacing: 10) {
                 Text("快捷键")
@@ -417,8 +418,6 @@ private struct SettingsView: View {
                     .buttonStyle(.bordered)
                 }
             }
-
-            Spacer()
         }
         .padding(16)
         .frame(width: 500, height: 400)
