@@ -1084,10 +1084,6 @@ killall lsd >/dev/null 2>&1 || true
 
     private func saveCurrentProgress() {
         guard let url = currentFileURL, currentTime.isFinite, currentTime > 0 else { return }
-        // Don't save if we're near the end (within 5% of duration) - playback finished naturally
-        if duration > 0 && currentTime >= duration * 0.95 {
-            return
-        }
         UserDefaults.standard.set(currentTime, forKey: progressKey(for: url))
     }
 
@@ -1404,11 +1400,6 @@ killall lsd >/dev/null 2>&1 || true
             lastAutoNextJumpTimes.removeAll()
             showAlert(title: "播放提示", message: "检测到连续快速切片，可能遇到无法播放的文件，已停止播放以防程序崩溃。")
             return
-        }
-
-        // Clear saved progress since video finished naturally
-        if let url = currentFileURL {
-            UserDefaults.standard.removeObject(forKey: progressKey(for: url))
         }
 
         switch loopMode {
