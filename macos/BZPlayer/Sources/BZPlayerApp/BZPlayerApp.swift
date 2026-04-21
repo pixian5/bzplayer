@@ -89,7 +89,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 return true
             }
         } else {
-            // In multi-window mode, handle manually
             DispatchQueue.main.async {
                 self.pendingURLs = [url]
                 self.createAdditionalPlayerWindow()
@@ -124,10 +123,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func application(_ application: NSApplication, open urls: [URL]) {
         guard !urls.isEmpty else { return }
-        
+
         Task { @MainActor [weak self] in
             guard let self else { return }
-            
+
             if self.shouldAllowMultipleWindows(), self.activeViewModel != nil {
                 self.pendingURLs = urls
                 self.scheduleFallbackWindowCreationIfNeeded()
@@ -172,24 +171,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !isReroutingOpen else { return }
         guard shouldAllowMultipleWindows() == false else { return }
         cleanupDeadWindowBindings()
-        
-        // Find if there's another window to reroute to
+
         guard registeredWindows.count > 1 else { return }
-        
+
         if let targetBinding = self.singleWindowTargetBinding(excluding: source) {
             isReroutingOpen = true
-            
-            // Re-route the media to the existing window if source has one
+
             if let newURL = source.currentMediaURL {
                 targetBinding.viewModel?.openExternalFiles([newURL])
             }
-            
+
             if let targetVM = targetBinding.viewModel {
                 setActiveViewModel(targetVM)
                 targetBinding.window?.makeKeyAndOrderFront(nil)
             }
-            
-            // Close the current (redundant) window
+
             DispatchQueue.main.async { [weak self, weak source] in
                 guard let window = source?.currentWindow else { return }
                 window.close()
@@ -202,6 +198,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func shouldAllowMultipleWindows() -> Bool {
         UserDefaults.standard.object(forKey: "settings.allowMultipleWindows") as? Bool ?? true
     }
+
     private func createAdditionalPlayerWindow() {
         let host = NSHostingController(rootView: PlayerWindowRootView(appDelegate: self))
         let window = NSWindow(contentViewController: host)
@@ -308,114 +305,115 @@ private struct SettingsView: View {
 
                 Divider()
 
-            VStack(alignment: .leading, spacing: 10) {
-                Text("快捷键")
-                    .font(.headline)
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("快捷键")
+                        .font(.headline)
 
-                HStack {
-                    Text("左右方向键跳转秒数")
-                        .frame(width: 150, alignment: .leading)
-                    TextField("秒数", text: $seekSecondsText)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 90)
-                        .onSubmit(applyShortcutSettings)
-                    Stepper("", value: Binding(
-                        get: { viewModel.shortcutSeekSeconds },
-                        set: { viewModel.setShortcutSeekSeconds($0) }
-                    ), in: 0.5...60, step: 0.5)
-                    .labelsHidden()
-                }
+                    HStack {
+                        Text("左右方向键跳转秒数")
+                            .frame(width: 150, alignment: .leading)
+                        TextField("秒数", text: $seekSecondsText)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 90)
+                            .onSubmit(applyShortcutSettings)
+                        Stepper("", value: Binding(
+                            get: { viewModel.shortcutSeekSeconds },
+                            set: { viewModel.setShortcutSeekSeconds($0) }
+                        ), in: 0.5...60, step: 0.5)
+                        .labelsHidden()
+                    }
 
-                HStack {
-                    Text("上下方向键跳转帧数")
-                        .frame(width: 150, alignment: .leading)
-                    TextField("帧数", text: $frameStepText)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 90)
-                        .onSubmit(applyShortcutSettings)
-                    Stepper("", value: Binding(
-                        get: { viewModel.shortcutFrameStepCount },
-                        set: { viewModel.setShortcutFrameStepCount($0) }
-                    ), in: 1...240, step: 1)
-                    .labelsHidden()
-                }
+                    HStack {
+                        Text("上下方向键跳转帧数")
+                            .frame(width: 150, alignment: .leading)
+                        TextField("帧数", text: $frameStepText)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 90)
+                            .onSubmit(applyShortcutSettings)
+                        Stepper("", value: Binding(
+                            get: { viewModel.shortcutFrameStepCount },
+                            set: { viewModel.setShortcutFrameStepCount($0) }
+                        ), in: 1...240, step: 1)
+                        .labelsHidden()
+                    }
 
-                Text("左/右：按设定秒数后退/前进；上/下：按设定帧数后退/前进。")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
+                    Text("左/右：按设定秒数后退/前进；上/下：按设定帧数后退/前进。")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
 
-                HStack {
-                    Text("上一文件快捷键")
-                        .frame(width: 150, alignment: .leading)
-                    Text("上一")
-                    Picker("", selection: Binding(
-                        get: { Int(viewModel.previousFileKeyCode) },
-                        set: { viewModel.setPreviousFileKeyCode(UInt16($0)) }
-                    )) {
-                        ForEach(keyShortcutOptions, id: \.keyCode) { option in
-                            Text(option.label).tag(Int(option.keyCode))
+                    HStack {
+                        Text("上一文件快捷键")
+                            .frame(width: 150, alignment: .leading)
+                        Text("上一")
+                        Picker("", selection: Binding(
+                            get: { Int(viewModel.previousFileKeyCode) },
+                            set: { viewModel.setPreviousFileKeyCode(UInt16($0)) }
+                        )) {
+                            ForEach(keyShortcutOptions, id: \.keyCode) { option in
+                                Text(option.label).tag(Int(option.keyCode))
+                            }
                         }
-                    }
-                    .labelsHidden()
-                    .frame(width: 72)
-                    Text("下一")
-                    Picker("", selection: Binding(
-                        get: { Int(viewModel.nextFileKeyCode) },
-                        set: { viewModel.setNextFileKeyCode(UInt16($0)) }
-                    )) {
-                        ForEach(keyShortcutOptions, id: \.keyCode) { option in
-                            Text(option.label).tag(Int(option.keyCode))
+                        .labelsHidden()
+                        .frame(width: 72)
+                        Text("下一")
+                        Picker("", selection: Binding(
+                            get: { Int(viewModel.nextFileKeyCode) },
+                            set: { viewModel.setNextFileKeyCode(UInt16($0)) }
+                        )) {
+                            ForEach(keyShortcutOptions, id: \.keyCode) { option in
+                                Text(option.label).tag(Int(option.keyCode))
+                            }
                         }
+                        .labelsHidden()
+                        .frame(width: 72)
                     }
-                    .labelsHidden()
-                    .frame(width: 72)
-                }
 
-                Text("默认上一文件是 `[`，下一文件是 `]`，按物理键位处理，不受中英文输入影响。速度调节为 `;` 和 `'`。")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
+                    Text("默认上一文件是 `[`，下一文件是 `]`，按物理键位处理，不受中英文输入影响。速度调节为 `;` 和 `'`。")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
 
-                HStack {
-                    Text("打开文件时窗口")
-                        .frame(width: 150, alignment: .leading)
-                    Picker("打开文件时窗口", selection: Binding(
-                        get: { viewModel.windowOpenBehavior },
-                        set: { viewModel.setWindowOpenBehavior($0) }
-                    )) {
-                        ForEach(PlayerViewModel.WindowOpenBehavior.allCases, id: \.self) { behavior in
-                            Text(behavior.title).tag(behavior)
+                    HStack {
+                        Text("打开文件时窗口")
+                            .frame(width: 150, alignment: .leading)
+                        Picker("打开文件时窗口", selection: Binding(
+                            get: { viewModel.windowOpenBehavior },
+                            set: { viewModel.setWindowOpenBehavior($0) }
+                        )) {
+                            ForEach(PlayerViewModel.WindowOpenBehavior.allCases, id: \.self) { behavior in
+                                Text(behavior.title).tag(behavior)
+                            }
                         }
+                        .labelsHidden()
+                        .frame(width: 180)
                     }
-                    .labelsHidden()
-                    .frame(width: 180)
-                }
 
-                Text("默认最大化。尽量大表示按视频比例尽可能铺满屏幕可视区域，不强行加黑边占满。")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
+                    Text("默认最大化。尽量大表示按视频比例尽可能铺满屏幕可视区域，不强行加黑边占满。")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
 
-                Toggle("允许多窗口", isOn: Binding(
-                    get: { viewModel.allowMultipleWindows },
-                    set: { viewModel.setAllowMultipleWindows($0) }
-                ))
-                .toggleStyle(.checkbox)
+                    Toggle("允许多窗口", isOn: Binding(
+                        get: { viewModel.allowMultipleWindows },
+                        set: { viewModel.setAllowMultipleWindows($0) }
+                    ))
+                    .toggleStyle(.checkbox)
 
-                Text("关闭后，新打开的文件会直接在当前窗口播放，不另开新窗口。")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
+                    Text("关闭后，新打开的文件会直接在当前窗口播放，不另开新窗口。")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
 
-                HStack {
-                    Text("音画延迟")
-                        .frame(width: 150, alignment: .leading)
-                    TextField("ms", text: $audioDelayMsText)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 90)
-                        .onSubmit(applyAudioDelayMs)
-                    Text("ms")
-                    Button("重置") {
-                        viewModel.resetAudioDelay()
+                    HStack {
+                        Text("音画延迟")
+                            .frame(width: 150, alignment: .leading)
+                        TextField("ms", text: $audioDelayMsText)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 90)
+                            .onSubmit(applyAudioDelayMs)
+                        Text("ms")
+                        Button("重置") {
+                            viewModel.resetAudioDelay()
+                        }
+                        .buttonStyle(.bordered)
                     }
-                    .buttonStyle(.bordered)
                 }
             }
         }
