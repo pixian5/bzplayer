@@ -64,6 +64,16 @@ final class MpvPlayer: NSObject {
         configuredSpeed = max(0.25, configuredSpeed)
         onStatusChanged?("播放引擎：mpv/libmpv")
         command(["loadfile", url.path, "replace"], on: handle)
+
+        // Re-apply mute state after loading new file
+        setMuted(currentMuteState)
+    }
+
+    private var currentMuteState = false
+
+    func setMuted(_ muted: Bool) {
+        currentMuteState = muted
+        setFlagProperty("mute", muted)
     }
 
     func play() {
@@ -77,6 +87,10 @@ final class MpvPlayer: NSObject {
     func pause() {
         isPlaybackActive = false
         setFlagProperty("pause", true)
+    }
+
+    func setVolume(_ volume: Double) {
+        setDoubleProperty("volume", volume)
     }
 
     func stop() {
@@ -126,7 +140,7 @@ final class MpvPlayer: NSObject {
         mpv_set_option_string(handle, "config", "no")
         mpv_set_option_string(handle, "terminal", "no")
         mpv_set_option_string(handle, "osc", "no")
-        mpv_set_option_string(handle, "keep-open", "yes")
+        mpv_set_option_string(handle, "keep-open", "no")
         mpv_set_option_string(handle, "idle", "yes")
         mpv_set_option_string(handle, "input-default-bindings", "no")
         mpv_set_option_string(handle, "input-vo-keyboard", "no")
@@ -218,6 +232,9 @@ final class MpvPlayer: NSObject {
                 onFileLoaded?()
                 requestRender()
             case MPV_EVENT_END_FILE:
+                let logLine = "[BZPlayer] MPV_EVENT_END_FILE received\n"
+                try? logLine.write(toFile: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Documents/BZPlayer_mpv.log").path, atomically: true, encoding: .utf8)
+                print("[BZPlayer] MPV_EVENT_END_FILE received")
                 onPauseChanged?(true)
                 onEndReached?()
             case MPV_EVENT_PROPERTY_CHANGE:
@@ -371,6 +388,15 @@ final class MpvPlayer: NSObject {
         withUnsafeMutablePointer(to: &number) {
             _ = mpv_set_property(handle, name, MPV_FORMAT_DOUBLE, $0)
         }
+    }
+
+    func getDoubleProperty(_ name: String) -> Double? {
+        guard let handle else { return nil }
+        var value: Double = 0
+        let result = withUnsafeMutablePointer(to: &value) {
+            mpv_get_property(handle, name, MPV_FORMAT_DOUBLE, $0)
+        }
+        return result >= 0 ? value : nil
     }
 
     private func setStringProperty(_ name: String, _ value: String) {

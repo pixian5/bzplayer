@@ -5,6 +5,23 @@ import CoreServices
 import Foundation
 import UniformTypeIdentifiers
 
+// Debug logger
+private let debugLogURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Documents/BZPlayer.log")
+private func debugLog(_ msg: String) {
+    let line = "\(Date()): \(msg)\n"
+    if let data = line.data(using: .utf8) {
+        if FileManager.default.fileExists(atPath: debugLogURL.path) {
+            if let handle = try? FileHandle(forWritingTo: debugLogURL) {
+                handle.seekToEndOfFile()
+                handle.write(data)
+                handle.closeFile()
+            }
+        } else {
+            try? data.write(to: debugLogURL)
+        }
+    }
+}
+
 @MainActor
 final class PlayerViewModel: NSObject, ObservableObject {
     enum PlaybackBackend: String {
@@ -68,13 +85,16 @@ final class PlayerViewModel: NSObject, ObservableObject {
 
     @Published var isPaused = true
     @Published var speed: Double = 1.0
+    @Published var volume: Double = 100.0
+    @Published var isMuted = false
     @Published var currentTime: Double = 0
     @Published var duration: Double = 0
     @Published var openedFilePath: String = ""
     @Published var syncText = "播放链路：系统原生"
+    @Published var isSeeking: Bool = false
     @Published var playlist: [URL] = []
     @Published var currentIndex: Int = -1
-    @Published var windowTitle = "BZPlayer"
+    @Published var windowTitle = "BZPlayer (1)"
     @Published var fileAssociationStatus = "未执行格式关联"
     @Published var playbackEngineStatus = "播放引擎：AVPlayer"
     @Published var playbackBackend: PlaybackBackend = .native
@@ -86,6 +106,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
     @Published var loopMode: LoopMode
     @Published var windowOpenBehavior: WindowOpenBehavior
     @Published var allowMultipleWindows: Bool
+    @Published var playbackError: String?
 
     let mpvPlayer = MpvPlayer()
     let nativePlayer = AVPlayer()
@@ -114,8 +135,14 @@ final class PlayerViewModel: NSObject, ObservableObject {
     private var nativeItemStatusObserver: NSKeyValueObservation?
     private var nativeEndObserver: NSObjectProtocol?
     private weak var attachedWindow: NSWindow?
+    private static var globalLastNavigationTime: TimeInterval = 0
+    private var lastAutoNextJumpTimes: [TimeInterval] = []
     private var windowFrameObservers: [NSObjectProtocol] = []
     private var hasAppliedInitialWindowBehavior = false
+    private var nativeStallCount = 0
+    private var lastStallPosition: Double = 0
+    private var attemptedBackendSwitch = false
+    private var playbackFailureTimer: Timer?
 
     private static let shortcutSeekSecondsKey = "settings.shortcutSeekSeconds"
     private static let shortcutFrameStepCountKey = "settings.shortcutFrameStepCount"
@@ -125,6 +152,8 @@ final class PlayerViewModel: NSObject, ObservableObject {
     private static let loopModeKey = "settings.loopMode"
     private static let windowOpenBehaviorKey = "settings.windowOpenBehavior"
     private static let lastWindowFrameKey = "settings.lastWindowFrame"
+    private static let volumeKey = "settings.volume"
+    private static let isMutedKey = "settings.isMuted"
     static let allowMultipleWindowsKey = "settings.allowMultipleWindows"
 
     override init() {
@@ -138,13 +167,32 @@ final class PlayerViewModel: NSObject, ObservableObject {
         let storedAllowMultipleWindows = UserDefaults.standard.object(forKey: Self.allowMultipleWindowsKey) as? Bool
         shortcutSeekSeconds = max(storedSeekSeconds ?? 5, 0.1)
         shortcutFrameStepCount = max(storedFrameStepCount ?? 1, 1)
-        previousFileKeyCode = UInt16(storedPreviousFileKeyCode ?? 41)
-        nextFileKeyCode = UInt16(storedNextFileKeyCode ?? 39)
+        previousFileKeyCode = UInt16(storedPreviousFileKeyCode ?? 33) // [
+        nextFileKeyCode = UInt16(storedNextFileKeyCode ?? 30)     // ]
         playlistOrder = storedPlaylistOrder ?? .ascending
         loopMode = storedLoopMode ?? .playlist
         windowOpenBehavior = storedWindowOpenBehavior ?? .maximized
         allowMultipleWindows = storedAllowMultipleWindows ?? true
+        volume = UserDefaults.standard.object(forKey: Self.volumeKey) as? Double ?? 100.0
+        isMuted = UserDefaults.standard.bool(forKey: Self.isMutedKey)
         super.init()
+
+        // Apply volume and mute settings to mpv player
+        mpvPlayer.setVolume(volume)
+        mpvPlayer.setMuted(isMuted)
+        
+        // Force migration of old navigation defaults to avoid conflict with new speed shortcuts
+        if UserDefaults.standard.object(forKey: Self.previousFileKeyCodeKey) == nil || 
+           UserDefaults.standard.integer(forKey: Self.previousFileKeyCodeKey) == 41 {
+            previousFileKeyCode = 33
+            UserDefaults.standard.set(33, forKey: Self.previousFileKeyCodeKey)
+        }
+        if UserDefaults.standard.object(forKey: Self.nextFileKeyCodeKey) == nil || 
+           UserDefaults.standard.integer(forKey: Self.nextFileKeyCodeKey) == 39 {
+            nextFileKeyCode = 30
+            UserDefaults.standard.set(30, forKey: Self.nextFileKeyCodeKey)
+        }
+
         bindMpvCallbacks()
         bindNativePlayer()
         selectBackend(.native)
@@ -189,10 +237,28 @@ final class PlayerViewModel: NSObject, ObservableObject {
         let normalizedURL = url.standardizedFileURL
         guard FileManager.default.fileExists(atPath: normalizedURL.path) else { return }
         loadPlaylist(with: normalizedURL)
-        openFromPlaylist(normalizedURL)
+
+        // Check if selected URL is a directory (folder) or a file
+        var isDirectory: ObjCBool = false
+        FileManager.default.fileExists(atPath: normalizedURL.path, isDirectory: &isDirectory)
+
+        if isDirectory.boolValue {
+            // If folder, open the first file in playlist
+            if let firstFile = playlist.first {
+                openFromPlaylist(firstFile)
+            }
+        } else {
+            // If file, open the selected file
+            openFromPlaylist(normalizedURL)
+        }
     }
 
     func play() {
+        // If playback has reached the very end, restart from beginning
+        let isAtVeryEnd = duration > 0 && currentTime >= duration - 0.5
+        if isAtVeryEnd {
+            seek(to: 0)
+        }
         switch playbackBackend {
         case .native:
             nativePlayer.play()
@@ -229,12 +295,32 @@ final class PlayerViewModel: NSObject, ObservableObject {
         currentTime = 0
         duration = 0
         isPaused = true
-        windowTitle = "BZPlayer"
+        windowTitle = "BZPlayer (\(Self.appVersion))"
         attachedWindow?.title = windowTitle
+        playbackError = nil
+        playbackFailureTimer?.invalidate()
+        playbackFailureTimer = nil
     }
 
     func togglePause() {
         isPaused ? play() : pause()
+    }
+
+    func setVolume(_ newVolume: Double) {
+        volume = max(0, min(100, newVolume))
+        mpvPlayer.setVolume(volume)
+        UserDefaults.standard.set(volume, forKey: Self.volumeKey)
+        if volume > 0 {
+            isMuted = false
+            mpvPlayer.setMuted(false)
+            UserDefaults.standard.set(false, forKey: Self.isMutedKey)
+        }
+    }
+
+    func toggleMute() {
+        isMuted.toggle()
+        mpvPlayer.setMuted(isMuted)
+        UserDefaults.standard.set(isMuted, forKey: Self.isMutedKey)
     }
 
     func selectPlaylistItem(_ index: Int) {
@@ -243,21 +329,37 @@ final class PlayerViewModel: NSObject, ObservableObject {
     }
 
     func previousFile() {
+        let now = ProcessInfo.processInfo.systemUptime
+        guard now - Self.globalLastNavigationTime > 1.0 else { return }
+        Self.globalLastNavigationTime = now
+        print("[BZPlayer] Manually navigating to previous file")
         moveInPlaylist(step: -1)
     }
-
+    
     func nextFile() {
+        let now = ProcessInfo.processInfo.systemUptime
+        guard now - Self.globalLastNavigationTime > 1.0 else { return }
+        Self.globalLastNavigationTime = now
+        print("[BZPlayer] Manually navigating to next file")
         moveInPlaylist(step: 1)
     }
 
     func seek(to progress: Double) {
         guard duration > 0 else { return }
-        let target = duration * progress
-        switch playbackBackend {
-        case .native:
-            nativePlayer.seek(to: CMTime(seconds: target, preferredTimescale: 600))
-        case .mpv:
-            mpvPlayer.seek(seconds: target)
+        let targetTime = duration * progress
+        let time = CMTime(seconds: targetTime, preferredTimescale: 600)
+        isSeeking = true
+        if playbackBackend == .native {
+            nativePlayer.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+                DispatchQueue.main.async {
+                    self?.isSeeking = false
+                }
+            }
+        } else {
+            mpvPlayer.seek(seconds: targetTime)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                self?.isSeeking = false
+            }
         }
     }
 
@@ -348,18 +450,42 @@ final class PlayerViewModel: NSObject, ObservableObject {
         UserDefaults.standard.set(loopMode.rawValue, forKey: Self.loopModeKey)
     }
 
+    func switchPlaybackBackend() {
+        guard let url = currentFileURL else { return }
+        let resumeAt = currentTime > 0 && currentTime < duration ? currentTime : nil
+        let newBackend: PlaybackBackend = playbackBackend == .native ? .mpv : .native
+        selectBackend(newBackend)
+
+        switch newBackend {
+        case .native:
+            openWithNative(url: url, resumeAt: resumeAt)
+        case .mpv:
+            mpvPlayer.setHardwareDecodingEnabled(false)
+            mpvPlayer.setSpeed(speed)
+            mpvPlayer.load(url: url, resumeAt: resumeAt)
+            mpvPlayer.play()
+        }
+    }
+
     func seekBy(seconds delta: Double) {
         guard hasOpenedFile else { return }
         let baseTime = currentTime.isFinite ? currentTime : 0
         let target = max(0, min(duration > 0 ? duration : .greatestFiniteMagnitude, baseTime + delta))
-        switch playbackBackend {
-        case .native:
-            nativePlayer.seek(to: CMTime(seconds: target, preferredTimescale: 600))
-            currentTime = target
-        case .mpv:
+        let time = CMTime(seconds: target, preferredTimescale: 600)
+        isSeeking = true
+        if playbackBackend == .native {
+            nativePlayer.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+                DispatchQueue.main.async {
+                    self?.isSeeking = false
+                }
+            }
+        } else {
             mpvPlayer.seek(seconds: target)
-            currentTime = target
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                self?.isSeeking = false
+            }
         }
+        currentTime = target
     }
 
     func seekByConfiguredFrameStep(_ direction: Int) {
@@ -405,6 +531,16 @@ final class PlayerViewModel: NSObject, ObservableObject {
         case 126:
             seekByConfiguredFrameStep(1)
             return true
+        case 41: // Semicolon ;
+            if !event.isARepeat {
+                adjustSpeed(by: -0.25)
+            }
+            return true
+        case 39: // Quote '
+            if !event.isARepeat {
+                adjustSpeed(by: 0.25)
+            }
+            return true
         default:
             break
         }
@@ -414,11 +550,15 @@ final class PlayerViewModel: NSObject, ObservableObject {
             return true
         default:
             if event.keyCode == previousFileKeyCode {
-                previousFile()
+                if !event.isARepeat {
+                    previousFile()
+                }
                 return true
             }
             if event.keyCode == nextFileKeyCode {
-                nextFile()
+                if !event.isARepeat {
+                    nextFile()
+                }
                 return true
             }
             return false
@@ -575,6 +715,24 @@ killall lsd >/dev/null 2>&1 || true
             Task { @MainActor [weak self] in
                 guard let self, self.playbackBackend == .native else { return }
                 let seconds = time.seconds
+                
+                // Stall detection: if playing but time isn't moving
+                if !self.isPaused && !self.isSeeking && seconds.isFinite && seconds > 0 {
+                    if seconds == self.lastStallPosition {
+                        self.nativeStallCount += 1
+                        if self.nativeStallCount > 30 { // ~3 seconds stall
+                            self.nativeStallCount = 0
+                            print("检测到原生播放器卡死 (Position: \(seconds))，尝试切至 mpv 内核...")
+                            self.selectBackend(.mpv)
+                        }
+                    } else {
+                        self.nativeStallCount = 0
+                        self.lastStallPosition = seconds
+                    }
+                } else {
+                    self.nativeStallCount = 0
+                }
+
                 self.currentTime = seconds.isFinite ? max(0, seconds) : 0
                 if Int(self.currentTime * 10) % 30 == 0 {
                     self.saveCurrentProgress()
@@ -582,6 +740,9 @@ killall lsd >/dev/null 2>&1 || true
             }
         }
 
+        if let observer = nativeEndObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
         nativeEndObserver = NotificationCenter.default.addObserver(
             forName: .AVPlayerItemDidPlayToEndTime,
             object: nil,
@@ -590,7 +751,9 @@ killall lsd >/dev/null 2>&1 || true
             guard let self else { return }
             Task { @MainActor [weak self] in
                 guard let self, self.playbackBackend == .native else { return }
-                guard notification.object as? AVPlayerItem === self.nativePlayer.currentItem else { return }
+                let notificationItem = notification.object as? AVPlayerItem
+                let currentItem = self.nativePlayer.currentItem
+                print("[BZPlayer] Native player did play to end time - notification item: \(String(describing: notificationItem)), current item: \(String(describing: currentItem)), match: \(notificationItem === currentItem)")
                 self.handlePlaybackFinished()
             }
         }
@@ -623,6 +786,23 @@ killall lsd >/dev/null 2>&1 || true
     }
 
     private func openFromPlaylist(_ url: URL, forceStartAtBeginning: Bool = false) {
+        debugLog("[BZPlayer] openFromPlaylist: \(url.lastPathComponent), forceStartAtBeginning: \(forceStartAtBeginning)")
+        // Clear previous error and reset backend switch flag
+        playbackError = nil
+        attemptedBackendSwitch = false
+        playbackFailureTimer?.invalidate()
+        playbackFailureTimer = nil
+
+        // IMPORTANT: If loopMode was set to .none due to playback failure, restore it
+        // We detect this by checking if it was changed while a playbackError existed
+        if loopMode == .none && playbackError == nil {
+            let savedMode = UserDefaults.standard.string(forKey: Self.loopModeKey)
+            let restoredMode = LoopMode(rawValue: savedMode ?? "") ?? .playlist
+            loopMode = restoredMode
+            debugLog("[BZPlayer] Restored loop mode to: \(loopMode)")
+        }
+
+        isPaused = false
         saveCurrentProgress()
         currentFileURL = url
         openedFilePath = url.path
@@ -640,8 +820,10 @@ killall lsd >/dev/null 2>&1 || true
         }
 
         let resumeTime = forceStartAtBeginning ? nil : loadSavedProgress(for: url)
+        debugLog("[BZPlayer] resumeTime: \(resumeTime ?? -1)")
         let ffprobeInfo = probeMediaInfo(url: url)
         let backend = chooseBackend(for: url, ffprobeInfo: ffprobeInfo)
+        debugLog("[BZPlayer] Selected backend: \(backend)")
         selectBackend(backend)
 
         switch backend {
@@ -651,6 +833,60 @@ killall lsd >/dev/null 2>&1 || true
             mpvPlayer.setHardwareDecodingEnabled(false)
             mpvPlayer.setSpeed(speed)
             mpvPlayer.load(url: url, resumeAt: resumeTime)
+            mpvPlayer.play()
+        }
+
+        // Schedule a failure check after 5 seconds
+        schedulePlaybackFailureCheck(for: url, backend: backend, resumeAt: resumeTime)
+    }
+
+    private func schedulePlaybackFailureCheck(for url: URL, backend: PlaybackBackend, resumeAt: Double?) {
+        playbackFailureTimer?.invalidate()
+        playbackFailureTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: false) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in
+                self.checkAndHandlePlaybackFailure(for: url, originalBackend: backend, resumeAt: resumeAt)
+            }
+        }
+    }
+
+    private func checkAndHandlePlaybackFailure(for url: URL, originalBackend: PlaybackBackend, resumeAt: Double?) {
+        // If duration is still 0 and we're paused or at time 0, playback likely failed
+        let hasFailed = duration == 0 && (isPaused || currentTime < 0.5)
+
+        guard hasFailed else { return }
+
+        if !attemptedBackendSwitch {
+            // Try switching to the other backend
+            attemptedBackendSwitch = true
+            let newBackend: PlaybackBackend = originalBackend == .native ? .mpv : .native
+            print("[BZPlayer] Playback failed with \(originalBackend), switching to \(newBackend)")
+
+            selectBackend(newBackend)
+
+            switch newBackend {
+            case .native:
+                openWithNative(url: url, resumeAt: resumeAt)
+            case .mpv:
+                mpvPlayer.setHardwareDecodingEnabled(false)
+                mpvPlayer.setSpeed(speed)
+                mpvPlayer.load(url: url, resumeAt: resumeAt)
+                mpvPlayer.play()
+            }
+
+            // Schedule another check after switching backend
+            schedulePlaybackFailureCheck(for: url, backend: newBackend, resumeAt: resumeAt)
+        } else {
+            // Both backends failed, show error and pause loop
+            let errorMsg = "无法播放文件：\(url.lastPathComponent)\n两个播放内核都无法解码此文件。"
+            print("[BZPlayer] \(errorMsg)")
+            playbackError = errorMsg
+
+            // Pause loop mode to prevent infinite error loop
+            if loopMode != .none {
+                print("[BZPlayer] Disabling loop mode due to playback failure")
+                loopMode = .none
+            }
         }
     }
 
@@ -705,14 +941,22 @@ killall lsd >/dev/null 2>&1 || true
         let nativeSafeVideoCodecs: Set<String> = [
             "h264", "hevc", "mpeg4", "mjpeg", "prores", "jpeg2000", "dvvideo", "h263"
         ]
+        
+        // Certain codec tags/variants are known to cause issues with AVPlayer despite being H.264
+        let nativeUnsafeVideoTags: Set<String> = ["1cva", "avc2", "avc3", "avc4", "hev1", "hvc1", "hev1", "vp09", "vp9"]
+
+        if ffprobeInfo.videoStreams.contains(where: { stream in
+            if !nativeSafeVideoCodecs.contains(stream.codecName) { return true }
+            if nativeUnsafeVideoTags.contains(stream.codecTag) { return true }
+            return false
+        }) {
+            return true
+        }
+
         let nativeSafeAudioCodecs: Set<String> = [
             "aac", "ac3", "eac3", "alac", "mp3",
             "pcm_s16le", "pcm_s24le", "pcm_s32le", "pcm_f32le", "pcm_f64le", "pcm_u8"
         ]
-
-        if ffprobeInfo.videoStreams.contains(where: { !nativeSafeVideoCodecs.contains($0.codecName) }) {
-            return true
-        }
 
         if ffprobeInfo.audioStreams.contains(where: { !nativeSafeAudioCodecs.contains($0.codecName) }) {
             return true
@@ -782,9 +1026,11 @@ killall lsd >/dev/null 2>&1 || true
         return nil
     }
 
+    static let appVersion = 1
+
     private func updateWindowTitle(_ title: String) {
-        windowTitle = title
-        attachedWindow?.title = title
+        windowTitle = "\(title) (\(Self.appVersion))"
+        attachedWindow?.title = windowTitle
     }
 
     private func progressKey(for url: URL) -> String {
@@ -798,6 +1044,10 @@ killall lsd >/dev/null 2>&1 || true
 
     private func saveCurrentProgress() {
         guard let url = currentFileURL, currentTime.isFinite, currentTime > 0 else { return }
+        // Don't save if we're near the end (within 5% of duration) - playback finished naturally
+        if duration > 0 && currentTime >= duration * 0.95 {
+            return
+        }
         UserDefaults.standard.set(currentTime, forKey: progressKey(for: url))
     }
 
@@ -1071,23 +1321,79 @@ killall lsd >/dev/null 2>&1 || true
     }
 
     private func handlePlaybackFinished() {
+        debugLog("[BZPlayer] handlePlaybackFinished called - Time: \(currentTime), Duration: \(duration), isPaused: \(isPaused), isSeeking: \(isSeeking), loopMode: \(loopMode)")
+
+        // Don't auto-advance if there's a playback error
+        if playbackError != nil {
+            debugLog("[BZPlayer] Playback error detected, pausing instead of auto-advancing")
+            isPaused = true
+            return
+        }
+
+        // If duration is 0, try to get it directly from mpv
+        var effectiveDuration = duration
+        if effectiveDuration == 0 && playbackBackend == .mpv {
+            if let mpvDuration = mpvPlayer.getDoubleProperty("duration") {
+                effectiveDuration = mpvDuration
+                debugLog("[BZPlayer] Got duration from mpv directly: \(effectiveDuration)")
+            }
+        }
+
+        // Integrity Check: Only trigger auto-next if we are ACTUALLY near the end and have valid duration.
+        // This prevents infinite loops caused by unexpected EOF notifications during item resets.
+        let timeDiff = abs(currentTime - effectiveDuration)
+        let progressPercent = effectiveDuration > 0 ? currentTime / effectiveDuration : 0
+        let isNearEnd = effectiveDuration > 0 && (timeDiff < 5.0 || progressPercent >= 0.9)
+        debugLog("[BZPlayer] isNearEnd check - duration: \(effectiveDuration), currentTime: \(currentTime), timeDiff: \(timeDiff), progressPercent: \(progressPercent), result: \(isNearEnd)")
+        guard isNearEnd else {
+            debugLog("[BZPlayer] Ignoring spurious playback-finished notification")
+            return
+        }
+
+        // Safety Guard
+        let now = ProcessInfo.processInfo.systemUptime
+        lastAutoNextJumpTimes = lastAutoNextJumpTimes.filter { now - $0 < 5.0 }
+        lastAutoNextJumpTimes.append(now)
+
+        if lastAutoNextJumpTimes.count > 5 {
+            debugLog("[BZPlayer] DETECTED INFINITE SKIP LOOP! Pausing playback to prevent instability.")
+            pause()
+            lastAutoNextJumpTimes.removeAll()
+            showAlert(title: "播放提示", message: "检测到连续快速切片，可能遇到无法播放的文件，已停止播放以防程序崩溃。")
+            return
+        }
+
         switch loopMode {
         case .singleFile:
+            debugLog("[BZPlayer] Loop mode: singleFile")
             if let currentFileURL {
                 openFromPlaylist(currentFileURL, forceStartAtBeginning: true)
             } else {
                 isPaused = true
             }
         case .playlist:
-            let current = currentFileURL.flatMap { playlist.firstIndex(of: $0) } ?? currentIndex
-            if playlist.indices.contains(current + 1) {
-                openFromPlaylist(playlist[current + 1])
+            debugLog("[BZPlayer] Loop mode: playlist, currentFileURL: \(String(describing: currentFileURL)), currentIndex: \(currentIndex)")
+            // Use path comparison to find current index, as URL instances may differ
+            let current: Int
+            if let currentURL = currentFileURL {
+                current = playlist.firstIndex { $0.path == currentURL.path } ?? currentIndex
+            } else {
+                current = currentIndex
+            }
+            debugLog("[BZPlayer] Calculated current index: \(current), playlist.count: \(playlist.count)")
+            let nextIndex = current + 1
+            if nextIndex < playlist.count {
+                debugLog("[BZPlayer] Opening next file at index \(nextIndex): \(playlist[nextIndex].lastPathComponent)")
+                openFromPlaylist(playlist[nextIndex])
             } else if let first = playlist.first {
+                debugLog("[BZPlayer] At end of playlist, looping back to first: \(first.lastPathComponent)")
                 openFromPlaylist(first)
             } else {
+                debugLog("[BZPlayer] Playlist is empty, pausing")
                 isPaused = true
             }
         case .none:
+            debugLog("[BZPlayer] Loop mode: none, pausing")
             isPaused = true
         }
     }
@@ -1157,9 +1463,18 @@ private struct FFprobeStream {
 
 private func probeMediaInfo(url: URL) -> FFprobeInfo? {
     let process = Process()
+    // Try common homebrew/standard paths if just "ffprobe" in env fails
+    let ffprobePath: String = {
+        let candidates = ["/opt/homebrew/bin/ffprobe", "/usr/local/bin/ffprobe", "/usr/bin/ffprobe"]
+        for p in candidates {
+            if FileManager.default.fileExists(atPath: p) { return p }
+        }
+        return "ffprobe" // fallback to env search
+    }()
+    
     process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
     process.arguments = [
-        "ffprobe",
+        ffprobePath,
         "-v", "error",
         "-show_entries",
         "stream=codec_name,codec_long_name,codec_type,codec_tag_string,profile,sample_rate,channels,channel_layout,bit_rate,width,height,r_frame_rate:stream_tags=language",

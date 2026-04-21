@@ -34,6 +34,36 @@ struct PlayerRootView: View {
                         Color.clear.preference(key: ControlBarHeightKey.self, value: geo.size.height + 12)
                     }
                 )
+
+            // Playback error overlay
+            if let error = viewModel.playbackError {
+                VStack(spacing: 12) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 32))
+                        .foregroundColor(.yellow)
+
+                    Text("播放失败")
+                        .font(.headline)
+                        .foregroundColor(.white)
+
+                    Text(error)
+                        .font(.system(size: 13))
+                        .foregroundColor(.white.opacity(0.8))
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 20)
+
+                    Button("确定") {
+                        viewModel.playbackError = nil
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .focusable(false)
+                }
+                .padding(24)
+                .background(Color.black.opacity(0.85))
+                .cornerRadius(12)
+                .frame(maxWidth: 400)
+                .zIndex(10)
+            }
         }
         .onPreferenceChange(ControlBarHeightKey.self) { controlBarHeight = $0 }
         .animation(.easeInOut(duration: 0.25), value: isControlsVisible)
@@ -83,8 +113,9 @@ struct PlayerRootView: View {
                             if isInControlBarRegion {
                                 cancelHide()
                                 setControlsVisible(true)
-                            } else if !isHoveringControlBar {
-                                scheduleHide()
+                            } else if !isHoveringPlaylist {
+                                // Mouse moved in player area - show controls only if playlist is NOT open
+                                setControlsVisible(true)
                             }
                             resetMouseIdleTimer()
                         case .ended:
@@ -149,26 +180,25 @@ struct PlayerRootView: View {
             ScrollView(.vertical, showsIndicators: true) {
                 LazyVStack(alignment: .leading, spacing: 4) {
                     ForEach(Array(viewModel.playlist.enumerated()), id: \.offset) { index, url in
-                        Button {
-                            viewModel.selectPlaylistItem(index)
-                        } label: {
-                            HStack {
-                                Text(url.lastPathComponent)
-                                    .lineLimit(1)
-                                Spacer()
-                                if index == viewModel.currentIndex {
-                                    Image(systemName: "play.fill")
-                                }
+                        HStack {
+                            Text(url.lastPathComponent)
+                                .lineLimit(1)
+                            Spacer()
+                            if index == viewModel.currentIndex {
+                                Image(systemName: "play.fill")
                             }
-                            .font(.system(size: 13))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 6)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(index == viewModel.currentIndex ? Color.blue.opacity(0.35) : Color.clear)
-                            .cornerRadius(6)
                         }
-                        .buttonStyle(.plain)
+                        .font(.system(size: 13))
                         .foregroundStyle(.white)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 6)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(index == viewModel.currentIndex ? Color.blue.opacity(0.35) : Color.clear)
+                        .cornerRadius(6)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            viewModel.selectPlaylistItem(index)
+                        }
                     }
                 }
             }
@@ -176,7 +206,7 @@ struct PlayerRootView: View {
         .padding(10)
         .frame(width: 600)
         .frame(maxHeight: .infinity, alignment: .top)
-        .background(Color.black.opacity(0.55))
+        .background(Color.black.opacity(0.85))
         .cornerRadius(10)
         .onHover { hovering in
             isHoveringPlaylist = hovering
@@ -243,9 +273,34 @@ struct PlayerRootView: View {
                 Text(String(format: "当前：%.2fx", viewModel.speed))
                 Text(viewModel.syncText)
                     .foregroundStyle(viewModel.syncText.contains("稳定") ? .green : .orange)
+
+                Button {
+                    viewModel.toggleMute()
+                } label: {
+                    Image(systemName: viewModel.isMuted || viewModel.volume == 0 ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                        .foregroundStyle(.white)
+                }
+                .buttonStyle(.plain)
+
+                Slider(value: Binding(
+                    get: { viewModel.volume },
+                    set: { viewModel.setVolume($0) }
+                ), in: 0...100)
+                .frame(width: 80)
+                .foregroundStyle(.white)
+
+                Text(String(format: "%.0f%%", viewModel.volume))
+                    .foregroundStyle(.white)
+                    .frame(width: 35, alignment: .trailing)
+
                 Spacer()
-                Text(viewModel.playbackEngineStatus)
-                    .foregroundStyle(.secondary)
+                Button {
+                    viewModel.switchPlaybackBackend()
+                } label: {
+                    Text(viewModel.playbackEngineStatus)
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
                 Text("双击或按f全屏，点击画面暂停/播放")
                     .foregroundStyle(.secondary)
             }

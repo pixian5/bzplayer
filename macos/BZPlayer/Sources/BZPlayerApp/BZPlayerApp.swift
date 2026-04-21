@@ -369,7 +369,7 @@ private struct SettingsView: View {
                     .frame(width: 72)
                 }
 
-                Text("默认上一文件是 `;`，下一文件是 `'`，按物理键位处理，不受中英文输入影响。")
+                Text("默认上一文件是 `[`，下一文件是 `]`，按物理键位处理，不受中英文输入影响。速度调节为 `;` 和 `'`。")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
 
