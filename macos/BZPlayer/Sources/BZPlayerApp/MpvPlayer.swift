@@ -29,8 +29,8 @@ final class MpvPlayer: NSObject {
     private var renderWarmupUntil: CFTimeInterval = 0
     private var preferredHwdecMode = "no"
 
-    var handle: OpaquePointer? {
-        return self.handle
+    var playerHandle: OpaquePointer? {
+        return handle
     }
 
     override init() {

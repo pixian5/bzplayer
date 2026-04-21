@@ -1,5 +1,6 @@
 import AVFoundation
 import AVKit
+import CMpv
 import AppKit
 import CoreServices
 import Foundation
@@ -438,7 +439,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
     }
 
     func applyAudioDelay() {
-        guard playbackBackend == .mpv, let handle = mpvPlayer.handle else { return }
+        guard playbackBackend == .mpv, let handle = mpvPlayer.playerHandle else { return }
         var delay = audioDelayMs / 1000.0
         withUnsafeMutablePointer(to: &delay) {
             _ = mpv_set_property(handle, "audio-delay", MPV_FORMAT_DOUBLE, $0)
