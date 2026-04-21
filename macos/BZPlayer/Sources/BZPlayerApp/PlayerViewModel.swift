@@ -720,7 +720,7 @@ killall lsd >/dev/null 2>&1 || true
         mpvPlayer.onTimeChanged = { [weak self] time in
             guard let self, self.playbackBackend == .mpv else { return }
             self.currentTime = time.isFinite ? time : 0
-            if Int(self.currentTime * 10) % 30 == 0 {
+            if Int(self.currentTime) % 1 == 0 {
                 self.saveCurrentProgress()
             }
         }
@@ -774,7 +774,7 @@ killall lsd >/dev/null 2>&1 || true
                 }
 
                 self.currentTime = seconds.isFinite ? max(0, seconds) : 0
-                if Int(self.currentTime * 10) % 30 == 0 {
+                if Int(self.currentTime) % 1 == 0 {
                     self.saveCurrentProgress()
                 }
             }
@@ -1362,6 +1362,9 @@ killall lsd >/dev/null 2>&1 || true
 
     private func handlePlaybackFinished() {
         debugLog("[BZPlayer] handlePlaybackFinished called - Time: \(currentTime), Duration: \(duration), isPaused: \(isPaused), isSeeking: \(isSeeking), loopMode: \(loopMode)")
+
+        // Save progress before auto-advancing
+        saveCurrentProgress()
 
         // Don't auto-advance if there's a playback error
         if playbackError != nil {
