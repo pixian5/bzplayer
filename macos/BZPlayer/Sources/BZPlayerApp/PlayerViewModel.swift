@@ -1084,6 +1084,10 @@ killall lsd >/dev/null 2>&1 || true
 
     private func saveCurrentProgress() {
         guard let url = currentFileURL, currentTime.isFinite, currentTime > 0 else { return }
+        // Don't save progress if we're at the end of the video (will be cleared)
+        if duration > 0 && currentTime >= max(duration - 0.5, 0) {
+            return
+        }
         UserDefaults.standard.set(currentTime, forKey: progressKey(for: url))
     }
 
@@ -1364,8 +1368,10 @@ killall lsd >/dev/null 2>&1 || true
         debugLog("[BZPlayer] handlePlaybackFinished called - Time: \(currentTime), Duration: \(duration), isPaused: \(isPaused), isSeeking: \(isSeeking), loopMode: \(loopMode)")
 
         // Clear saved progress when playback completes (reaches the end)
+        // Also set currentTime=0 to prevent onTimeChanged from overwriting the clear
         if let url = currentFileURL {
             clearSavedProgress(for: url)
+            currentTime = 0
         }
 
         // Don't auto-advance if there's a playback error
