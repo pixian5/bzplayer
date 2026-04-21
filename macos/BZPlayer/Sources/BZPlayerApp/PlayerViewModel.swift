@@ -107,6 +107,8 @@ final class PlayerViewModel: NSObject, ObservableObject {
     @Published var windowOpenBehavior: WindowOpenBehavior
     @Published var allowMultipleWindows: Bool
     @Published var playbackError: String?
+    @Published var audioDelayMs: Double
+    @Published var audioDelayStepMs: Double
 
     let mpvPlayer = MpvPlayer()
     let nativePlayer = AVPlayer()
@@ -155,6 +157,8 @@ final class PlayerViewModel: NSObject, ObservableObject {
     private static let volumeKey = "settings.volume"
     private static let isMutedKey = "settings.isMuted"
     static let allowMultipleWindowsKey = "settings.allowMultipleWindows"
+    private static let audioDelayMsKey = "settings.audioDelayMs"
+    private static let audioDelayStepMsKey = "settings.audioDelayStepMs"
 
     override init() {
         let storedSeekSeconds = UserDefaults.standard.object(forKey: Self.shortcutSeekSecondsKey) as? Double
@@ -175,6 +179,8 @@ final class PlayerViewModel: NSObject, ObservableObject {
         allowMultipleWindows = storedAllowMultipleWindows ?? true
         volume = UserDefaults.standard.object(forKey: Self.volumeKey) as? Double ?? 100.0
         isMuted = UserDefaults.standard.bool(forKey: Self.isMutedKey)
+        audioDelayMs = UserDefaults.standard.object(forKey: Self.audioDelayMsKey) as? Double ?? 0
+        audioDelayStepMs = UserDefaults.standard.object(forKey: Self.audioDelayStepMsKey) as? Double ?? 50
         super.init()
 
         // Apply volume and mute settings to mpv player
@@ -413,6 +419,32 @@ final class PlayerViewModel: NSObject, ObservableObject {
         UserDefaults.standard.set(value, forKey: Self.allowMultipleWindowsKey)
     }
 
+    func adjustAudioDelay(by deltaMs: Double) {
+        audioDelayMs += deltaMs
+        UserDefaults.standard.set(audioDelayMs, forKey: Self.audioDelayMsKey)
+        applyAudioDelay()
+    }
+
+    func resetAudioDelay() {
+        audioDelayMs = 0
+        UserDefaults.standard.set(0, forKey: Self.audioDelayMsKey)
+        applyAudioDelay()
+    }
+
+    func setAudioDelayStepMs(_ value: Double) {
+        let normalized = max(value, 1)
+        audioDelayStepMs = normalized
+        UserDefaults.standard.set(normalized, forKey: Self.audioDelayStepMsKey)
+    }
+
+    private func applyAudioDelay() {
+        guard playbackBackend == .mpv, let handle = mpvPlayer.handle else { return }
+        var delay = audioDelayMs / 1000.0
+        withUnsafeMutablePointer(to: &delay) {
+            _ = mpv_set_property(handle, "audio-delay", MPV_FORMAT_DOUBLE, $0)
+        }
+    }
+
     func refreshPreferences() {
         let storedSeekSeconds = UserDefaults.standard.object(forKey: Self.shortcutSeekSecondsKey) as? Double
         let storedFrameStepCount = UserDefaults.standard.object(forKey: Self.shortcutFrameStepCountKey) as? Int
@@ -464,6 +496,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
             mpvPlayer.setSpeed(speed)
             mpvPlayer.load(url: url, resumeAt: resumeAt)
             mpvPlayer.play()
+            applyAudioDelay()
         }
     }
 
@@ -540,6 +573,12 @@ final class PlayerViewModel: NSObject, ObservableObject {
             if !event.isARepeat {
                 adjustSpeed(by: 0.25)
             }
+            return true
+        case 27: // Left bracket [
+            adjustAudioDelay(by: -50)
+            return true
+        case 29: // Right bracket ]
+            adjustAudioDelay(by: 50)
             return true
         default:
             break

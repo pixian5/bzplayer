@@ -293,6 +293,26 @@ struct PlayerRootView: View {
                     .foregroundStyle(.white)
                     .frame(width: 35, alignment: .trailing)
 
+                Divider()
+                    .frame(height: 20)
+                    .background(Color.white.opacity(0.3))
+
+                Button("-50ms") {
+                    revealControlsAndScheduleHide()
+                    viewModel.adjustAudioDelay(by: -50)
+                }
+                Button("+50ms") {
+                    revealControlsAndScheduleHide()
+                    viewModel.adjustAudioDelay(by: 50)
+                }
+                Text(String(format: "音画延迟: %.0fms", viewModel.audioDelayMs))
+                    .font(.system(size: 12))
+                    .foregroundStyle(viewModel.audioDelayMs == 0 ? .white : .orange)
+                    .onTapGesture {
+                        revealControlsAndScheduleHide()
+                        viewModel.resetAudioDelay()
+                    }
+
                 Spacer()
                 Button {
                     viewModel.switchPlaybackBackend()

@@ -29,6 +29,10 @@ final class MpvPlayer: NSObject {
     private var renderWarmupUntil: CFTimeInterval = 0
     private var preferredHwdecMode = "no"
 
+    var handle: OpaquePointer? {
+        return self.handle
+    }
+
     override init() {
         super.init()
         setlocale(LC_NUMERIC, "C")
@@ -207,6 +211,7 @@ final class MpvPlayer: NSObject {
         _ = mpv_observe_property(handle, 4, "estimated-vf-fps", MPV_FORMAT_DOUBLE)
         _ = mpv_observe_property(handle, 5, "container-fps", MPV_FORMAT_DOUBLE)
         _ = mpv_observe_property(handle, 6, "display-fps", MPV_FORMAT_DOUBLE)
+        _ = mpv_observe_property(handle, 7, "audio-delay", MPV_FORMAT_DOUBLE)
     }
 
     func processEvents() {

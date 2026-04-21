@@ -401,6 +401,17 @@ private struct SettingsView: View {
                 Text("关闭后，新打开的文件会直接在当前窗口播放，不另开新窗口。")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
+
+                HStack {
+                    Text("音频延迟步进")
+                        .frame(width: 150, alignment: .leading)
+                    Stepper("", value: Binding(
+                        get: { viewModel.audioDelayStepMs },
+                        set: { viewModel.setAudioDelayStepMs($0) }
+                    ), in: 1...500, step: 1)
+                    Text("\(Int(viewModel.audioDelayStepMs))ms")
+                        .frame(width: 50, alignment: .leading)
+                }
             }
 
             Spacer()
