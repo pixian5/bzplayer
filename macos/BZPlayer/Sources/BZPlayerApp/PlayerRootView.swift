@@ -219,7 +219,7 @@ struct PlayerRootView: View {
             }
         }
         .padding(10)
-        .frame(width: 600)
+        .frame(width: 1200)
         .frame(maxHeight: .infinity, alignment: .top)
         .background(Color.black.opacity(0.85))
         .cornerRadius(10)
