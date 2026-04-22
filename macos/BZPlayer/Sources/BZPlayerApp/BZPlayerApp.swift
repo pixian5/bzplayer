@@ -1,6 +1,23 @@
 import SwiftUI
 import AppKit
 
+// Debug logger
+private let debugLogURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Documents/BZPlayer.log")
+private func debugLog(_ msg: String) {
+    let line = "\(Date()): \(msg)\n"
+    if let data = line.data(using: .utf8) {
+        if FileManager.default.fileExists(atPath: debugLogURL.path) {
+            if let handle = try? FileHandle(forWritingTo: debugLogURL) {
+                handle.seekToEndOfFile()
+                handle.write(data)
+                handle.closeFile()
+            }
+        } else {
+            try? data.write(to: debugLogURL)
+        }
+    }
+}
+
 @main
 struct BZPlayerApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
@@ -132,48 +149,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func application(_ sender: NSApplication, openFile filename: String) -> Bool {
         let url = URL(fileURLWithPath: filename)
-        if !shouldAllowMultipleWindows() {
-            if let targetBinding = singleWindowTargetBinding() {
-                let vm = targetBinding.viewModel
-                let window = targetBinding.window
-                DispatchQueue.main.async {
-                    vm?.openExternalFiles([url])
-                    window?.makeKeyAndOrderFront(nil)
-                    NSApp.activate(ignoringOtherApps: true)
-                }
-                return true
-            }
-        } else {
+        debugLog("[AppDelegate] openFile called: \(filename), registeredWindows count: \(registeredWindows.count)")
+
+        // If there's an existing window, use it to play the file
+        if let targetBinding = singleWindowTargetBinding() {
+            debugLog("[AppDelegate] Found existing window, reusing it")
+            let vm = targetBinding.viewModel
+            let window = targetBinding.window
             DispatchQueue.main.async {
-                self.pendingURLs = [url]
-                self.createAdditionalPlayerWindow()
+                vm?.openExternalFiles([url])
+                window?.makeKeyAndOrderFront(nil)
+                NSApp.activate(ignoringOtherApps: true)
             }
             return true
         }
-        return false
+        // No existing window, create a new one
+        debugLog("[AppDelegate] No existing window found, creating new window")
+        DispatchQueue.main.async {
+            self.pendingURLs = [url]
+            self.createAdditionalPlayerWindow()
+        }
+        return true
     }
 
     func application(_ sender: NSApplication, openFiles filenames: [String]) {
         let urls = filenames.map { URL(fileURLWithPath: $0) }
-        if !shouldAllowMultipleWindows() {
-            if let targetBinding = singleWindowTargetBinding() {
-                let vm = targetBinding.viewModel
-                let window = targetBinding.window
-                DispatchQueue.main.async {
-                    vm?.openExternalFiles(urls)
-                    window?.makeKeyAndOrderFront(nil)
-                    NSApp.activate(ignoringOtherApps: true)
-                }
-                return
-            }
-        } else {
+        // If there's an existing window, use it to play the files
+        if let targetBinding = singleWindowTargetBinding() {
+            let vm = targetBinding.viewModel
+            let window = targetBinding.window
             DispatchQueue.main.async {
-                self.pendingURLs = urls
-                self.createAdditionalPlayerWindow()
+                vm?.openExternalFiles(urls)
+                window?.makeKeyAndOrderFront(nil)
+                NSApp.activate(ignoringOtherApps: true)
             }
             return
         }
-        self.application(NSApp, open: urls)
+        // No existing window, create a new one
+        DispatchQueue.main.async {
+            self.pendingURLs = urls
+            self.createAdditionalPlayerWindow()
+        }
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
@@ -213,6 +229,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let key = ObjectIdentifier(window)
         registeredWindows[key] = WeakWindowBinding(window: window, viewModel: viewModel)
         cleanupDeadWindowBindings()
+        debugLog("[AppDelegate] Window registered, windowNumber: \(window.windowNumber), total registered: \(registeredWindows.count)")
     }
 
     @MainActor
@@ -255,6 +272,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func createAdditionalPlayerWindow() {
+        debugLog("[AppDelegate] Creating additional player window")
         let fileInfoViewModel = FileInfoViewModel()
         let host = NSHostingController(rootView: PlayerWindowRootView(appDelegate: self, fileInfoViewModel: fileInfoViewModel))
         let window = NSWindow(contentViewController: host)
@@ -311,20 +329,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor
     private func singleWindowTargetBinding(excluding excludedViewModel: PlayerViewModel? = nil) -> WeakWindowBinding? {
         cleanupDeadWindowBindings()
+        debugLog("[AppDelegate] singleWindowTargetBinding called, registeredWindows: \(registeredWindows.count), keyWindow: \(NSApp.keyWindow != nil), mainWindow: \(NSApp.mainWindow != nil), activeViewModel: \(activeViewModel != nil)")
 
         if let keyWindow = NSApp.keyWindow ?? NSApp.mainWindow,
            let binding = registeredWindows[ObjectIdentifier(keyWindow)],
            let viewModel = binding.viewModel,
            viewModel !== excludedViewModel {
+            debugLog("[AppDelegate] Found binding via key/main window")
             return binding
         }
 
         if let activeViewModel, activeViewModel !== excludedViewModel,
            let binding = registeredWindows.values.first(where: { $0.viewModel === activeViewModel }) {
+            debugLog("[AppDelegate] Found binding via activeViewModel")
             return binding
         }
 
-        return registeredWindows.values.first { $0.viewModel !== excludedViewModel }
+        if let binding = registeredWindows.values.first(where: { $0.viewModel !== excludedViewModel }) {
+            debugLog("[AppDelegate] Found first available binding")
+            return binding
+        }
+
+        debugLog("[AppDelegate] No binding found")
+        return nil
     }
 
     private func cleanupDeadWindowBindings() {
