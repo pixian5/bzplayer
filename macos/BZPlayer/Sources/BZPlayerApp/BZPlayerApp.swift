@@ -29,6 +29,9 @@ struct BZPlayerApp: App {
             PlayerWindowRootView(appDelegate: appDelegate, fileInfoViewModel: fileInfoViewModel)
         }
         .windowResizability(.contentMinSize)
+        // 阻止 SwiftUI 自动为外部事件（如文件打开）创建新窗口
+        // 我们通过 AppDelegate 统一手动调度到已有窗口
+        .handlesExternalEvents(matching: Set(["*"]))
 
         Settings {
             SettingsView(viewModel: settingsViewModel)
@@ -202,18 +205,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // "Allow multiple windows" only affects intentional multi-window usage, not Finder open.
             if let targetBinding = self.singleWindowTargetBinding() {
                 targetBinding.viewModel?.openExternalFiles(urls)
-                targetBinding.window?.makeKeyAndOrderFront(nil)
+                // 如果窗口已经显示，只在必要时才 orderFront，减少闪烁
+                if targetBinding.window?.isKeyWindow == false {
+                    targetBinding.window?.makeKeyAndOrderFront(nil)
+                }
             } else if let activeViewModel = self.activeViewModel {
                 activeViewModel.openExternalFiles(urls)
-                if let window = NSApp.windows.first(where: { $0.isVisible && $0.styleMask.contains(.titled) }) {
-                    window.makeKeyAndOrderFront(nil)
-                }
             } else {
                 // No window exists at all, store pending and create one
                 self.pendingURLs = urls
                 self.scheduleFallbackWindowCreationIfNeeded()
             }
-            NSApp.activate(ignoringOtherApps: true)
+            // 只有当程序不在前台时才激活，减少抢占感
+            if !NSApp.isActive {
+                NSApp.activate(ignoringOtherApps: true)
+            }
         }
     }
 
