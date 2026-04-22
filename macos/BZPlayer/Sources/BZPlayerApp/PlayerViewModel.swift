@@ -909,6 +909,8 @@ killall lsd >/dev/null 2>&1 || true
 
         isPaused = false
         saveCurrentProgress()
+        // Capture whether a file was already playing before this open call
+        let isFirstOpen = currentFileURL == nil
         currentFileURL = url
         openedFilePath = url.path
         currentIndex = playlist.firstIndex(of: url) ?? -1
@@ -917,7 +919,11 @@ killall lsd >/dev/null 2>&1 || true
         currentVideoSize = estimateVideoSize(for: url)
         currentNominalFPS = estimateFPS(for: url)
         updateWindowTitle(url.lastPathComponent)
-        applyWindowBehaviorForCurrentMedia()
+        // Only apply window behavior on first file open (isFirstOpen = true means no file was playing before).
+        // For videoSize/fitLargest modes, always adjust window to match video content.
+        // For maximized/fullscreen/rememberLast, only adjust on first open to avoid resetting the window
+        // position/size every time the user switches to a new file from Finder.
+        applyWindowBehaviorForCurrentMedia(isFirstOpen: isFirstOpen)
 
         // 恢复该文件记忆的速度
         if let savedSpeed = loadSpeedForFile(url) {
@@ -1227,20 +1233,26 @@ killall lsd >/dev/null 2>&1 || true
         }
     }
 
-    private func applyWindowBehaviorForCurrentMedia() {
+    private func applyWindowBehaviorForCurrentMedia(isFirstOpen: Bool = true) {
         guard let attachedWindow else { return }
         switch windowOpenBehavior {
         case .fullscreen:
-            enterFullscreenIfNeeded(for: attachedWindow)
+            // Only enter fullscreen on first file open, don't re-fullscreen on every file switch
+            if isFirstOpen { enterFullscreenIfNeeded(for: attachedWindow) }
         case .maximized:
-            maximize(window: attachedWindow)
+            // Only maximize on first file open
+            if isFirstOpen { maximize(window: attachedWindow) }
         case .videoSize:
+            // Always resize to match video dimensions
             resizeWindowToVideoSize(attachedWindow)
         case .rememberLast:
-            if !restoreRememberedWindowFrame(on: attachedWindow) {
-                resizeWindowToLargestFit(attachedWindow)
+            if isFirstOpen {
+                if !restoreRememberedWindowFrame(on: attachedWindow) {
+                    resizeWindowToLargestFit(attachedWindow)
+                }
             }
         case .fitLargest:
+            // Always resize to fit video
             resizeWindowToLargestFit(attachedWindow)
         }
     }
