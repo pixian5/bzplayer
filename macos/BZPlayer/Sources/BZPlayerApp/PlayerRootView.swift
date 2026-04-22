@@ -35,6 +35,20 @@ struct PlayerRootView: View {
                     }
                 )
 
+            // Toast 提示
+            if viewModel.showToast {
+                Text(viewModel.toastMessage)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(Color.black.opacity(0.75))
+                    .cornerRadius(8)
+                    .transition(.opacity)
+                    .zIndex(20)
+                    .padding(.bottom, 100)
+            }
+
             // Playback error overlay
             if let error = viewModel.playbackError {
                 VStack(spacing: 12) {
@@ -67,6 +81,7 @@ struct PlayerRootView: View {
         }
         .onPreferenceChange(ControlBarHeightKey.self) { controlBarHeight = $0 }
         .animation(.easeInOut(duration: 0.25), value: isControlsVisible)
+        .animation(.easeInOut(duration: 0.2), value: viewModel.showToast)
         .onAppear {
             syncControlsVisibilityWithPlaybackState()
         }

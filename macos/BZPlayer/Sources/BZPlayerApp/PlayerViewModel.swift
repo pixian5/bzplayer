@@ -114,6 +114,8 @@ final class PlayerViewModel: NSObject, ObservableObject {
     @Published var playbackError: String?
     @Published var audioDelayMs: Double
     @Published var audioDelayStepMs: Double
+    @Published var toastMessage: String = ""
+    @Published var showToast: Bool = false
 
     let mpvPlayer = MpvPlayer()
     let nativePlayer = AVPlayer()
@@ -404,6 +406,8 @@ final class PlayerViewModel: NSObject, ObservableObject {
         let currentSpeed = speed
         setSpeed(memorySpeed)
         memorySpeed = currentSpeed
+        // 显示 Toast 提示
+        showToastMessage(String(format: "速度: %.2fx", speed))
     }
 
     func setShortcutSeekSeconds(_ value: Double) {
@@ -458,12 +462,24 @@ final class PlayerViewModel: NSObject, ObservableObject {
         audioDelayMs += deltaMs
         UserDefaults.standard.set(audioDelayMs, forKey: Self.audioDelayMsKey)
         applyAudioDelay()
+        // 保存文件级别的音频延迟
+        if let url = currentFileURL {
+            saveAudioDelayForFile(url)
+        }
+        // 显示 Toast 提示
+        showToastMessage(String(format: "音频延迟: %.0f ms", audioDelayMs))
     }
 
     func resetAudioDelay() {
         audioDelayMs = 0
         UserDefaults.standard.set(0, forKey: Self.audioDelayMsKey)
         applyAudioDelay()
+        // 保存文件级别的音频延迟
+        if let url = currentFileURL {
+            saveAudioDelayForFile(url)
+        }
+        // 显示 Toast 提示
+        showToastMessage("音频延迟: 已重置")
     }
 
     func setAudioDelayStepMs(_ value: Double) {
@@ -487,6 +503,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         let storedNextFileKeyCode = UserDefaults.standard.object(forKey: Self.nextFileKeyCodeKey) as? Int
         let storedWindowOpenBehavior = UserDefaults.standard.string(forKey: Self.windowOpenBehaviorKey).flatMap(WindowOpenBehavior.init(rawValue:))
         let storedAllowMultipleWindows = UserDefaults.standard.object(forKey: Self.allowMultipleWindowsKey) as? Bool
+        let storedAudioDelayStepMs = UserDefaults.standard.object(forKey: Self.audioDelayStepMsKey) as? Double
 
         shortcutSeekSeconds = max(storedSeekSeconds ?? shortcutSeekSeconds, 0.1)
         shortcutFrameStepCount = max(storedFrameStepCount ?? shortcutFrameStepCount, 1)
@@ -494,6 +511,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         nextFileKeyCode = UInt16(storedNextFileKeyCode ?? Int(nextFileKeyCode))
         windowOpenBehavior = storedWindowOpenBehavior ?? windowOpenBehavior
         allowMultipleWindows = storedAllowMultipleWindows ?? allowMultipleWindows
+        audioDelayStepMs = max(storedAudioDelayStepMs ?? audioDelayStepMs, 1)
     }
 
     func togglePlaylistOrder() {
@@ -908,6 +926,14 @@ killall lsd >/dev/null 2>&1 || true
             speed = savedSpeed
         }
 
+        // 恢复该文件记忆的音频延迟
+        if let savedAudioDelay = loadAudioDelayForFile(url) {
+            audioDelayMs = savedAudioDelay
+        } else {
+            // 如果该文件没有记忆的延迟,使用全局默认值
+            audioDelayMs = UserDefaults.standard.object(forKey: Self.audioDelayMsKey) as? Double ?? 0
+        }
+
         let resumeTime = forceStartAtBeginning ? nil : loadSavedProgress(for: url)
         debugLog("[BZPlayer] resumeTime: \(resumeTime ?? -1)")
         let ffprobeInfo = probeMediaInfo(url: url)
@@ -923,6 +949,7 @@ killall lsd >/dev/null 2>&1 || true
             mpvPlayer.setSpeed(speed)
             mpvPlayer.load(url: url, resumeAt: resumeTime)
             mpvPlayer.play()
+            applyAudioDelay()  // 应用文件记忆的音频延迟
         }
 
         // Schedule a failure check after 5 seconds
@@ -1155,6 +1182,29 @@ killall lsd >/dev/null 2>&1 || true
 
     private func saveSpeedForFile(_ url: URL) {
         UserDefaults.standard.set(speed, forKey: speedKey(for: url))
+    }
+
+    private func audioDelayKey(for url: URL) -> String {
+        "playback.audioDelay.\(url.path)"
+    }
+
+    private func loadAudioDelayForFile(_ url: URL) -> Double? {
+        let key = audioDelayKey(for: url)
+        guard UserDefaults.standard.object(forKey: key) != nil else { return nil }
+        return UserDefaults.standard.double(forKey: key)
+    }
+
+    private func saveAudioDelayForFile(_ url: URL) {
+        UserDefaults.standard.set(audioDelayMs, forKey: audioDelayKey(for: url))
+    }
+
+    private func showToastMessage(_ message: String) {
+        toastMessage = message
+        showToast = true
+        // 1.5秒后自动隐藏
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            self?.showToast = false
+        }
     }
 
     private func applyInitialWindowBehaviorIfNeeded(force: Bool = false) {

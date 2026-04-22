@@ -283,6 +283,7 @@ private struct SettingsView: View {
     @State private var seekSecondsText = ""
     @State private var frameStepText = ""
     @State private var audioDelayMsText = ""
+    @State private var audioDelayStepMsText = ""
 
     var body: some View {
         ScrollView {
@@ -460,14 +461,34 @@ private struct SettingsView: View {
                         }
                         .buttonStyle(.bordered)
                     }
+
+                    HStack {
+                        Text("音频步进值")
+                            .frame(width: 150, alignment: .leading)
+                        TextField("ms", text: $audioDelayStepMsText)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 90)
+                            .onSubmit(applyAudioDelayStepMs)
+                        Stepper("", value: Binding(
+                            get: { viewModel.audioDelayStepMs },
+                            set: { viewModel.setAudioDelayStepMs($0) }
+                        ), in: 1...500, step: 10)
+                        .labelsHidden()
+                        Text("ms")
+                    }
+
+                    Text("音频步进值决定每次按音频步进快捷键时延迟的增减量。")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
                 }
             }
         }
         .padding(16)
-        .frame(width: 550, height: 500)
+        .frame(width: 550, height: 560)
         .onAppear {
             syncShortcutFields()
             syncAudioDelayField()
+            syncAudioDelayStepField()
         }
         .onChange(of: viewModel.shortcutSeekSeconds) { _ in
             syncShortcutFields()
@@ -477,6 +498,9 @@ private struct SettingsView: View {
         }
         .onChange(of: viewModel.audioDelayMs) { _ in
             syncAudioDelayField()
+        }
+        .onChange(of: viewModel.audioDelayStepMs) { _ in
+            syncAudioDelayStepField()
         }
     }
 
@@ -489,6 +513,10 @@ private struct SettingsView: View {
         audioDelayMsText = String(format: "%.0f", viewModel.audioDelayMs)
     }
 
+    private func syncAudioDelayStepField() {
+        audioDelayStepMsText = String(format: "%.0f", viewModel.audioDelayStepMs)
+    }
+
     private func applyAudioDelayMs() {
         if let delay = Double(audioDelayMsText) {
             viewModel.audioDelayMs = delay
@@ -496,6 +524,14 @@ private struct SettingsView: View {
             viewModel.applyAudioDelay()
         } else {
             audioDelayMsText = String(format: "%.0f", viewModel.audioDelayMs)
+        }
+    }
+
+    private func applyAudioDelayStepMs() {
+        if let step = Double(audioDelayStepMsText), step >= 1 {
+            viewModel.setAudioDelayStepMs(step)
+        } else {
+            audioDelayStepMsText = String(format: "%.0f", viewModel.audioDelayStepMs)
         }
     }
 
