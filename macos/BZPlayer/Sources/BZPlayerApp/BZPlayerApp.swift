@@ -19,10 +19,32 @@ struct BZPlayerApp: App {
 
         Window("文件信息", id: "file-info") {
             FileInfoWindowView(viewModel: fileInfoViewModel)
+                .background(WindowAccessorForFileInfo { window in
+                    // 窗口出现时自动成为 key window
+                    DispatchQueue.main.async {
+                        window.makeKey()
+                    }
+                })
         }
         .windowResizability(.contentMinSize)
         .defaultSize(width: 800, height: 600)
     }
+}
+
+private struct WindowAccessorForFileInfo: NSViewRepresentable {
+    let callback: (NSWindow) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async {
+            if let window = view.window {
+                self.callback(window)
+            }
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {}
 }
 
 @MainActor
@@ -71,11 +93,12 @@ private struct PlayerWindowRootView: View {
                 viewModel.onShowFileInfo = { content in
                     fileInfoViewModel.content = content
                     fileInfoViewModel.shouldShow = true
-                    // 打开文件信息窗口
-                    if let window = NSApplication.shared.windows.first(where: { $0.title == "文件信息" }) {
-                        window.makeKeyAndOrderFront(nil)
-                    } else {
-                        NSApplication.shared.openWindow(id: "file-info")
+                    // 打开文件信息窗口并使其成为 key window
+                    NSApplication.shared.openWindow(id: "file-info")
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        if let window = NSApplication.shared.windows.first(where: { $0.title == "文件信息" }) {
+                            window.makeKeyAndOrderFront(nil)
+                        }
                     }
                 }
             }
