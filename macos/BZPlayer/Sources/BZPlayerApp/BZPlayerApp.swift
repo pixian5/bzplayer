@@ -483,6 +483,9 @@ private struct SettingsView: View {
         .onChange(of: viewModel.audioDelayStepMs) { _ in
             syncAudioDelayStepField()
         }
+        .onExitCommand {
+            NSApp.keyWindow?.close()
+        }
     }
 
     private func syncShortcutFields() {

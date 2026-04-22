@@ -81,45 +81,43 @@ struct PlayerRootView: View {
 
             // 文件信息面板
             if viewModel.showFileInfoPanel {
-                GeometryReader { _ in
-                    ZStack {
-                        Color.black.opacity(0.4)
-                            .ignoresSafeArea()
-                            .onTapGesture {
-                                viewModel.showFileInfoPanel = false
-                            }
-                        VStack(alignment: .leading, spacing: 12) {
-                            HStack {
-                                Text("文件信息")
-                                    .font(.headline)
-                                    .foregroundStyle(.white)
-                                Spacer()
-                                Button {
-                                    viewModel.showFileInfoPanel = false
-                                } label: {
-                                    Image(systemName: "xmark.circle.fill")
-                                        .font(.system(size: 20))
-                                        .foregroundStyle(.white.opacity(0.7))
-                                }
-                                .buttonStyle(.plain)
-                                .focusable(false)
-                            }
+                Color.black.opacity(0.4)
+                    .ignoresSafeArea()
+                    .onTapGesture {
+                        viewModel.showFileInfoPanel = false
+                    }
+                    .zIndex(14)
 
-                            ScrollView(.vertical, showsIndicators: true) {
-                                Text(viewModel.fileInfoContent)
-                                    .font(.system(size: 13, design: .monospaced))
-                                    .foregroundStyle(.white)
-                                    .textSelection(.enabled)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Text("文件信息")
+                            .font(.headline)
+                            .foregroundStyle(.white)
+                        Spacer()
+                        Button {
+                            viewModel.showFileInfoPanel = false
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 20))
+                                .foregroundStyle(.white.opacity(0.7))
                         }
-                        .padding(16)
-                        .frame(width: 800, height: 600)
-                        .background(Color.black.opacity(0.92))
-                        .cornerRadius(12)
-                        .shadow(color: .black.opacity(0.5), radius: 20, y: 10)
+                        .buttonStyle(.plain)
+                        .focusable(false)
+                    }
+
+                    ScrollView(.vertical, showsIndicators: true) {
+                        Text(viewModel.fileInfoContent)
+                            .font(.system(size: 13, design: .monospaced))
+                            .foregroundStyle(.white)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
+                .padding(16)
+                .frame(width: 800, height: 600)
+                .background(Color.black.opacity(0.92))
+                .cornerRadius(12)
+                .shadow(color: .black.opacity(0.5), radius: 20, y: 10)
                 .zIndex(15)
                 .onExitCommand {
                     viewModel.showFileInfoPanel = false
