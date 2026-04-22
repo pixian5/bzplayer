@@ -86,6 +86,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
 
     @Published var isPaused = true
     @Published var speed: Double = 1.0
+    @Published var memorySpeed: Double = 1.0
     @Published var volume: Double = 100.0
     @Published var isMuted = false
     @Published var currentTime: Double = 0
@@ -387,6 +388,12 @@ final class PlayerViewModel: NSObject, ObservableObject {
         setSpeed((speed + delta).rounded(toPlaces: 2))
     }
 
+    func toggleSpeed() {
+        let currentSpeed = speed
+        setSpeed(memorySpeed)
+        memorySpeed = currentSpeed
+    }
+
     func setShortcutSeekSeconds(_ value: Double) {
         let normalized = max(value, 0.1)
         shortcutSeekSeconds = normalized
@@ -580,6 +587,17 @@ final class PlayerViewModel: NSObject, ObservableObject {
             return true
         case 29: // Right bracket ]
             adjustAudioDelay(by: 50)
+            return true
+        case 43: // Comma ,
+            adjustAudioDelay(by: -audioDelayStepMs)
+            return true
+        case 47: // Period .
+            adjustAudioDelay(by: audioDelayStepMs)
+            return true
+        case 24: // Equal =
+            if !event.isARepeat {
+                toggleSpeed()
+            }
             return true
         default:
             break
