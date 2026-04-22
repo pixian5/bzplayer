@@ -282,7 +282,6 @@ private struct SettingsView: View {
     @ObservedObject var viewModel: PlayerViewModel
     @State private var seekSecondsText = ""
     @State private var frameStepText = ""
-    @State private var audioDelayMsText = ""
     @State private var audioDelayStepMsText = ""
 
     var body: some View {
@@ -449,21 +448,7 @@ private struct SettingsView: View {
                         .foregroundStyle(.secondary)
 
                     HStack {
-                        Text("音画延迟")
-                            .frame(width: 150, alignment: .leading)
-                        TextField("ms", text: $audioDelayMsText)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 90)
-                            .onSubmit(applyAudioDelayMs)
-                        Text("ms")
-                        Button("重置") {
-                            viewModel.resetAudioDelay()
-                        }
-                        .buttonStyle(.bordered)
-                    }
-
-                    HStack {
-                        Text("音频步进值")
+                        Text("音频延迟步进")
                             .frame(width: 150, alignment: .leading)
                         TextField("ms", text: $audioDelayStepMsText)
                             .textFieldStyle(.roundedBorder)
@@ -477,17 +462,16 @@ private struct SettingsView: View {
                         Text("ms")
                     }
 
-                    Text("音频步进值决定每次按音频步进快捷键时延迟的增减量。")
+                    Text("音频延迟步进决定每次按音频步进快捷键时延迟的增减量，每个文件的延迟值独立记忆。")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                 }
             }
         }
         .padding(16)
-        .frame(width: 550, height: 560)
+        .frame(width: 550, height: 520)
         .onAppear {
             syncShortcutFields()
-            syncAudioDelayField()
             syncAudioDelayStepField()
         }
         .onChange(of: viewModel.shortcutSeekSeconds) { _ in
@@ -495,9 +479,6 @@ private struct SettingsView: View {
         }
         .onChange(of: viewModel.shortcutFrameStepCount) { _ in
             syncShortcutFields()
-        }
-        .onChange(of: viewModel.audioDelayMs) { _ in
-            syncAudioDelayField()
         }
         .onChange(of: viewModel.audioDelayStepMs) { _ in
             syncAudioDelayStepField()
@@ -509,22 +490,8 @@ private struct SettingsView: View {
         frameStepText = "\(viewModel.shortcutFrameStepCount)"
     }
 
-    private func syncAudioDelayField() {
-        audioDelayMsText = String(format: "%.0f", viewModel.audioDelayMs)
-    }
-
     private func syncAudioDelayStepField() {
         audioDelayStepMsText = String(format: "%.0f", viewModel.audioDelayStepMs)
-    }
-
-    private func applyAudioDelayMs() {
-        if let delay = Double(audioDelayMsText) {
-            viewModel.audioDelayMs = delay
-            UserDefaults.standard.set(delay, forKey: "settings.audioDelayMs")
-            viewModel.applyAudioDelay()
-        } else {
-            audioDelayMsText = String(format: "%.0f", viewModel.audioDelayMs)
-        }
     }
 
     private func applyAudioDelayStepMs() {
