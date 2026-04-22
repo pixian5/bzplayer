@@ -1143,7 +1143,7 @@ killall lsd >/dev/null 2>&1 || true
         return nil
     }
 
-    static let appVersion = 4
+    static let appVersion = 7
 
     private func updateWindowTitle(_ title: String) {
         windowTitle = "\(title) (\(Self.appVersion))"

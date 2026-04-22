@@ -198,13 +198,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { @MainActor [weak self] in
             guard let self else { return }
 
-            if self.shouldAllowMultipleWindows(), self.activeViewModel != nil {
-                self.pendingURLs = urls
-                self.scheduleFallbackWindowCreationIfNeeded()
+            // Always reuse existing window if available, regardless of allowMultipleWindows setting.
+            // "Allow multiple windows" only affects intentional multi-window usage, not Finder open.
+            if let targetBinding = self.singleWindowTargetBinding() {
+                targetBinding.viewModel?.openExternalFiles(urls)
+                targetBinding.window?.makeKeyAndOrderFront(nil)
             } else if let activeViewModel = self.activeViewModel {
                 activeViewModel.openExternalFiles(urls)
+                if let window = NSApp.windows.first(where: { $0.isVisible && $0.styleMask.contains(.titled) }) {
+                    window.makeKeyAndOrderFront(nil)
+                }
             } else {
+                // No window exists at all, store pending and create one
                 self.pendingURLs = urls
+                self.scheduleFallbackWindowCreationIfNeeded()
             }
             NSApp.activate(ignoringOtherApps: true)
         }
@@ -331,6 +338,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         cleanupDeadWindowBindings()
         debugLog("[AppDelegate] singleWindowTargetBinding called, registeredWindows: \(registeredWindows.count), keyWindow: \(NSApp.keyWindow != nil), mainWindow: \(NSApp.mainWindow != nil), activeViewModel: \(activeViewModel != nil)")
 
+        // First, try to find any valid binding from registeredWindows
+        if let binding = registeredWindows.values.first(where: { $0.viewModel !== excludedViewModel && $0.window != nil && $0.viewModel != nil }) {
+            debugLog("[AppDelegate] Found valid binding from registeredWindows, windowNumber: \(binding.window?.windowNumber ?? -1)")
+            return binding
+        }
+
+        // Fall back to keyWindow/mainWindow check
         if let keyWindow = NSApp.keyWindow ?? NSApp.mainWindow,
            let binding = registeredWindows[ObjectIdentifier(keyWindow)],
            let viewModel = binding.viewModel,
@@ -339,14 +353,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return binding
         }
 
+        // Fall back to activeViewModel
         if let activeViewModel, activeViewModel !== excludedViewModel,
            let binding = registeredWindows.values.first(where: { $0.viewModel === activeViewModel }) {
             debugLog("[AppDelegate] Found binding via activeViewModel")
-            return binding
-        }
-
-        if let binding = registeredWindows.values.first(where: { $0.viewModel !== excludedViewModel }) {
-            debugLog("[AppDelegate] Found first available binding")
             return binding
         }
 
