@@ -19,32 +19,13 @@ struct BZPlayerApp: App {
 
         Window("文件信息", id: "file-info") {
             FileInfoWindowView(viewModel: fileInfoViewModel)
-                .background(WindowAccessorForFileInfo { window in
-                    // 窗口出现时自动成为 key window
-                    DispatchQueue.main.async {
-                        window.makeKey()
-                    }
-                })
+                .onExitCommand {
+                    NSApplication.shared.windows.first(where: { $0.title == "文件信息" })?.close()
+                }
         }
         .windowResizability(.contentMinSize)
         .defaultSize(width: 800, height: 600)
     }
-}
-
-private struct WindowAccessorForFileInfo: NSViewRepresentable {
-    let callback: (NSWindow) -> Void
-
-    func makeNSView(context: Context) -> NSView {
-        let view = NSView()
-        DispatchQueue.main.async {
-            if let window = view.window {
-                self.callback(window)
-            }
-        }
-        return view
-    }
-
-    func updateNSView(_ nsView: NSView, context: Context) {}
 }
 
 @MainActor
