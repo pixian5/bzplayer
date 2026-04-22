@@ -79,28 +79,6 @@ struct PlayerRootView: View {
                 .zIndex(10)
             }
         }
-        .sheet(isPresented: $viewModel.showFileInfoPanel) {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Text("文件信息")
-                        .font(.headline)
-                    Spacer()
-                    Button("关闭") {
-                        viewModel.showFileInfoPanel = false
-                    }
-                    .keyboardShortcut(.escape, modifiers: [])
-                }
-
-                ScrollView(.vertical, showsIndicators: true) {
-                    Text(viewModel.fileInfoContent)
-                        .font(.system(size: 13, design: .monospaced))
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            }
-            .padding(16)
-            .frame(width: 800, height: 600)
-        }
         .onPreferenceChange(ControlBarHeightKey.self) { controlBarHeight = $0 }
         .animation(.easeInOut(duration: 0.25), value: isControlsVisible)
         .animation(.easeInOut(duration: 0.2), value: viewModel.showToast)

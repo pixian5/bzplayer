@@ -116,8 +116,8 @@ final class PlayerViewModel: NSObject, ObservableObject {
     @Published var audioDelayStepMs: Double
     @Published var toastMessage: String = ""
     @Published var showToast: Bool = false
-    @Published var showFileInfoPanel: Bool = false
-    @Published var fileInfoContent: String = ""
+
+    var onShowFileInfo: ((String) -> Void)?
 
     let mpvPlayer = MpvPlayer()
     let nativePlayer = AVPlayer()
@@ -676,16 +676,14 @@ final class PlayerViewModel: NSObject, ObservableObject {
 
     func showFileInfo() {
         guard let url = currentFileURL else {
-            fileInfoContent = "当前未打开媒体文件。"
-            showFileInfoPanel = true
+            onShowFileInfo?("当前未打开媒体文件。")
             return
         }
 
         Task {
             let text = await buildFileInfoText(url: url)
             await MainActor.run {
-                self.fileInfoContent = text
-                self.showFileInfoPanel = true
+                self.onShowFileInfo?(text)
             }
         }
     }

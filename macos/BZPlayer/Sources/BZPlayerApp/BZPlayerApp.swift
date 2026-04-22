@@ -5,21 +5,50 @@ import AppKit
 struct BZPlayerApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var settingsViewModel = PlayerViewModel()
+    @StateObject private var fileInfoViewModel = FileInfoViewModel()
 
     var body: some Scene {
         Window("BZPlayer", id: "main") {
-            PlayerWindowRootView(appDelegate: appDelegate)
+            PlayerWindowRootView(appDelegate: appDelegate, fileInfoViewModel: fileInfoViewModel)
         }
         .windowResizability(.contentMinSize)
 
         Settings {
             SettingsView(viewModel: settingsViewModel)
         }
+
+        Window("文件信息", id: "file-info") {
+            FileInfoWindowView(viewModel: fileInfoViewModel)
+        }
+        .windowResizability(.contentMinSize)
+        .defaultSize(width: 800, height: 600)
+    }
+}
+
+@MainActor
+class FileInfoViewModel: ObservableObject {
+    @Published var content: String = ""
+    @Published var shouldShow: Bool = false
+}
+
+private struct FileInfoWindowView: View {
+    @ObservedObject var viewModel: FileInfoViewModel
+
+    var body: some View {
+        ScrollView {
+            Text(viewModel.content)
+                .font(.system(size: 13, design: .monospaced))
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(16)
+        }
+        .frame(minWidth: 800, minHeight: 600)
     }
 }
 
 private struct PlayerWindowRootView: View {
     let appDelegate: AppDelegate
+    @ObservedObject var fileInfoViewModel: FileInfoViewModel
     @StateObject private var viewModel = PlayerViewModel()
     @State private var windowNumber: Int?
 
@@ -39,6 +68,16 @@ private struct PlayerWindowRootView: View {
                 viewModel.refreshPreferences()
                 appDelegate.setActiveViewModel(viewModel)
                 appDelegate.consumePendingURLsIfNeeded(using: viewModel)
+                viewModel.onShowFileInfo = { content in
+                    fileInfoViewModel.content = content
+                    fileInfoViewModel.shouldShow = true
+                    // 打开文件信息窗口
+                    if let window = NSApplication.shared.windows.first(where: { $0.title == "文件信息" }) {
+                        window.makeKeyAndOrderFront(nil)
+                    } else {
+                        NSApplication.shared.openWindow(id: "file-info")
+                    }
+                }
             }
             .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notification in
                 guard let window = notification.object as? NSWindow else { return }
