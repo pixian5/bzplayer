@@ -16,15 +16,6 @@ struct BZPlayerApp: App {
         Settings {
             SettingsView(viewModel: settingsViewModel)
         }
-
-        Window("文件信息", id: "file-info") {
-            FileInfoWindowView(viewModel: fileInfoViewModel)
-                .onExitCommand {
-                    NSApplication.shared.windows.first(where: { $0.title == "文件信息" })?.close()
-                }
-        }
-        .windowResizability(.contentMinSize)
-        .defaultSize(width: 800, height: 600)
     }
 }
 
@@ -32,20 +23,36 @@ struct BZPlayerApp: App {
 class FileInfoViewModel: ObservableObject {
     @Published var content: String = ""
     @Published var shouldShow: Bool = false
+    private var panel: NSPanel?
+
+    func showPanel() {
+        if panel == nil {
+            let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
+                                 styleMask: [.titled, .closable, .resizable],
+                                 backing: .buffered,
+                                 defer: false)
+            panel.title = "文件信息"
+            panel.center()
+            panel.isReleasedWhenClosed = false
+            panel.contentView = NSHostingView(rootView: FileInfoPanelView(content: content))
+            self.panel = panel
+        } else {
+            panel?.contentView = NSHostingView(rootView: FileInfoPanelView(content: content))
+        }
+        panel?.makeKeyAndOrderFront(nil)
+    }
 }
 
-private struct FileInfoWindowView: View {
-    @ObservedObject var viewModel: FileInfoViewModel
-
+private struct FileInfoPanelView: View {
+    let content: String
     var body: some View {
         ScrollView {
-            Text(viewModel.content)
+            Text(content)
                 .font(.system(size: 13, design: .monospaced))
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(16)
         }
-        .frame(minWidth: 800, minHeight: 600)
     }
 }
 
@@ -73,14 +80,7 @@ private struct PlayerWindowRootView: View {
                 appDelegate.consumePendingURLsIfNeeded(using: viewModel)
                 viewModel.onShowFileInfo = { content in
                     fileInfoViewModel.content = content
-                    fileInfoViewModel.shouldShow = true
-                    // 打开文件信息窗口并使其成为 key window
-                    NSApplication.shared.openWindow(id: "file-info")
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                        if let window = NSApplication.shared.windows.first(where: { $0.title == "文件信息" }) {
-                            window.makeKeyAndOrderFront(nil)
-                        }
-                    }
+                    fileInfoViewModel.showPanel()
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notification in
