@@ -104,6 +104,9 @@ final class PlayerViewModel: NSObject, ObservableObject {
     @Published var shortcutFrameStepCount: Int
     @Published var previousFileKeyCode: UInt16
     @Published var nextFileKeyCode: UInt16
+    @Published var audioStepDownKeyCode: UInt16
+    @Published var audioStepUpKeyCode: UInt16
+    @Published var speedToggleKeyCode: UInt16
     @Published var playlistOrder: PlaylistOrder
     @Published var loopMode: LoopMode
     @Published var windowOpenBehavior: WindowOpenBehavior
@@ -152,6 +155,9 @@ final class PlayerViewModel: NSObject, ObservableObject {
     private static let shortcutFrameStepCountKey = "settings.shortcutFrameStepCount"
     private static let previousFileKeyCodeKey = "settings.previousFileKeyCode"
     private static let nextFileKeyCodeKey = "settings.nextFileKeyCode"
+    private static let audioStepDownKeyCodeKey = "settings.audioStepDownKeyCode"
+    private static let audioStepUpKeyCodeKey = "settings.audioStepUpKeyCode"
+    private static let speedToggleKeyCodeKey = "settings.speedToggleKeyCode"
     private static let playlistOrderKey = "settings.playlistOrder"
     private static let loopModeKey = "settings.loopMode"
     private static let windowOpenBehaviorKey = "settings.windowOpenBehavior"
@@ -167,6 +173,9 @@ final class PlayerViewModel: NSObject, ObservableObject {
         let storedFrameStepCount = UserDefaults.standard.object(forKey: Self.shortcutFrameStepCountKey) as? Int
         let storedPreviousFileKeyCode = UserDefaults.standard.object(forKey: Self.previousFileKeyCodeKey) as? Int
         let storedNextFileKeyCode = UserDefaults.standard.object(forKey: Self.nextFileKeyCodeKey) as? Int
+        let storedAudioStepDownKeyCode = UserDefaults.standard.object(forKey: Self.audioStepDownKeyCodeKey) as? Int
+        let storedAudioStepUpKeyCode = UserDefaults.standard.object(forKey: Self.audioStepUpKeyCodeKey) as? Int
+        let storedSpeedToggleKeyCode = UserDefaults.standard.object(forKey: Self.speedToggleKeyCodeKey) as? Int
         let storedPlaylistOrder = UserDefaults.standard.string(forKey: Self.playlistOrderKey).flatMap(PlaylistOrder.init(rawValue:))
         let storedLoopMode = UserDefaults.standard.string(forKey: Self.loopModeKey).flatMap(LoopMode.init(rawValue:))
         let storedWindowOpenBehavior = UserDefaults.standard.string(forKey: Self.windowOpenBehaviorKey).flatMap(WindowOpenBehavior.init(rawValue:))
@@ -175,6 +184,9 @@ final class PlayerViewModel: NSObject, ObservableObject {
         shortcutFrameStepCount = max(storedFrameStepCount ?? 1, 1)
         previousFileKeyCode = UInt16(storedPreviousFileKeyCode ?? 33) // [
         nextFileKeyCode = UInt16(storedNextFileKeyCode ?? 30)     // ]
+        audioStepDownKeyCode = UInt16(storedAudioStepDownKeyCode ?? 43)  // ,
+        audioStepUpKeyCode = UInt16(storedAudioStepUpKeyCode ?? 47)      // .
+        speedToggleKeyCode = UInt16(storedSpeedToggleKeyCode ?? 24)      // =
         playlistOrder = storedPlaylistOrder ?? .ascending
         loopMode = storedLoopMode ?? .playlist
         windowOpenBehavior = storedWindowOpenBehavior ?? .maximized
@@ -416,6 +428,21 @@ final class PlayerViewModel: NSObject, ObservableObject {
         UserDefaults.standard.set(Int(value), forKey: Self.nextFileKeyCodeKey)
     }
 
+    func setAudioStepDownKeyCode(_ value: UInt16) {
+        audioStepDownKeyCode = value
+        UserDefaults.standard.set(Int(value), forKey: Self.audioStepDownKeyCodeKey)
+    }
+
+    func setAudioStepUpKeyCode(_ value: UInt16) {
+        audioStepUpKeyCode = value
+        UserDefaults.standard.set(Int(value), forKey: Self.audioStepUpKeyCodeKey)
+    }
+
+    func setSpeedToggleKeyCode(_ value: UInt16) {
+        speedToggleKeyCode = value
+        UserDefaults.standard.set(Int(value), forKey: Self.speedToggleKeyCodeKey)
+    }
+
     func setWindowOpenBehavior(_ behavior: WindowOpenBehavior) {
         windowOpenBehavior = behavior
         UserDefaults.standard.set(behavior.rawValue, forKey: Self.windowOpenBehaviorKey)
@@ -559,6 +586,21 @@ final class PlayerViewModel: NSObject, ObservableObject {
               !event.modifierFlags.contains(.option) else {
             return false
         }
+        // 可配置快捷键 - 在 switch 之前处理
+        if event.keyCode == audioStepDownKeyCode {
+            adjustAudioDelay(by: -audioDelayStepMs)
+            return true
+        }
+        if event.keyCode == audioStepUpKeyCode {
+            adjustAudioDelay(by: audioDelayStepMs)
+            return true
+        }
+        if event.keyCode == speedToggleKeyCode {
+            if !event.isARepeat {
+                toggleSpeed()
+            }
+            return true
+        }
         switch event.keyCode {
         case 123:
             seekBy(seconds: -shortcutSeekSeconds)
@@ -587,17 +629,6 @@ final class PlayerViewModel: NSObject, ObservableObject {
             return true
         case 29: // Right bracket ]
             adjustAudioDelay(by: 50)
-            return true
-        case 43: // Comma ,
-            adjustAudioDelay(by: -audioDelayStepMs)
-            return true
-        case 47: // Period .
-            adjustAudioDelay(by: audioDelayStepMs)
-            return true
-        case 24: // Equal =
-            if !event.isARepeat {
-                toggleSpeed()
-            }
             return true
         default:
             break

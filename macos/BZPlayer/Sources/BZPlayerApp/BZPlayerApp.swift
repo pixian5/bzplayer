@@ -373,6 +373,52 @@ private struct SettingsView: View {
                         .foregroundStyle(.secondary)
 
                     HStack {
+                        Text("音频步进快捷键")
+                            .frame(width: 150, alignment: .leading)
+                        Text("减小")
+                        Picker("", selection: Binding(
+                            get: { Int(viewModel.audioStepDownKeyCode) },
+                            set: { viewModel.setAudioStepDownKeyCode(UInt16($0)) }
+                        )) {
+                            ForEach(keyShortcutOptions, id: \.keyCode) { option in
+                                Text(option.label).tag(Int(option.keyCode))
+                            }
+                        }
+                        .labelsHidden()
+                        .frame(width: 72)
+                        Text("增加")
+                        Picker("", selection: Binding(
+                            get: { Int(viewModel.audioStepUpKeyCode) },
+                            set: { viewModel.setAudioStepUpKeyCode(UInt16($0)) }
+                        )) {
+                            ForEach(keyShortcutOptions, id: \.keyCode) { option in
+                                Text(option.label).tag(Int(option.keyCode))
+                            }
+                        }
+                        .labelsHidden()
+                        .frame(width: 72)
+                    }
+
+                    HStack {
+                        Text("倍速切换快捷键")
+                            .frame(width: 150, alignment: .leading)
+                        Picker("", selection: Binding(
+                            get: { Int(viewModel.speedToggleKeyCode) },
+                            set: { viewModel.setSpeedToggleKeyCode(UInt16($0)) }
+                        )) {
+                            ForEach(keyShortcutOptions, id: \.keyCode) { option in
+                                Text(option.label).tag(Int(option.keyCode))
+                            }
+                        }
+                        .labelsHidden()
+                        .frame(width: 72)
+                    }
+
+                    Text("默认音频步进为 `,` 和 `.`，倍速切换为 `=`，按物理键位处理。")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+
+                    HStack {
                         Text("打开文件时窗口")
                             .frame(width: 150, alignment: .leading)
                         Picker("打开文件时窗口", selection: Binding(
