@@ -23,23 +23,35 @@ struct BZPlayerApp: App {
 class FileInfoViewModel: ObservableObject {
     @Published var content: String = ""
     @Published var shouldShow: Bool = false
-    private var panel: NSPanel?
+    private var panel: FileInfoPanel?
 
     func showPanel() {
         if panel == nil {
-            let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
-                                 styleMask: [.titled, .closable, .resizable],
-                                 backing: .buffered,
-                                 defer: false)
+            let panel = FileInfoPanel(contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
+                                       styleMask: [.titled, .closable, .resizable],
+                                       backing: .buffered,
+                                       defer: false)
             panel.title = "文件信息"
             panel.center()
             panel.isReleasedWhenClosed = false
-            panel.contentView = NSHostingView(rootView: FileInfoPanelView(content: content))
             self.panel = panel
-        } else {
-            panel?.contentView = NSHostingView(rootView: FileInfoPanelView(content: content))
         }
+        panel?.updateContent(content)
         panel?.makeKeyAndOrderFront(nil)
+    }
+}
+
+private final class FileInfoPanel: NSPanel {
+    func updateContent(_ content: String) {
+        contentView = NSHostingView(rootView: FileInfoPanelView(content: content))
+    }
+
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 53 { // ESC key
+            close()
+        } else {
+            super.keyDown(with: event)
+        }
     }
 }
 
@@ -243,7 +255,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func createAdditionalPlayerWindow() {
-        let host = NSHostingController(rootView: PlayerWindowRootView(appDelegate: self))
+        let fileInfoViewModel = FileInfoViewModel()
+        let host = NSHostingController(rootView: PlayerWindowRootView(appDelegate: self, fileInfoViewModel: fileInfoViewModel))
         let window = NSWindow(contentViewController: host)
         window.title = "BZPlayer"
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]

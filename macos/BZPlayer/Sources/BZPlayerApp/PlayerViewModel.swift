@@ -1462,14 +1462,9 @@ killall lsd >/dev/null 2>&1 || true
     }
 
     private func handlePlaybackFinished() {
-        debugLog("[BZPlayer] handlePlaybackFinished called - Time: \(currentTime), Duration: \(duration), isPaused: \(isPaused), isSeeking: \(isSeeking), loopMode: \(loopMode)")
-
-        // Clear saved progress when playback completes (reaches the end)
-        // Also set currentTime=0 to prevent onTimeChanged from overwriting the clear
-        if let url = currentFileURL {
-            clearSavedProgress(for: url)
-            currentTime = 0
-        }
+        // Capture currentTime before any state changes to ensure accurate end-of-video detection
+        let snapshotTime = currentTime
+        debugLog("[BZPlayer] handlePlaybackFinished called - Time: \(snapshotTime), Duration: \(duration), isPaused: \(isPaused), isSeeking: \(isSeeking), loopMode: \(loopMode)")
 
         // Don't auto-advance if there's a playback error
         if playbackError != nil {
@@ -1489,16 +1484,25 @@ killall lsd >/dev/null 2>&1 || true
 
         // Integrity Check: Only trigger auto-next if we are ACTUALLY near the end and have valid duration.
         // This prevents infinite loops caused by unexpected EOF notifications during item resets.
-        let timeDiff = abs(currentTime - effectiveDuration)
-        let progressPercent = effectiveDuration > 0 ? currentTime / effectiveDuration : 0
-        let isNearEnd = effectiveDuration > 0 && (timeDiff < 5.0 || progressPercent >= 0.9)
-        debugLog("[BZPlayer] isNearEnd check - duration: \(effectiveDuration), currentTime: \(currentTime), timeDiff: \(timeDiff), progressPercent: \(progressPercent), result: \(isNearEnd)")
+        // Use snapshotTime (captured before any reset) so that currentTime=0 races don't break detection.
+        let timeDiff = abs(snapshotTime - effectiveDuration)
+        let progressPercent = effectiveDuration > 0 ? snapshotTime / effectiveDuration : 0
+        // isNearEnd: either within 5 seconds of end, OR past 90% of duration, OR duration is unknown (0)
+        let isNearEnd = effectiveDuration == 0 || (timeDiff < 5.0 || progressPercent >= 0.9)
+
+        debugLog("[BZPlayer] isNearEnd check - duration: \(effectiveDuration), snapshotTime: \(snapshotTime), timeDiff: \(timeDiff), progressPercent: \(progressPercent), result: \(isNearEnd)")
         guard isNearEnd else {
             debugLog("[BZPlayer] Ignoring spurious playback-finished notification")
             return
         }
 
-        // Safety Guard
+        // Clear saved progress AFTER guard (we're truly at end), and reset currentTime
+        if let url = currentFileURL {
+            clearSavedProgress(for: url)
+        }
+        currentTime = 0
+
+        // Safety Guard: prevent rapid-fire infinite auto-next loops
         let now = ProcessInfo.processInfo.systemUptime
         lastAutoNextJumpTimes = lastAutoNextJumpTimes.filter { now - $0 < 5.0 }
         lastAutoNextJumpTimes.append(now)
@@ -1511,19 +1515,22 @@ killall lsd >/dev/null 2>&1 || true
             return
         }
 
+        // Capture currentFileURL before openFromPlaylist clears/replaces it
+        let finishedFileURL = currentFileURL
+
         switch loopMode {
         case .singleFile:
             debugLog("[BZPlayer] Loop mode: singleFile")
-            if let currentFileURL {
-                openFromPlaylist(currentFileURL, forceStartAtBeginning: true)
+            if let url = finishedFileURL {
+                openFromPlaylist(url, forceStartAtBeginning: true)
             } else {
                 isPaused = true
             }
         case .playlist:
-            debugLog("[BZPlayer] Loop mode: playlist, currentFileURL: \(String(describing: currentFileURL)), currentIndex: \(currentIndex)")
+            debugLog("[BZPlayer] Loop mode: playlist, currentFileURL: \(String(describing: finishedFileURL)), currentIndex: \(currentIndex)")
             // Use path comparison to find current index, as URL instances may differ
             let current: Int
-            if let currentURL = currentFileURL {
+            if let currentURL = finishedFileURL {
                 current = playlist.firstIndex { $0.path == currentURL.path } ?? currentIndex
             } else {
                 current = currentIndex
