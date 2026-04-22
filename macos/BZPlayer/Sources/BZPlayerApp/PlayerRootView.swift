@@ -192,28 +192,43 @@ struct PlayerRootView: View {
                 .focusable(false)
             }
 
-            ScrollView(.vertical, showsIndicators: true) {
-                LazyVStack(alignment: .leading, spacing: 4) {
-                    ForEach(Array(viewModel.playlist.enumerated()), id: \.offset) { index, url in
-                        HStack {
-                            Text(url.lastPathComponent)
-                                .lineLimit(1)
-                            Spacer()
-                            if index == viewModel.currentIndex {
-                                Image(systemName: "play.fill")
+            ScrollViewReader { scrollProxy in
+                ScrollView(.vertical, showsIndicators: true) {
+                    LazyVStack(alignment: .leading, spacing: 4) {
+                        ForEach(Array(viewModel.playlist.enumerated()), id: \.offset) { index, url in
+                            HStack {
+                                Text(url.lastPathComponent)
+                                    .lineLimit(1)
+                                Spacer()
+                                if index == viewModel.currentIndex {
+                                    Image(systemName: "play.fill")
+                                }
+                            }
+                            .font(.system(size: 13))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 6)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(index == viewModel.currentIndex ? Color.blue.opacity(0.35) : Color.clear)
+                            .cornerRadius(6)
+                            .contentShape(Rectangle())
+                            .id(index)
+                            .onTapGesture {
+                                viewModel.selectPlaylistItem(index)
                             }
                         }
-                        .font(.system(size: 13))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 6)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(index == viewModel.currentIndex ? Color.blue.opacity(0.35) : Color.clear)
-                        .cornerRadius(6)
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            viewModel.selectPlaylistItem(index)
-                        }
+                    }
+                }
+                .task(id: viewModel.currentIndex) {
+                    // Scroll immediately when current index changes
+                    withAnimation(.easeOut(duration: 0.25)) {
+                        scrollProxy.scrollTo(viewModel.currentIndex, anchor: .center)
+                    }
+                }
+                .onAppear {
+                    // Scroll immediately when playlist panel starts appearing
+                    withAnimation(.easeOut(duration: 0.25)) {
+                        scrollProxy.scrollTo(viewModel.currentIndex, anchor: .center)
                     }
                 }
             }

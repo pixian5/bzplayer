@@ -991,16 +991,19 @@ killall lsd >/dev/null 2>&1 || true
             // Schedule another check after switching backend
             schedulePlaybackFailureCheck(for: url, backend: newBackend, resumeAt: resumeAt)
         } else {
-            // Both backends failed, show error and pause loop
+            // Both backends failed, show error and file info
             let errorMsg = "无法播放文件：\(url.lastPathComponent)\n两个播放内核都无法解码此文件。"
             print("[BZPlayer] \(errorMsg)")
             playbackError = errorMsg
 
-            // Pause loop mode to prevent infinite error loop
+            // Stop auto-advance and show file info
             if loopMode != .none {
-                print("[BZPlayer] Disabling loop mode due to playback failure")
+                print("[BZPlayer] Stopping playback sequence due to unplayable file")
                 loopMode = .none
             }
+
+            // Show file info panel
+            showFileInfo()
         }
     }
 
@@ -1140,7 +1143,7 @@ killall lsd >/dev/null 2>&1 || true
         return nil
     }
 
-    static let appVersion = 1
+    static let appVersion = 2
 
     private func updateWindowTitle(_ title: String) {
         windowTitle = "\(title) (\(Self.appVersion))"
@@ -1487,12 +1490,18 @@ killall lsd >/dev/null 2>&1 || true
         // Use snapshotTime (captured before any reset) so that currentTime=0 races don't break detection.
         let timeDiff = abs(snapshotTime - effectiveDuration)
         let progressPercent = effectiveDuration > 0 ? snapshotTime / effectiveDuration : 0
-        // isNearEnd: either within 5 seconds of end, OR past 90% of duration, OR duration is unknown (0)
-        let isNearEnd = effectiveDuration == 0 || (timeDiff < 5.0 || progressPercent >= 0.9)
+        // isNearEnd: either within 5 seconds of end, OR past 90% of duration
+        // NOTE: effectiveDuration must be > 0, otherwise it's likely a playback failure
+        let isNearEnd = effectiveDuration > 0 && (timeDiff < 5.0 || progressPercent >= 0.9)
 
         debugLog("[BZPlayer] isNearEnd check - duration: \(effectiveDuration), snapshotTime: \(snapshotTime), timeDiff: \(timeDiff), progressPercent: \(progressPercent), result: \(isNearEnd)")
         guard isNearEnd else {
-            debugLog("[BZPlayer] Ignoring spurious playback-finished notification")
+            debugLog("[BZPlayer] Ignoring playback-finished notification (not near end or invalid duration)")
+            // If duration is 0, this might be a playback failure - don't auto-advance
+            if effectiveDuration == 0 {
+                debugLog("[BZPlayer] Duration is 0, treating as playback failure - stopping auto-advance")
+                isPaused = true
+            }
             return
         }
 
