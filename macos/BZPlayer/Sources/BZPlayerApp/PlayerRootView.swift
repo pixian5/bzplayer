@@ -153,7 +153,7 @@ struct PlayerRootView: View {
                     }
 
                 if !viewModel.hasOpenedFile && viewModel.showRecentFiles && !viewModel.recentFiles.isEmpty {
-                    recentFilesView
+                    recentFilesView(containerWidth: proxy.size.width)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
 
@@ -258,7 +258,7 @@ struct PlayerRootView: View {
         }
     }
 
-    private var recentFilesView: some View {
+    private func recentFilesView(containerWidth: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("最近播放")
                 .font(.system(size: 24, weight: .bold))
@@ -289,7 +289,7 @@ struct PlayerRootView: View {
             }
         }
         .padding(20)
-        .frame(maxWidth: 1200, maxHeight: 400)
+        .frame(width: containerWidth * 0.8, height: 400)
         .background(Color.black.opacity(0.75))
         .cornerRadius(12)
         .zIndex(1)
