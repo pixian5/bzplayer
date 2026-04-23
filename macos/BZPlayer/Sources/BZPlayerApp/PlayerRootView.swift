@@ -261,7 +261,7 @@ struct PlayerRootView: View {
     private var recentFilesView: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("最近播放")
-                .font(.headline)
+                .font(.system(size: 24, weight: .bold))
                 .foregroundStyle(.white)
                 .padding(.bottom, 4)
             
@@ -272,7 +272,7 @@ struct PlayerRootView: View {
                             viewModel.openExternalFiles([URL(fileURLWithPath: path)])
                         } label: {
                             Text(path)
-                                .font(.system(size: 13))
+                                .font(.system(size: 26))
                                 .lineLimit(nil)
                                 .fixedSize(horizontal: false, vertical: true)
                                 .padding(.vertical, 6)
