@@ -38,8 +38,10 @@ struct PlayerRootView: View {
             // Toast 提示
             if viewModel.showToast {
                 Text(viewModel.toastMessage)
-                    .font(.system(size: 14, weight: .medium))
+                    .font(.system(size: 28, weight: .medium))
                     .foregroundColor(.white)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(nil)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 10)
                     .background(Color.black.opacity(0.75))
@@ -271,8 +273,8 @@ struct PlayerRootView: View {
                         } label: {
                             Text(path)
                                 .font(.system(size: 13))
-                                .lineLimit(1)
-                                .truncationMode(.middle)
+                                .lineLimit(nil)
+                                .fixedSize(horizontal: false, vertical: true)
                                 .padding(.vertical, 6)
                                 .padding(.horizontal, 8)
                                 .frame(maxWidth: .infinity, alignment: .leading)
