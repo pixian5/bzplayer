@@ -919,6 +919,7 @@ killall lsd >/dev/null 2>&1 || true
         currentVideoSize = estimateVideoSize(for: url)
         currentNominalFPS = estimateFPS(for: url)
         updateWindowTitle(url.lastPathComponent)
+        showToastMessage(url.lastPathComponent)
         // Only apply window behavior on first file open (isFirstOpen = true means no file was playing before).
         // For videoSize/fitLargest modes, always adjust window to match video content.
         // For maximized/fullscreen/rememberLast, only adjust on first open to avoid resetting the window

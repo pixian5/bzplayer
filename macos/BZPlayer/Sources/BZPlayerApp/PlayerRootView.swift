@@ -109,6 +109,11 @@ struct PlayerRootView: View {
         .onReceive(viewModel.$duration) { _ in
             syncControlsVisibilityWithPlaybackState()
         }
+        .onReceive(viewModel.$openedFilePath) { _ in
+            if !shouldPinControlsVisible {
+                resetMouseIdleTimer()
+            }
+        }
     }
 
     private var playerArea: some View {
@@ -301,8 +306,6 @@ struct PlayerRootView: View {
                 }
 
                 Text(String(format: "当前：%.2fx", viewModel.speed))
-                Text(viewModel.syncText)
-                    .foregroundStyle(viewModel.syncText.contains("稳定") ? .green : .orange)
 
                 Button {
                     viewModel.toggleMute()
@@ -409,7 +412,7 @@ struct PlayerRootView: View {
         hideWorkItem = nil
     }
 
-    // MARK: - 鼠标 2s 空闲隐藏
+    // MARK: - 鼠标 1s 空闲隐藏
 
     private func resetMouseIdleTimer() {
         mouseIdleTimer?.cancel()
@@ -421,7 +424,7 @@ struct PlayerRootView: View {
             }
         }
         mouseIdleTimer = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: work)
     }
 
     private func cancelMouseIdleTimer() {
