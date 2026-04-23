@@ -78,12 +78,27 @@ private final class FileInfoPanel: NSPanel {
 private struct FileInfoPanelView: View {
     let content: String
     var body: some View {
-        ScrollView {
-            Text(content)
-                .font(.system(size: 13, design: .monospaced))
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(16)
+        VStack(spacing: 0) {
+            HStack {
+                Spacer()
+                Button {
+                    let pasteboard = NSPasteboard.general
+                    pasteboard.clearContents()
+                    pasteboard.setString(content, forType: .string)
+                } label: {
+                    Label("复制全部", systemImage: "doc.on.doc")
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+                .padding(.bottom, 4)
+            }
+            ScrollView {
+                Text(content)
+                    .font(.system(size: 13, design: .monospaced))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(16)
+            }
         }
     }
 }

@@ -1091,7 +1091,7 @@ killall lsd >/dev/null 2>&1 || true
         ]
         
         // Certain codec tags/variants are known to cause issues with AVPlayer despite being H.264
-        let nativeUnsafeVideoTags: Set<String> = ["1cva", "avc2", "avc3", "avc4", "hev1", "hvc1", "hev1", "vp09", "vp9"]
+        let nativeUnsafeVideoTags: Set<String> = ["avc2", "avc3", "avc4", "hev1", "hvc1", "vp09", "vp9"]
 
         if ffprobeInfo.videoStreams.contains(where: { stream in
             if !nativeSafeVideoCodecs.contains(stream.codecName) { return true }
@@ -1102,7 +1102,7 @@ killall lsd >/dev/null 2>&1 || true
         }
 
         let nativeSafeAudioCodecs: Set<String> = [
-            "aac", "ac3", "eac3", "alac", "mp3",
+            "aac", "ac3", "eac3", "alac", "mp3", "opus",
             "pcm_s16le", "pcm_s24le", "pcm_s32le", "pcm_f32le", "pcm_f64le", "pcm_u8"
         ]
 
@@ -1233,8 +1233,8 @@ killall lsd >/dev/null 2>&1 || true
     private func showToastMessage(_ message: String) {
         toastMessage = message
         showToast = true
-        // 1.5秒后自动隐藏
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+        // 2秒后自动隐藏
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
             self?.showToast = false
         }
     }
