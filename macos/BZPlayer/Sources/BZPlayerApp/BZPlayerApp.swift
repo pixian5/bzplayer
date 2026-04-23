@@ -545,6 +545,16 @@ private struct SettingsView: View {
                     Text("关闭后，新打开的文件会直接在当前窗口播放，不另开新窗口。")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
+                        
+                    Toggle("显示最近播放", isOn: Binding(
+                        get: { viewModel.showRecentFiles },
+                        set: { viewModel.setShowRecentFiles($0) }
+                    ))
+                    .toggleStyle(.checkbox)
+
+                    Text("开启后，当没有播放任何文件时，将显示最近播放的文件列表。")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
 
                     HStack {
                         Text("音频延迟步进")

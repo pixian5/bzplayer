@@ -116,6 +116,8 @@ final class PlayerViewModel: NSObject, ObservableObject {
     @Published var audioDelayStepMs: Double
     @Published var toastMessage: String = ""
     @Published var showToast: Bool = false
+    @Published var showRecentFiles: Bool = true
+    @Published var recentFiles: [String] = []
 
     var onShowFileInfo: ((String) -> Void)?
 
@@ -168,9 +170,11 @@ final class PlayerViewModel: NSObject, ObservableObject {
     private static let lastWindowFrameKey = "settings.lastWindowFrame"
     private static let volumeKey = "settings.volume"
     private static let isMutedKey = "settings.isMuted"
-    static let allowMultipleWindowsKey = "settings.allowMultipleWindows"
+    private static let allowMultipleWindowsKey = "settings.allowMultipleWindows"
     private static let audioDelayMsKey = "settings.audioDelayMs"
     private static let audioDelayStepMsKey = "settings.audioDelayStepMs"
+    private static let showRecentFilesKey = "settings.showRecentFiles"
+    private static let recentFilesKey = "settings.recentFiles"
 
     override init() {
         let storedSeekSeconds = UserDefaults.standard.object(forKey: Self.shortcutSeekSecondsKey) as? Double
@@ -199,6 +203,8 @@ final class PlayerViewModel: NSObject, ObservableObject {
         isMuted = UserDefaults.standard.bool(forKey: Self.isMutedKey)
         audioDelayMs = UserDefaults.standard.object(forKey: Self.audioDelayMsKey) as? Double ?? 0
         audioDelayStepMs = UserDefaults.standard.object(forKey: Self.audioDelayStepMsKey) as? Double ?? 50
+        showRecentFiles = UserDefaults.standard.object(forKey: Self.showRecentFilesKey) as? Bool ?? true
+        recentFiles = UserDefaults.standard.stringArray(forKey: Self.recentFilesKey) ?? []
         super.init()
 
         // Apply volume and mute settings to mpv player
@@ -460,6 +466,21 @@ final class PlayerViewModel: NSObject, ObservableObject {
         UserDefaults.standard.set(value, forKey: Self.allowMultipleWindowsKey)
     }
 
+    func setShowRecentFiles(_ value: Bool) {
+        showRecentFiles = value
+        UserDefaults.standard.set(value, forKey: Self.showRecentFilesKey)
+    }
+
+    private func addRecentFile(_ url: URL) {
+        let path = url.path
+        recentFiles.removeAll { $0 == path }
+        recentFiles.insert(path, at: 0)
+        if recentFiles.count > 10 {
+            recentFiles = Array(recentFiles.prefix(10))
+        }
+        UserDefaults.standard.set(recentFiles, forKey: Self.recentFilesKey)
+    }
+
     func adjustAudioDelay(by deltaMs: Double) {
         audioDelayMs += deltaMs
         UserDefaults.standard.set(audioDelayMs, forKey: Self.audioDelayMsKey)
@@ -506,6 +527,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         let storedWindowOpenBehavior = UserDefaults.standard.string(forKey: Self.windowOpenBehaviorKey).flatMap(WindowOpenBehavior.init(rawValue:))
         let storedAllowMultipleWindows = UserDefaults.standard.object(forKey: Self.allowMultipleWindowsKey) as? Bool
         let storedAudioDelayStepMs = UserDefaults.standard.object(forKey: Self.audioDelayStepMsKey) as? Double
+        let storedShowRecentFiles = UserDefaults.standard.object(forKey: Self.showRecentFilesKey) as? Bool
 
         shortcutSeekSeconds = max(storedSeekSeconds ?? shortcutSeekSeconds, 0.1)
         shortcutFrameStepCount = max(storedFrameStepCount ?? shortcutFrameStepCount, 1)
@@ -514,6 +536,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         windowOpenBehavior = storedWindowOpenBehavior ?? windowOpenBehavior
         allowMultipleWindows = storedAllowMultipleWindows ?? allowMultipleWindows
         audioDelayStepMs = max(storedAudioDelayStepMs ?? audioDelayStepMs, 1)
+        showRecentFiles = storedShowRecentFiles ?? showRecentFiles
     }
 
     func togglePlaylistOrder() {
@@ -913,6 +936,7 @@ killall lsd >/dev/null 2>&1 || true
         let isFirstOpen = currentFileURL == nil
         currentFileURL = url
         openedFilePath = url.path
+        addRecentFile(url)
         currentIndex = playlist.firstIndex(of: url) ?? -1
         currentTime = 0
         duration = 0

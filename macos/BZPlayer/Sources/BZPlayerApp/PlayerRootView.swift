@@ -150,6 +150,11 @@ struct PlayerRootView: View {
                         }
                     }
 
+                if !viewModel.hasOpenedFile && viewModel.showRecentFiles && !viewModel.recentFiles.isEmpty {
+                    recentFilesView
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+
                 if shouldShowPlaylist && !viewModel.playlist.isEmpty {
                     playlistPanel
                         .padding(.trailing, 8)
@@ -249,6 +254,43 @@ struct PlayerRootView: View {
                 shouldShowPlaylist = true
             }
         }
+    }
+
+    private var recentFilesView: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("最近播放")
+                .font(.headline)
+                .foregroundStyle(.white)
+                .padding(.bottom, 4)
+            
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 4) {
+                    ForEach(viewModel.recentFiles, id: \.self) { path in
+                        Button {
+                            viewModel.openExternalFiles([URL(fileURLWithPath: path)])
+                        } label: {
+                            Text(path)
+                                .font(.system(size: 13))
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .padding(.vertical, 6)
+                                .padding(.horizontal, 8)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.white)
+                        .background(Color.white.opacity(0.1))
+                        .cornerRadius(6)
+                    }
+                }
+            }
+        }
+        .padding(20)
+        .frame(maxWidth: 600, maxHeight: 400)
+        .background(Color.black.opacity(0.75))
+        .cornerRadius(12)
+        .zIndex(1)
     }
 
     private var controlBar: some View {
