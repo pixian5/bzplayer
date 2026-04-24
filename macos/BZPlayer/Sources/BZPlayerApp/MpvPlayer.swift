@@ -460,9 +460,9 @@ final class MpvPlayer: NSObject {
     private func applySubtitleBackgroundStyle() {
         let alphaDecimal = 255 - Int((Double(subtitleBackgroundOpacityPercent) / 100.0) * 255.0)
         let alphaHex = String(format: "%02X", max(0, min(255, alphaDecimal)))
-        let style = "BorderStyle=3,BackColour=&H\(alphaHex)000000,Outline=0,Shadow=0"
+        let style = "BorderStyle=3,BackColour=&H\(alphaHex)000000,Outline=0,Shadow=0,MarginV=28"
         setStringProperty("sub-ass-force-style", style)
-        setFlagProperty("sub-ass-override", true)
+        setStringProperty("sub-ass-override", "force")
     }
 }
 
