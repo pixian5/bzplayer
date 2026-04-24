@@ -20,11 +20,14 @@ struct PlayerContainerView: NSViewRepresentable {
         view.clickView.onRequestFileInfo = {
             viewModel.showFileInfo()
         }
+        view.clickView.onBuildSubtitleMenuEntries = {
+            viewModel.subtitleMenuEntries()
+        }
+        view.clickView.onSelectSubtitleByPath = { path in
+            viewModel.selectSubtitle(path: path)
+        }
         view.clickView.onKeyEvent = { [weak view] event in
             viewModel.handleKeyEvent(event, in: view?.window)
-        }
-        view.clickView.onSubtitleMenuRequest = { [weak viewModel] in
-            viewModel?.buildSubtitleMenuItems() ?? []
         }
         return view
     }
@@ -180,8 +183,9 @@ final class ClickCaptureView: NSView {
     var onSingleClick: (() -> Void)?
     var onDoubleClick: (() -> Void)?
     var onRequestFileInfo: (() -> Void)?
+    var onBuildSubtitleMenuEntries: (() -> [PlayerViewModel.SubtitleMenuEntry])?
+    var onSelectSubtitleByPath: ((String?) -> Void)?
     var onKeyEvent: ((NSEvent) -> Bool)?
-    var onSubtitleMenuRequest: (() -> [NSMenuItem])?
     private var pendingSingleClick: DispatchWorkItem?
 
     override init(frame frameRect: NSRect) {
@@ -237,17 +241,24 @@ final class ClickCaptureView: NSView {
     override func menu(for event: NSEvent) -> NSMenu? {
         let menu = NSMenu(title: "菜单")
 
-        // Subtitle menu items
-        if let subtitleItems = onSubtitleMenuRequest?(), !subtitleItems.isEmpty {
-            let subtitleMenuItem = NSMenuItem(title: "字幕", action: nil, keyEquivalent: "")
-            let submenu = NSMenu(title: "字幕")
-            for item in subtitleItems {
-                submenu.addItem(item)
+        let subtitleMenuItem = NSMenuItem(title: "字幕", action: nil, keyEquivalent: "")
+        let subtitleMenu = NSMenu(title: "字幕")
+        let subtitleEntries = onBuildSubtitleMenuEntries?() ?? []
+        if subtitleEntries.isEmpty {
+            let emptyItem = NSMenuItem(title: "无匹配字幕", action: nil, keyEquivalent: "")
+            emptyItem.isEnabled = false
+            subtitleMenu.addItem(emptyItem)
+        } else {
+            for entry in subtitleEntries {
+                let item = NSMenuItem(title: entry.title, action: #selector(handleSubtitleSelection(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = entry.path ?? NSNull()
+                item.state = entry.isSelected ? .on : .off
+                subtitleMenu.addItem(item)
             }
-            subtitleMenuItem.submenu = submenu
-            menu.addItem(subtitleMenuItem)
-            menu.addItem(NSMenuItem.separator())
         }
+        subtitleMenuItem.submenu = subtitleMenu
+        menu.addItem(subtitleMenuItem)
 
         let fileInfoItem = NSMenuItem(title: "文件信息", action: #selector(handleFileInfo), keyEquivalent: "")
         fileInfoItem.target = self
@@ -258,5 +269,14 @@ final class ClickCaptureView: NSView {
     @objc
     private func handleFileInfo() {
         onRequestFileInfo?()
+    }
+
+    @objc
+    private func handleSubtitleSelection(_ sender: NSMenuItem) {
+        if sender.representedObject is NSNull {
+            onSelectSubtitleByPath?(nil)
+            return
+        }
+        onSelectSubtitleByPath?(sender.representedObject as? String)
     }
 }

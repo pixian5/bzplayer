@@ -589,6 +589,27 @@ private struct SettingsView: View {
                     Text("音频延迟步进决定每次按音频步进快捷键时延迟的增减量，每个文件的延迟值独立记忆。")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
+
+                    HStack {
+                        Text("字幕背景透明度")
+                            .frame(width: 150, alignment: .leading)
+                        Picker("字幕背景透明度", selection: Binding(
+                            get: { viewModel.subtitleBackgroundOpacity },
+                            set: { viewModel.setSubtitleBackgroundOpacity($0) }
+                        )) {
+                            Text("0").tag(0)
+                            Text("25").tag(25)
+                            Text("50").tag(50)
+                            Text("75").tag(75)
+                            Text("100").tag(100)
+                        }
+                        .labelsHidden()
+                        .frame(width: 120)
+                    }
+
+                    Text("0 表示背景全透明，100 表示背景完全不透明。")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
                 }
             }
         }

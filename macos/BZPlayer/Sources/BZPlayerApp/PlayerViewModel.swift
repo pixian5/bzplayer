@@ -25,6 +25,12 @@ private func debugLog(_ msg: String) {
 
 @MainActor
 final class PlayerViewModel: NSObject, ObservableObject {
+    struct SubtitleMenuEntry {
+        let title: String
+        let path: String?
+        let isSelected: Bool
+    }
+
     enum PlaybackBackend: String {
         case native
         case mpv
@@ -118,12 +124,9 @@ final class PlayerViewModel: NSObject, ObservableObject {
     @Published var showToast: Bool = false
     @Published var showRecentFiles: Bool = true
     @Published var recentFiles: [String] = []
-    @Published var subtitleEnabled: Bool = true
-    @Published var currentSubtitleURL: URL?
-    @Published var availableSubtitles: [URL] = []
+    @Published var subtitleBackgroundOpacity: Int
 
     var onShowFileInfo: ((String) -> Void)?
-    var onSubtitleMenuRequest: (() -> [NSMenuItem])?
 
     let mpvPlayer = MpvPlayer()
     let nativePlayer = AVPlayer()
@@ -160,6 +163,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
     private var lastStallPosition: Double = 0
     private var attemptedBackendSwitch = false
     private var playbackFailureTimer: Timer?
+    private var selectedSubtitlePath: String?
 
     private static let shortcutSeekSecondsKey = "settings.shortcutSeekSeconds"
     private static let shortcutFrameStepCountKey = "settings.shortcutFrameStepCount"
@@ -179,6 +183,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
     private static let audioDelayStepMsKey = "settings.audioDelayStepMs"
     private static let showRecentFilesKey = "settings.showRecentFiles"
     private static let recentFilesKey = "settings.recentFiles"
+    private static let subtitleBackgroundOpacityKey = "settings.subtitleBackgroundOpacity"
 
     override init() {
         let storedSeekSeconds = UserDefaults.standard.object(forKey: Self.shortcutSeekSecondsKey) as? Double
@@ -209,6 +214,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         audioDelayStepMs = UserDefaults.standard.object(forKey: Self.audioDelayStepMsKey) as? Double ?? 50
         showRecentFiles = UserDefaults.standard.object(forKey: Self.showRecentFilesKey) as? Bool ?? true
         recentFiles = UserDefaults.standard.stringArray(forKey: Self.recentFilesKey) ?? []
+        subtitleBackgroundOpacity = Self.clampSubtitleOpacity(UserDefaults.standard.object(forKey: Self.subtitleBackgroundOpacityKey) as? Int ?? 0)
         super.init()
 
         // Apply volume and mute settings to mpv player
@@ -230,6 +236,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         bindMpvCallbacks()
         bindNativePlayer()
         selectBackend(.native)
+        mpvPlayer.setSubtitleBackgroundOpacity(subtitleBackgroundOpacity)
     }
 
     deinit {
@@ -475,6 +482,64 @@ final class PlayerViewModel: NSObject, ObservableObject {
         UserDefaults.standard.set(value, forKey: Self.showRecentFilesKey)
     }
 
+    func setSubtitleBackgroundOpacity(_ value: Int) {
+        let normalized = Self.clampSubtitleOpacity(value)
+        subtitleBackgroundOpacity = normalized
+        UserDefaults.standard.set(normalized, forKey: Self.subtitleBackgroundOpacityKey)
+        mpvPlayer.setSubtitleBackgroundOpacity(normalized)
+    }
+
+    func subtitleMenuEntries() -> [SubtitleMenuEntry] {
+        let available = discoverSubtitleFilesForCurrentMedia()
+        var entries: [SubtitleMenuEntry] = [
+            SubtitleMenuEntry(title: "关闭字幕", path: nil, isSelected: selectedSubtitlePath == nil)
+        ]
+
+        entries.append(contentsOf: available.map { url in
+            SubtitleMenuEntry(
+                title: url.lastPathComponent,
+                path: url.path,
+                isSelected: selectedSubtitlePath == url.path
+            )
+        })
+        return entries
+    }
+
+    func selectSubtitle(path: String?) {
+        guard let mediaURL = currentFileURL else { return }
+
+        if path == nil {
+            selectedSubtitlePath = nil
+            mpvPlayer.disableSubtitle()
+            showToastMessage("字幕：已关闭")
+            return
+        }
+
+        guard let path, FileManager.default.fileExists(atPath: path) else { return }
+        selectedSubtitlePath = path
+
+        let resumeAt = currentTime > 0 && currentTime < duration ? currentTime : nil
+        let wasPaused = isPaused
+        if playbackBackend != .mpv {
+            selectBackend(.mpv)
+            mpvPlayer.setHardwareDecodingEnabled(false)
+            mpvPlayer.setSpeed(speed)
+            mpvPlayer.load(url: mediaURL, resumeAt: resumeAt)
+            if !wasPaused {
+                mpvPlayer.play()
+                isPaused = false
+            } else {
+                mpvPlayer.pause()
+                isPaused = true
+            }
+            applyAudioDelay()
+        }
+
+        mpvPlayer.setExternalSubtitle(url: URL(fileURLWithPath: path))
+        mpvPlayer.setSubtitleBackgroundOpacity(subtitleBackgroundOpacity)
+        showToastMessage("字幕：\((path as NSString).lastPathComponent)")
+    }
+
     private func addRecentFile(_ url: URL) {
         let path = url.path
         recentFiles.removeAll { $0 == path }
@@ -532,6 +597,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         let storedAllowMultipleWindows = UserDefaults.standard.object(forKey: Self.allowMultipleWindowsKey) as? Bool
         let storedAudioDelayStepMs = UserDefaults.standard.object(forKey: Self.audioDelayStepMsKey) as? Double
         let storedShowRecentFiles = UserDefaults.standard.object(forKey: Self.showRecentFilesKey) as? Bool
+        let storedSubtitleBackgroundOpacity = UserDefaults.standard.object(forKey: Self.subtitleBackgroundOpacityKey) as? Int
 
         shortcutSeekSeconds = max(storedSeekSeconds ?? shortcutSeekSeconds, 0.1)
         shortcutFrameStepCount = max(storedFrameStepCount ?? shortcutFrameStepCount, 1)
@@ -541,6 +607,8 @@ final class PlayerViewModel: NSObject, ObservableObject {
         allowMultipleWindows = storedAllowMultipleWindows ?? allowMultipleWindows
         audioDelayStepMs = max(storedAudioDelayStepMs ?? audioDelayStepMs, 1)
         showRecentFiles = storedShowRecentFiles ?? showRecentFiles
+        subtitleBackgroundOpacity = Self.clampSubtitleOpacity(storedSubtitleBackgroundOpacity ?? subtitleBackgroundOpacity)
+        mpvPlayer.setSubtitleBackgroundOpacity(subtitleBackgroundOpacity)
     }
 
     func togglePlaylistOrder() {
@@ -827,6 +895,10 @@ killall lsd >/dev/null 2>&1 || true
         mpvPlayer.onFileLoaded = { [weak self] in
             guard let self, self.playbackBackend == .mpv else { return }
             self.syncText = "播放链路：mpv/libmpv"
+            self.mpvPlayer.setSubtitleBackgroundOpacity(self.subtitleBackgroundOpacity)
+            if let path = self.selectedSubtitlePath {
+                self.mpvPlayer.setExternalSubtitle(url: URL(fileURLWithPath: path))
+            }
         }
         mpvPlayer.onStatusChanged = { [weak self] status in
             guard let self, self.playbackBackend == .mpv else { return }
@@ -914,6 +986,10 @@ killall lsd >/dev/null 2>&1 || true
         case .mpv:
             playbackEngineStatus = "播放引擎：mpv/libmpv"
             syncText = "播放链路：mpv/libmpv"
+            mpvPlayer.setSubtitleBackgroundOpacity(subtitleBackgroundOpacity)
+            if let selectedSubtitlePath {
+                mpvPlayer.setExternalSubtitle(url: URL(fileURLWithPath: selectedSubtitlePath))
+            }
         }
     }
 
@@ -946,6 +1022,8 @@ killall lsd >/dev/null 2>&1 || true
         duration = 0
         currentVideoSize = estimateVideoSize(for: url)
         currentNominalFPS = estimateFPS(for: url)
+        let discoveredSubtitles = discoverSubtitleFiles(for: url)
+        selectedSubtitlePath = pickDefaultSubtitle(for: url, from: discoveredSubtitles)?.path
         updateWindowTitle(url.lastPathComponent)
         showToastMessage(url.lastPathComponent)
         // Only apply window behavior on first file open (isFirstOpen = true means no file was playing before).
@@ -967,9 +1045,6 @@ killall lsd >/dev/null 2>&1 || true
             audioDelayMs = UserDefaults.standard.object(forKey: Self.audioDelayMsKey) as? Double ?? 0
         }
 
-        // 搜索字幕
-        searchSubtitles(for: url)
-
         let resumeTime = forceStartAtBeginning ? nil : loadSavedProgress(for: url)
         debugLog("[BZPlayer] resumeTime: \(resumeTime ?? -1)")
         let ffprobeInfo = probeMediaInfo(url: url)
@@ -990,111 +1065,6 @@ killall lsd >/dev/null 2>&1 || true
 
         // Schedule a failure check after 5 seconds
         schedulePlaybackFailureCheck(for: url, backend: backend, resumeAt: resumeTime)
-    }
-
-    private func searchSubtitles(for videoURL: URL) {
-        let fm = FileManager.default
-        let folder = videoURL.deletingLastPathComponent()
-        let baseName = videoURL.deletingPathExtension().lastPathComponent
-        let subtitleExts = ["srt", "ass", "ssa", "sub"]
-
-        availableSubtitles = []
-        currentSubtitleURL = nil
-
-        guard let files = try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else {
-            return
-        }
-
-        for file in files {
-            let fileBaseName = file.deletingPathExtension().lastPathComponent
-            // Check if file starts with video base name and has subtitle extension
-            if fileBaseName.hasPrefix(baseName) && subtitleExts.contains(file.pathExtension.lowercased()) {
-                availableSubtitles.append(file)
-            }
-        }
-
-        // Auto-load first subtitle with mpv
-        if subtitleEnabled && !availableSubtitles.isEmpty {
-            selectSubtitle(availableSubtitles[0])
-        }
-
-        debugLog("[BZPlayer] Found \(availableSubtitles.count) subtitles for \(baseName)")
-    }
-
-    func selectSubtitle(_ url: URL) {
-        currentSubtitleURL = url
-        // Load subtitle via mpv
-        if playbackBackend == .mpv {
-            mpvPlayer.loadExternalSubtitle(url)
-        }
-        debugLog("[BZPlayer] Selected subtitle: \(url.lastPathComponent)")
-    }
-
-    func disableSubtitle() {
-        currentSubtitleURL = nil
-        // Disable subtitle via mpv
-        if playbackBackend == .mpv {
-            mpvPlayer.setStringProperty("sid", "no")
-        }
-    }
-
-    func toggleSubtitleEnabled() {
-        subtitleEnabled.toggle()
-        if !subtitleEnabled {
-            disableSubtitle()
-        } else if !availableSubtitles.isEmpty {
-            selectSubtitle(availableSubtitles[0])
-        }
-    }
-
-    func buildSubtitleMenuItems() -> [NSMenuItem] {
-        var items: [NSMenuItem] = []
-
-        // Subtitle on/off toggle
-        let toggleItem = NSMenuItem(title: subtitleEnabled ? "隐藏字幕" : "显示字幕", action: #selector(toggleSubtitleEnabledAction), keyEquivalent: "")
-        toggleItem.target = self
-        items.append(toggleItem)
-
-        items.append(NSMenuItem.separator())
-
-        // Available subtitles
-        if availableSubtitles.isEmpty {
-            let noSubItem = NSMenuItem(title: "无字幕", action: nil, keyEquivalent: "")
-            noSubItem.isEnabled = false
-            items.append(noSubItem)
-        } else {
-            let offItem = NSMenuItem(title: "关闭字幕", action: #selector(selectSubtitleItem(_:)), keyEquivalent: "")
-            offItem.target = self
-            offItem.tag = -1
-            if currentSubtitleURL == nil {
-                offItem.state = .on
-            }
-            items.append(offItem)
-
-            for (index, subURL) in availableSubtitles.enumerated() {
-                let item = NSMenuItem(title: subURL.lastPathComponent, action: #selector(selectSubtitleItem(_:)), keyEquivalent: "")
-                item.target = self
-                item.tag = index
-                if currentSubtitleURL == subURL {
-                    item.state = .on
-                }
-                items.append(item)
-            }
-        }
-
-        return items
-    }
-
-    @objc private func toggleSubtitleEnabledAction() {
-        toggleSubtitleEnabled()
-    }
-
-    @objc private func selectSubtitleItem(_ sender: NSMenuItem) {
-        if sender.tag == -1 {
-            disableSubtitle()
-        } else if sender.tag >= 0 && sender.tag < availableSubtitles.count {
-            selectSubtitle(availableSubtitles[sender.tag])
-        }
     }
 
     private func schedulePlaybackFailureCheck(for url: URL, backend: PlaybackBackend, resumeAt: Double?) {
@@ -1709,6 +1679,70 @@ killall lsd >/dev/null 2>&1 || true
             debugLog("[BZPlayer] Loop mode: none, pausing")
             isPaused = true
         }
+    }
+}
+
+private extension PlayerViewModel {
+    static func clampSubtitleOpacity(_ value: Int) -> Int {
+        let candidates = [0, 25, 50, 75, 100]
+        if candidates.contains(value) {
+            return value
+        }
+        if value <= 0 { return 0 }
+        if value >= 100 { return 100 }
+        return candidates.min(by: { abs($0 - value) < abs($1 - value) }) ?? 0
+    }
+
+    func discoverSubtitleFilesForCurrentMedia() -> [URL] {
+        guard let mediaURL = currentFileURL else { return [] }
+        return discoverSubtitleFiles(for: mediaURL)
+    }
+
+    func discoverSubtitleFiles(for mediaURL: URL) -> [URL] {
+        let folderURL = mediaURL.deletingLastPathComponent()
+        let mediaBase = mediaURL.deletingPathExtension().lastPathComponent.lowercased()
+        let subtitleExtensions: Set<String> = ["srt", "ass", "ssa", "vtt", "sub", "idx"]
+
+        let files = (try? FileManager.default.contentsOfDirectory(
+            at: folderURL,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        )) ?? []
+
+        return files.filter { url in
+            let ext = url.pathExtension.lowercased()
+            guard subtitleExtensions.contains(ext) else { return false }
+            let stem = url.deletingPathExtension().lastPathComponent.lowercased()
+            return stem.hasPrefix(mediaBase)
+        }
+        .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+    }
+
+    func pickDefaultSubtitle(for mediaURL: URL, from candidates: [URL]) -> URL? {
+        let mediaBase = mediaURL.deletingPathExtension().lastPathComponent.lowercased()
+        let exactMatches = candidates.filter {
+            $0.deletingPathExtension().lastPathComponent.lowercased() == mediaBase
+        }
+        if exactMatches.isEmpty { return nil }
+
+        let extPriority: [String: Int] = [
+            "srt": 0,
+            "ass": 1,
+            "ssa": 2,
+            "vtt": 3,
+            "sub": 4,
+            "idx": 5
+        ]
+        return exactMatches.sorted {
+            let leftExt = $0.pathExtension.lowercased()
+            let rightExt = $1.pathExtension.lowercased()
+            let leftOrder = extPriority[leftExt] ?? Int.max
+            let rightOrder = extPriority[rightExt] ?? Int.max
+            if leftOrder == rightOrder {
+                return $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending
+            }
+            return leftOrder < rightOrder
+        }.first
     }
 }
 

@@ -28,6 +28,8 @@ final class MpvPlayer: NSObject {
     private var displayFPS: Double = 60
     private var renderWarmupUntil: CFTimeInterval = 0
     private var preferredHwdecMode = "no"
+    private var subtitleBackgroundOpacityPercent: Int = 0
+    private var selectedSubtitleURL: URL?
 
     var playerHandle: OpaquePointer? {
         return handle
@@ -139,6 +141,23 @@ final class MpvPlayer: NSObject {
         setStringProperty("hwdec", mode)
     }
 
+    func setSubtitleBackgroundOpacity(_ percent: Int) {
+        subtitleBackgroundOpacityPercent = max(0, min(100, percent))
+        applySubtitleBackgroundStyle()
+    }
+
+    func setExternalSubtitle(url: URL) {
+        selectedSubtitleURL = url
+        guard let handle else { return }
+        command(["sub-add", url.path, "select"], on: handle)
+        setStringProperty("sid", "auto")
+    }
+
+    func disableSubtitle() {
+        selectedSubtitleURL = nil
+        setStringProperty("sid", "no")
+    }
+
     private func createPlayer() {
         guard let handle = mpv_create() else {
             onStatusChanged?("播放引擎：mpv 创建失败")
@@ -234,6 +253,13 @@ final class MpvPlayer: NSObject {
                 resetSamplingState()
                 armRenderWarmup(duration: 0.35)
                 setDoubleProperty("speed", configuredSpeed)
+                applySubtitleBackgroundStyle()
+                if let selectedSubtitleURL {
+                    command(["sub-add", selectedSubtitleURL.path, "select"], on: handle)
+                    setStringProperty("sid", "auto")
+                } else {
+                    setStringProperty("sid", "no")
+                }
                 if let pendingResumeTime, pendingResumeTime > 0 {
                     setDoubleProperty("time-pos", pendingResumeTime)
                 }
@@ -429,6 +455,14 @@ final class MpvPlayer: NSObject {
         pointers.withUnsafeMutableBufferPointer { buffer in
             _ = mpv_command_async(handle, 0, buffer.baseAddress)
         }
+    }
+
+    private func applySubtitleBackgroundStyle() {
+        let alphaDecimal = 255 - Int((Double(subtitleBackgroundOpacityPercent) / 100.0) * 255.0)
+        let alphaHex = String(format: "%02X", max(0, min(255, alphaDecimal)))
+        let style = "BorderStyle=3,BackColour=&H\(alphaHex)000000,Outline=0,Shadow=0"
+        setStringProperty("sub-ass-force-style", style)
+        setFlagProperty("sub-ass-override", true)
     }
 }
 
