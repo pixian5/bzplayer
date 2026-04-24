@@ -408,6 +408,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         speed = min(max(value, 0.25), 16)
         if let url = currentFileURL {
             saveSpeedForFile(url)
+            debugLog("[BZPlayer] saveSpeedForFile called - url: \(url.lastPathComponent), speed: \(speed)")
         }
         switch playbackBackend {
         case .native:
@@ -1036,6 +1037,9 @@ killall lsd >/dev/null 2>&1 || true
         // 恢复该文件记忆的速度
         if let savedSpeed = loadSpeedForFile(url) {
             speed = savedSpeed
+            debugLog("[BZPlayer] Restored speed for file: \(savedSpeed)")
+        } else {
+            debugLog("[BZPlayer] No saved speed found, keeping current speed: \(speed)")
         }
 
         // 恢复该文件记忆的音频延迟

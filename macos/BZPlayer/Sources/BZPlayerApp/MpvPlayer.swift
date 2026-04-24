@@ -92,7 +92,9 @@ final class MpvPlayer: NSObject {
 
     func pause() {
         isPlaybackActive = false
+        armRenderWarmup(duration: 0.2)
         setFlagProperty("pause", true)
+        requestRender()
     }
 
     func setVolume(_ volume: Double) {
