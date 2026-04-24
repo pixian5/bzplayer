@@ -118,8 +118,12 @@ final class PlayerViewModel: NSObject, ObservableObject {
     @Published var showToast: Bool = false
     @Published var showRecentFiles: Bool = true
     @Published var recentFiles: [String] = []
+    @Published var subtitleEnabled: Bool = true
+    @Published var currentSubtitleURL: URL?
+    @Published var availableSubtitles: [URL] = []
 
     var onShowFileInfo: ((String) -> Void)?
+    var onSubtitleMenuRequest: (() -> [NSMenuItem])?
 
     let mpvPlayer = MpvPlayer()
     let nativePlayer = AVPlayer()
@@ -963,6 +967,9 @@ killall lsd >/dev/null 2>&1 || true
             audioDelayMs = UserDefaults.standard.object(forKey: Self.audioDelayMsKey) as? Double ?? 0
         }
 
+        // 搜索字幕
+        searchSubtitles(for: url)
+
         let resumeTime = forceStartAtBeginning ? nil : loadSavedProgress(for: url)
         debugLog("[BZPlayer] resumeTime: \(resumeTime ?? -1)")
         let ffprobeInfo = probeMediaInfo(url: url)
@@ -983,6 +990,111 @@ killall lsd >/dev/null 2>&1 || true
 
         // Schedule a failure check after 5 seconds
         schedulePlaybackFailureCheck(for: url, backend: backend, resumeAt: resumeTime)
+    }
+
+    private func searchSubtitles(for videoURL: URL) {
+        let fm = FileManager.default
+        let folder = videoURL.deletingLastPathComponent()
+        let baseName = videoURL.deletingPathExtension().lastPathComponent
+        let subtitleExts = ["srt", "ass", "ssa", "sub"]
+
+        availableSubtitles = []
+        currentSubtitleURL = nil
+
+        guard let files = try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else {
+            return
+        }
+
+        for file in files {
+            let fileBaseName = file.deletingPathExtension().lastPathComponent
+            // Check if file starts with video base name and has subtitle extension
+            if fileBaseName.hasPrefix(baseName) && subtitleExts.contains(file.pathExtension.lowercased()) {
+                availableSubtitles.append(file)
+            }
+        }
+
+        // Auto-load first subtitle with mpv
+        if subtitleEnabled && !availableSubtitles.isEmpty {
+            selectSubtitle(availableSubtitles[0])
+        }
+
+        debugLog("[BZPlayer] Found \(availableSubtitles.count) subtitles for \(baseName)")
+    }
+
+    func selectSubtitle(_ url: URL) {
+        currentSubtitleURL = url
+        // Load subtitle via mpv
+        if playbackBackend == .mpv {
+            mpvPlayer.loadExternalSubtitle(url)
+        }
+        debugLog("[BZPlayer] Selected subtitle: \(url.lastPathComponent)")
+    }
+
+    func disableSubtitle() {
+        currentSubtitleURL = nil
+        // Disable subtitle via mpv
+        if playbackBackend == .mpv {
+            mpvPlayer.setStringProperty("sid", "no")
+        }
+    }
+
+    func toggleSubtitleEnabled() {
+        subtitleEnabled.toggle()
+        if !subtitleEnabled {
+            disableSubtitle()
+        } else if !availableSubtitles.isEmpty {
+            selectSubtitle(availableSubtitles[0])
+        }
+    }
+
+    func buildSubtitleMenuItems() -> [NSMenuItem] {
+        var items: [NSMenuItem] = []
+
+        // Subtitle on/off toggle
+        let toggleItem = NSMenuItem(title: subtitleEnabled ? "隐藏字幕" : "显示字幕", action: #selector(toggleSubtitleEnabledAction), keyEquivalent: "")
+        toggleItem.target = self
+        items.append(toggleItem)
+
+        items.append(NSMenuItem.separator())
+
+        // Available subtitles
+        if availableSubtitles.isEmpty {
+            let noSubItem = NSMenuItem(title: "无字幕", action: nil, keyEquivalent: "")
+            noSubItem.isEnabled = false
+            items.append(noSubItem)
+        } else {
+            let offItem = NSMenuItem(title: "关闭字幕", action: #selector(selectSubtitleItem(_:)), keyEquivalent: "")
+            offItem.target = self
+            offItem.tag = -1
+            if currentSubtitleURL == nil {
+                offItem.state = .on
+            }
+            items.append(offItem)
+
+            for (index, subURL) in availableSubtitles.enumerated() {
+                let item = NSMenuItem(title: subURL.lastPathComponent, action: #selector(selectSubtitleItem(_:)), keyEquivalent: "")
+                item.target = self
+                item.tag = index
+                if currentSubtitleURL == subURL {
+                    item.state = .on
+                }
+                items.append(item)
+            }
+        }
+
+        return items
+    }
+
+    @objc private func toggleSubtitleEnabledAction() {
+        toggleSubtitleEnabled()
+    }
+
+    @objc private func selectSubtitleItem(_ sender: NSMenuItem) {
+        if sender.tag == -1 {
+            disableSubtitle()
+        } else if sender.tag >= 0 && sender.tag < availableSubtitles.count {
+            selectSubtitle(availableSubtitles[sender.tag])
+        }
     }
 
     private func schedulePlaybackFailureCheck(for url: URL, backend: PlaybackBackend, resumeAt: Double?) {
@@ -1174,7 +1286,7 @@ killall lsd >/dev/null 2>&1 || true
         return nil
     }
 
-    static let appVersion = 7
+    static let appVersion = 9
 
     private func updateWindowTitle(_ title: String) {
         windowTitle = "\(title) (\(Self.appVersion))"

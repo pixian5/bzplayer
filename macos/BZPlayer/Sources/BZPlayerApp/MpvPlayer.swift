@@ -128,6 +128,11 @@ final class MpvPlayer: NSObject {
         requestRender()
     }
 
+    func loadExternalSubtitle(_ url: URL) {
+        guard let handle else { return }
+        command(["sub-add", url.path], on: handle)
+    }
+
     func setHardwareDecodingEnabled(_ enabled: Bool) {
         let mode = enabled ? "auto-safe" : "no"
         preferredHwdecMode = mode
@@ -404,7 +409,7 @@ final class MpvPlayer: NSObject {
         return result >= 0 ? value : nil
     }
 
-    private func setStringProperty(_ name: String, _ value: String) {
+    func setStringProperty(_ name: String, _ value: String) {
         guard let handle else { return }
         _ = value.withCString { stringPtr in
             mpv_set_property_string(handle, name, stringPtr)

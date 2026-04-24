@@ -23,6 +23,9 @@ struct PlayerContainerView: NSViewRepresentable {
         view.clickView.onKeyEvent = { [weak view] event in
             viewModel.handleKeyEvent(event, in: view?.window)
         }
+        view.clickView.onSubtitleMenuRequest = { [weak viewModel] in
+            viewModel?.buildSubtitleMenuItems() ?? []
+        }
         return view
     }
 
@@ -178,6 +181,7 @@ final class ClickCaptureView: NSView {
     var onDoubleClick: (() -> Void)?
     var onRequestFileInfo: (() -> Void)?
     var onKeyEvent: ((NSEvent) -> Bool)?
+    var onSubtitleMenuRequest: (() -> [NSMenuItem])?
     private var pendingSingleClick: DispatchWorkItem?
 
     override init(frame frameRect: NSRect) {
@@ -232,6 +236,19 @@ final class ClickCaptureView: NSView {
 
     override func menu(for event: NSEvent) -> NSMenu? {
         let menu = NSMenu(title: "菜单")
+
+        // Subtitle menu items
+        if let subtitleItems = onSubtitleMenuRequest?(), !subtitleItems.isEmpty {
+            let subtitleMenuItem = NSMenuItem(title: "字幕", action: nil, keyEquivalent: "")
+            let submenu = NSMenu(title: "字幕")
+            for item in subtitleItems {
+                submenu.addItem(item)
+            }
+            subtitleMenuItem.submenu = submenu
+            menu.addItem(subtitleMenuItem)
+            menu.addItem(NSMenuItem.separator())
+        }
+
         let fileInfoItem = NSMenuItem(title: "文件信息", action: #selector(handleFileInfo), keyEquivalent: "")
         fileInfoItem.target = self
         menu.addItem(fileInfoItem)
