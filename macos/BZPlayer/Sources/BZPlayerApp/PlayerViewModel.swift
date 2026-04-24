@@ -419,6 +419,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
 
     func adjustSpeed(by delta: Double) {
         setSpeed((speed + delta).rounded(toPlaces: 2))
+        showToastMessage(String(format: "速度: %.2fx", speed))
     }
 
     func toggleSpeed() {
