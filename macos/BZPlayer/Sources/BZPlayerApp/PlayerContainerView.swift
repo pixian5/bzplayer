@@ -35,6 +35,12 @@ struct PlayerContainerView: NSViewRepresentable {
         view.clickView.onKeyEvent = { [weak view] event in
             viewModel.handleKeyEvent(event, in: view?.window)
         }
+        view.clickView.onSpeedKeyDown = { delta in
+            viewModel.adjustSpeed(by: delta)
+        }
+        view.clickView.onSpeedKeyUp = {
+            // 不需要额外操作
+        }
         return view
     }
 
@@ -194,12 +200,19 @@ final class ClickCaptureView: NSView {
     var onSetSubtitleBackgroundOpacity: ((Int) -> Void)?
     var onCurrentSubtitleBackgroundOpacity: (() -> Int)?
     var onKeyEvent: ((NSEvent) -> Bool)?
+    var onSpeedKeyDown: ((Double) -> Void)?
+    var onSpeedKeyUp: (() -> Void)?
     private var pendingSingleClick: DispatchWorkItem?
+    private var speedRepeatTimer: Timer?
+    private var activeSpeedDelta: Double = 0
+    private var keyDownMonitor: Any?
+    private var keyUpMonitor: Any?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
+        setupKeyMonitors()
     }
 
     @available(*, unavailable)
@@ -239,11 +252,68 @@ final class ClickCaptureView: NSView {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: work)
     }
 
+    deinit {
+        if let monitor = keyDownMonitor {
+            NSEvent.removeMonitor(monitor)
+        }
+        if let monitor = keyUpMonitor {
+            NSEvent.removeMonitor(monitor)
+        }
+    }
+
+    private func setupKeyMonitors() {
+        keyDownMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, event.window == self.window else { return event }
+            if event.keyCode == 41 { // Semicolon ;
+                if !event.isARepeat {
+                    self.startSpeedRepeat(delta: -0.25)
+                }
+                return nil // 消费事件
+            }
+            if event.keyCode == 39 { // Quote '
+                if !event.isARepeat {
+                    self.startSpeedRepeat(delta: 0.25)
+                }
+                return nil // 消费事件
+            }
+            if self.onKeyEvent?(event) == true {
+                return nil
+            }
+            return event
+        }
+        keyUpMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyUp) { [weak self] event in
+            guard let self, event.window == self.window else { return event }
+            if event.keyCode == 41 || event.keyCode == 39 {
+                self.stopSpeedRepeat()
+            }
+            return event
+        }
+    }
+
     override func keyDown(with event: NSEvent) {
         if onKeyEvent?(event) == true {
             return
         }
         super.keyDown(with: event)
+    }
+
+    private func startSpeedRepeat(delta: Double) {
+        guard speedRepeatTimer == nil else { return }
+        activeSpeedDelta = delta
+        // 立即执行一次
+        onSpeedKeyDown?(delta)
+        // 启动重复定时器 (0.5秒 = 每秒2次)
+        let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
+            self?.onSpeedKeyDown?(self?.activeSpeedDelta ?? 0)
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        speedRepeatTimer = timer
+    }
+
+    private func stopSpeedRepeat() {
+        speedRepeatTimer?.invalidate()
+        speedRepeatTimer = nil
+        onSpeedKeyUp?()
     }
 
     override func menu(for event: NSEvent) -> NSMenu? {

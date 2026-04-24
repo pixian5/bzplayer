@@ -684,6 +684,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         (window ?? attachedWindow ?? NSApp.keyWindow ?? NSApp.mainWindow)?.toggleFullScreen(nil)
     }
 
+
     func handleKeyEvent(_ event: NSEvent, in window: NSWindow?) -> Bool {
         // 空格键
         if event.keyCode == 49 {
@@ -732,14 +733,10 @@ final class PlayerViewModel: NSObject, ObservableObject {
             seekByConfiguredFrameStep(1)
             return true
         case 41: // Semicolon ;
-            if !event.isARepeat {
-                adjustSpeed(by: -0.25)
-            }
+            // 在 ClickCaptureView 中处理长按
             return true
         case 39: // Quote '
-            if !event.isARepeat {
-                adjustSpeed(by: 0.25)
-            }
+            // 在 ClickCaptureView 中处理长按
             return true
         case 27: // Left bracket [
             adjustAudioDelay(by: -50)

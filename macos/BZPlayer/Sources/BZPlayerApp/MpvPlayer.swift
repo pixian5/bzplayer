@@ -85,16 +85,21 @@ final class MpvPlayer: NSObject {
     func play() {
         isPlaybackActive = true
         resetSamplingState()
-        armRenderWarmup(duration: 0.5)
         setFlagProperty("pause", false)
-        requestRender()
+        // Force immediate render to avoid freeze after pause
+        armRenderWarmup(duration: 0.5)
+        isRenderScheduled = false
+        needsAnotherRender = false
+        renderCurrentFrame()
     }
 
     func pause() {
         isPlaybackActive = false
         armRenderWarmup(duration: 0.2)
         setFlagProperty("pause", true)
-        requestRender()
+        isRenderScheduled = false
+        needsAnotherRender = true
+        renderCurrentFrame()
     }
 
     func setVolume(_ volume: Double) {
@@ -321,7 +326,7 @@ final class MpvPlayer: NSObject {
         }
 
         // 播放中保持渲染循环自驱动，不依赖 mpv 回调来维持
-        if isPlaybackActive || needsAnotherRender {
+        if needsAnotherRender {
             needsAnotherRender = false
             requestRender()
         }
