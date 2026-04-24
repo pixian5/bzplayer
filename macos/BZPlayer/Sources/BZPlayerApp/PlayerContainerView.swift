@@ -26,6 +26,12 @@ struct PlayerContainerView: NSViewRepresentable {
         view.clickView.onSelectSubtitleByPath = { path in
             viewModel.selectSubtitle(path: path)
         }
+        view.clickView.onSetSubtitleBackgroundOpacity = { opacity in
+            viewModel.setSubtitleBackgroundOpacity(opacity)
+        }
+        view.clickView.onCurrentSubtitleBackgroundOpacity = {
+            viewModel.subtitleBackgroundOpacity
+        }
         view.clickView.onKeyEvent = { [weak view] event in
             viewModel.handleKeyEvent(event, in: view?.window)
         }
@@ -185,6 +191,8 @@ final class ClickCaptureView: NSView {
     var onRequestFileInfo: (() -> Void)?
     var onBuildSubtitleMenuEntries: (() -> [PlayerViewModel.SubtitleMenuEntry])?
     var onSelectSubtitleByPath: ((String?) -> Void)?
+    var onSetSubtitleBackgroundOpacity: ((Int) -> Void)?
+    var onCurrentSubtitleBackgroundOpacity: (() -> Int)?
     var onKeyEvent: ((NSEvent) -> Bool)?
     private var pendingSingleClick: DispatchWorkItem?
 
@@ -257,6 +265,21 @@ final class ClickCaptureView: NSView {
                 subtitleMenu.addItem(item)
             }
         }
+
+        let opacityMenuItem = NSMenuItem(title: "字幕背景透明度", action: nil, keyEquivalent: "")
+        let opacityMenu = NSMenu(title: "字幕背景透明度")
+        let opacityLevels = [0, 25, 50, 75, 100]
+        let currentOpacity = onCurrentSubtitleBackgroundOpacity?() ?? 0
+        for level in opacityLevels {
+            let item = NSMenuItem(title: "\(level)%", action: #selector(handleSubtitleBackgroundOpacitySelection(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = level
+            item.state = level == currentOpacity ? .on : .off
+            opacityMenu.addItem(item)
+        }
+        opacityMenuItem.submenu = opacityMenu
+        subtitleMenu.addItem(NSMenuItem.separator())
+        subtitleMenu.addItem(opacityMenuItem)
         subtitleMenuItem.submenu = subtitleMenu
         menu.addItem(subtitleMenuItem)
 
@@ -278,5 +301,11 @@ final class ClickCaptureView: NSView {
             return
         }
         onSelectSubtitleByPath?(sender.representedObject as? String)
+    }
+
+    @objc
+    private func handleSubtitleBackgroundOpacitySelection(_ sender: NSMenuItem) {
+        guard let value = sender.representedObject as? Int else { return }
+        onSetSubtitleBackgroundOpacity?(value)
     }
 }

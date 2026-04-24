@@ -5,6 +5,21 @@ APP_NAME="BZPlayer.app"
 APP_DIR="/Applications/${APP_NAME}"
 BIN_SOURCE="/Users/x/code/bzplayer-main/macos/BZPlayer/.build/arm64-apple-macosx/release/BZPlayer"
 LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+VERSION_FILE="/Users/x/code/bzplayer-main/macos/BZPlayer/.deploy_version"
+
+if [[ -f "${VERSION_FILE}" ]]; then
+    CURRENT_VERSION=$(tr -cd '0-9' < "${VERSION_FILE}")
+else
+    CURRENT_VERSION=""
+fi
+
+if [[ -z "${CURRENT_VERSION}" ]]; then
+    CURRENT_VERSION=0
+fi
+
+NEXT_VERSION=$((CURRENT_VERSION + 1))
+echo "${NEXT_VERSION}" > "${VERSION_FILE}"
+echo "[deploy] BZPlayer version: ${NEXT_VERSION}"
 
 pkill -x BZPlayer || true
 sleep 1
@@ -13,7 +28,7 @@ pkill -9 -x BZPlayer || true
 rm -rf "${APP_DIR}"
 mkdir -p "${APP_DIR}/Contents/MacOS"
 
-/bin/cat > "${APP_DIR}/Contents/Info.plist" <<'EOF'
+/bin/cat > "${APP_DIR}/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -58,9 +73,9 @@ mkdir -p "${APP_DIR}/Contents/MacOS"
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.1.1</string>
+    <string>${NEXT_VERSION}</string>
     <key>CFBundleVersion</key>
-    <string>0.1.1</string>
+    <string>${NEXT_VERSION}</string>
     <key>LSMinimumSystemVersion</key>
     <string>13.0</string>
     <key>NSHighResolutionCapable</key>

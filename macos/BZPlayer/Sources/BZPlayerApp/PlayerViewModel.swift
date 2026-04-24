@@ -102,7 +102,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
     @Published var isSeeking: Bool = false
     @Published var playlist: [URL] = []
     @Published var currentIndex: Int = -1
-    @Published var windowTitle = "BZPlayer (1)"
+    @Published var windowTitle = PlayerViewModel.defaultWindowTitle
     @Published var fileAssociationStatus = "未执行格式关联"
     @Published var playbackEngineStatus = "播放引擎：AVPlayer"
     @Published var playbackBackend: PlaybackBackend = .native
@@ -336,7 +336,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         currentTime = 0
         duration = 0
         isPaused = true
-        windowTitle = "BZPlayer (\(Self.appVersion))"
+        windowTitle = Self.defaultWindowTitle
         attachedWindow?.title = windowTitle
         playbackError = nil
         playbackFailureTimer?.invalidate()
@@ -1256,7 +1256,18 @@ killall lsd >/dev/null 2>&1 || true
         return nil
     }
 
-    static let appVersion = 9
+    static var appVersion: String {
+        if let info = Bundle.main.infoDictionary,
+           let version = info["CFBundleVersion"] as? String,
+           !version.isEmpty {
+            return version
+        }
+        return "dev"
+    }
+
+    static var defaultWindowTitle: String {
+        "BZPlayer (\(appVersion))"
+    }
 
     private func updateWindowTitle(_ title: String) {
         windowTitle = "\(title) (\(Self.appVersion))"
