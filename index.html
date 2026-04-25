@@ -84,7 +84,6 @@
       <button id="playPauseBtn" type="button">播放</button>
       <input id="seekBar" class="seek" type="range" min="0" max="1000" value="0" step="1" />
       <span id="timeLabel">00:00 / 00:00</span>
-      <span class="status" id="hintText">双击或按 f 全屏，点击画面暂停/播放</span>
     </div>
     <div class="video-wrap" id="videoWrap">
       <video id="video" preload="metadata" playsinline aria-label="视频播放器" title="视频播放器"></video>
@@ -133,7 +132,7 @@
     const SPEED_COMPARISON_EPSILON = 1e-8;
     const SYNC_WARN_SECONDS = 0.08;
     const SYNC_FIX_SECONDS = 0.2;
-    const DEFAULT_HINT_TEXT = "双击或按 f 全屏，点击画面暂停/播放";
+    const DEFAULT_HINT_TEXT = "";
     const TEXT_INPUT_TYPES = ["text", "search", "email", "url", "tel", "password", "number"];
 
     video.preservesPitch = true;
@@ -166,6 +165,7 @@
     }
 
     function showHint(text) {
+      if (!hintText) return;
       hintText.textContent = text;
       clearTimeout(hintTimer);
       hintTimer = setTimeout(() => {

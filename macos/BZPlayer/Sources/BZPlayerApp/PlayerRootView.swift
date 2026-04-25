@@ -449,8 +449,6 @@ struct PlayerRootView: View {
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
-                Text("双击或按f全屏，点击画面暂停/播放")
-                    .foregroundStyle(.secondary)
             }
         }
         .padding(.horizontal, 14)

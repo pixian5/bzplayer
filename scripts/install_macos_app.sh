@@ -4,6 +4,7 @@ set -euo pipefail
 APP_NAME="BZPlayer.app"
 APP_DIR="/Applications/${APP_NAME}"
 BIN_SOURCE="/Users/x/code/bzplayer-main/macos/BZPlayer/.build/arm64-apple-macosx/release/BZPlayer"
+PROJECT_DIR="/Users/x/code/bzplayer-main/macos/BZPlayer"
 LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 VERSION_FILE="/Users/x/code/bzplayer-main/macos/BZPlayer/.deploy_version"
 
@@ -20,6 +21,10 @@ fi
 NEXT_VERSION=$((CURRENT_VERSION + 1))
 echo "${NEXT_VERSION}" > "${VERSION_FILE}"
 echo "[deploy] BZPlayer version: ${NEXT_VERSION}"
+
+echo "[deploy] Building release binary..."
+cd "${PROJECT_DIR}"
+swift build -c release
 
 pkill -x BZPlayer || true
 sleep 1
