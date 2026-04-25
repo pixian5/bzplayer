@@ -1326,12 +1326,9 @@ killall lsd >/dev/null 2>&1 || true
     }
 
     private func showToastMessage(_ message: String) {
-        toastMessage = message
-        showToast = true
-        // 2秒后自动隐藏
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
-            self?.showToast = false
-        }
+        // Toast messages have been disabled per UX request (移除文字)
+        // Intentionally no-op to prevent on-screen transient text overlays.
+        return
     }
 
     private func applyInitialWindowBehaviorIfNeeded(force: Bool = false) {
