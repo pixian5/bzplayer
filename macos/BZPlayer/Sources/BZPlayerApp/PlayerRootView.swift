@@ -295,18 +295,23 @@ struct PlayerRootView: View {
                             .contentShape(Rectangle())
                             .overlay(alignment: .bottomLeading) {
                                 if hoveredPlaylistIndex == index, let hoveredPlaylistFilename {
-                                    Text(hoveredPlaylistFilename)
-                                        .font(.system(size: 12))
-                                        .foregroundStyle(.white.opacity(0.95))
-                                        .lineLimit(1)
-                                        .padding(.horizontal, 8)
-                                        .padding(.vertical, 6)
-                                        .background(Color(red: 0.14, green: 0.30, blue: 0.72))
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 6)
-                                                .stroke(Color.white.opacity(0.25), lineWidth: 1)
-                                        )
-                                        .cornerRadius(6)
+                                    ZStack {
+                                        RoundedRectangle(cornerRadius: 6)
+                                            .fill(Color(red: 0.10, green: 0.28, blue: 0.78))
+                                        RoundedRectangle(cornerRadius: 6)
+                                            .stroke(Color.white, lineWidth: 1)
+
+                                        Text(hoveredPlaylistFilename)
+                                            .font(.system(size: 12))
+                                            .foregroundColor(.white)
+                                            .lineLimit(1)
+                                            .padding(.horizontal, 8)
+                                            .padding(.vertical, 6)
+                                    }
+                                        .fixedSize(horizontal: true, vertical: true)
+                                        .compositingGroup()
+                                        .blendMode(.normal)
+                                        .opacity(1)
                                         .offset(y: 28)
                                         .zIndex(20)
                                 }
