@@ -301,7 +301,7 @@ struct PlayerRootView: View {
                                         .lineLimit(1)
                                         .padding(.horizontal, 8)
                                         .padding(.vertical, 6)
-                                        .background(Color(red: 0.14, green: 0.30, blue: 0.72).opacity(0.96))
+                                        .background(Color(red: 0.14, green: 0.30, blue: 0.72))
                                         .overlay(
                                             RoundedRectangle(cornerRadius: 6)
                                                 .stroke(Color.white.opacity(0.25), lineWidth: 1)
