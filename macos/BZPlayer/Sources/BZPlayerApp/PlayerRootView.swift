@@ -83,6 +83,7 @@ struct PlayerRootView: View {
     @State private var sleepAssertionID: IOPMAssertionID = 0
     @State private var hasSleepAssertion = false
     @State private var hoveredPlaylistFilename: String?
+    @State private var hoveredPlaylistIndex: Int?
 
     private var shouldPinControlsVisible: Bool {
         !viewModel.hasOpenedFile || viewModel.hasReachedEndOfPlayback
@@ -272,19 +273,6 @@ struct PlayerRootView: View {
                 .focusable(false)
             }
 
-            if let hoveredPlaylistFilename {
-                Text(hoveredPlaylistFilename)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.white.opacity(0.95))
-                    .lineLimit(1)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 6)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.white.opacity(0.14))
-                    .cornerRadius(6)
-                    .transition(.opacity)
-            }
-
             ScrollViewReader { scrollProxy in
                 ScrollView(.vertical, showsIndicators: true) {
                     LazyVStack(alignment: .leading, spacing: 4) {
@@ -305,14 +293,30 @@ struct PlayerRootView: View {
                             .background(index == viewModel.currentIndex ? Color.blue.opacity(0.35) : Color.clear)
                             .cornerRadius(6)
                             .contentShape(Rectangle())
+                            .overlay(alignment: .bottomLeading) {
+                                if hoveredPlaylistIndex == index, let hoveredPlaylistFilename {
+                                    Text(hoveredPlaylistFilename)
+                                        .font(.system(size: 12))
+                                        .foregroundStyle(.white.opacity(0.95))
+                                        .lineLimit(1)
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 6)
+                                        .background(Color.black.opacity(0.9))
+                                        .cornerRadius(6)
+                                        .offset(y: 28)
+                                        .zIndex(20)
+                                }
+                            }
                             .id(index)
                             .onTapGesture {
                                 viewModel.selectPlaylistItem(index)
                             }
                             .onHover { hovering in
                                 if hovering {
+                                    hoveredPlaylistIndex = index
                                     hoveredPlaylistFilename = url.lastPathComponent
-                                } else if hoveredPlaylistFilename == url.lastPathComponent {
+                                } else if hoveredPlaylistIndex == index {
+                                    hoveredPlaylistIndex = nil
                                     hoveredPlaylistFilename = nil
                                 }
                             }
@@ -343,6 +347,7 @@ struct PlayerRootView: View {
             if hovering {
                 shouldShowPlaylist = true
             } else {
+                hoveredPlaylistIndex = nil
                 hoveredPlaylistFilename = nil
             }
         }
