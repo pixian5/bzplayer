@@ -278,6 +278,7 @@ struct PlayerRootView: View {
                             HStack {
                                 Text(url.lastPathComponent)
                                     .lineLimit(1)
+                                    .help(url.lastPathComponent)
                                 Spacer()
                                 if index == viewModel.currentIndex {
                                     Image(systemName: "play.fill")
