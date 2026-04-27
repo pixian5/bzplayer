@@ -2,73 +2,6 @@ import SwiftUI
 import AppKit
 import IOKit.pwr_mgt
 
-struct LongPressSpeedButton: NSViewRepresentable {
-    let label: String
-    let delta: Double
-    let onAdjust: (Double) -> Void
-
-    func makeNSView(context: Context) -> LongPressButton {
-        let button = LongPressButton(title: label, delta: delta, onAdjust: onAdjust)
-        return button
-    }
-
-    func updateNSView(_ nsView: LongPressButton, context: Context) {
-        nsView.updateLabel(label)
-        nsView.updateDelta(delta)
-        nsView.updateCallback(onAdjust)
-    }
-}
-
-final class LongPressButton: NSButton {
-    private var delta: Double = 0.25
-    private var onAdjust: ((Double) -> Void)?
-    private var timer: Timer?
-
-    init(title: String, delta: Double, onAdjust: @escaping (Double) -> Void) {
-        self.delta = delta
-        self.onAdjust = onAdjust
-        super.init(frame: .zero)
-        self.title = title
-        self.bezelStyle = .rounded
-        self.isBordered = true
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    func updateLabel(_ label: String) {
-        self.title = label
-    }
-
-    func updateDelta(_ delta: Double) {
-        self.delta = delta
-    }
-
-    func updateCallback(_ callback: @escaping (Double) -> Void) {
-        self.onAdjust = callback
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        // 立即执行一次
-        onAdjust?(delta)
-
-        // 启动重复定时器 (~12次/秒)
-        timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-            self?.onAdjust?(self?.delta ?? 0)
-        }
-    }
-
-    override func mouseUp(with event: NSEvent) {
-        timer?.invalidate()
-        timer = nil
-    }
-
-    override func mouseDragged(with event: NSEvent) {
-        // 拖拽时继续保持
-    }
-}
-
 struct PlayerRootView: View {
     @EnvironmentObject private var viewModel: PlayerViewModel
     @State private var seekValue: Double = 0
@@ -91,7 +24,14 @@ struct PlayerRootView: View {
     var body: some View {
         ZStack(alignment: .bottom) {
             playerArea
-            controlBar
+            ControlBarView(
+                seekValue: $seekValue,
+                isHoveringControlBar: $isHoveringControlBar,
+                revealControlsAndScheduleHide: revealControlsAndScheduleHide,
+                setControlsVisible: setControlsVisible,
+                cancelHide: cancelHide,
+                scheduleHide: scheduleHide
+            )
                 .padding(.horizontal, 12)
                 .padding(.bottom, 12)
                 .opacity(isControlsVisible ? 1 : 0)
@@ -221,12 +161,16 @@ struct PlayerRootView: View {
                     }
 
                 if !viewModel.hasOpenedFile && viewModel.showRecentFiles && !viewModel.recentFiles.isEmpty {
-                    recentFilesView(containerWidth: proxy.size.width)
+                    RecentFilesView(containerWidth: proxy.size.width)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
 
                 if shouldShowPlaylist && !viewModel.playlist.isEmpty {
-                    playlistPanel
+                    PlaylistPanelView(
+                        shouldShowPlaylist: $shouldShowPlaylist,
+                        isHoveringPlaylist: $isHoveringPlaylist,
+                        hoveredPlaylistIndex: $hoveredPlaylistIndex
+                    )
                         .padding(.trailing, 8)
                         .transition(.move(edge: .trailing).combined(with: .opacity))
                 }
@@ -234,281 +178,6 @@ struct PlayerRootView: View {
             .animation(.easeInOut(duration: 0.15), value: shouldShowPlaylist)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private var playlistPanel: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Text("播放列表")
-                    .font(.headline)
-                    .foregroundStyle(.white)
-                Spacer()
-                Button {
-                    viewModel.togglePlaylistOrder()
-                } label: {
-                    Text(viewModel.playlistOrder.buttonTitle)
-                        .font(.system(size: 12))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Color.white.opacity(0.15))
-                        .cornerRadius(6)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.white)
-                .focusable(false)
-
-                Button {
-                    viewModel.cycleLoopMode()
-                } label: {
-                    Text(viewModel.loopMode.buttonTitle)
-                        .font(.system(size: 12))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Color.white.opacity(0.15))
-                        .cornerRadius(6)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.white)
-                .focusable(false)
-            }
-
-            ScrollViewReader { scrollProxy in
-                ScrollView(.vertical, showsIndicators: true) {
-                    LazyVStack(alignment: .leading, spacing: 4) {
-                        ForEach(Array(viewModel.playlist.enumerated()), id: \.offset) { index, url in
-                            let filename = url.lastPathComponent
-                            let shouldExpand = hoveredPlaylistIndex == index && shouldShowHoverHint(for: filename, at: index)
-
-                            HStack(alignment: .top) {
-                                Text(filename)
-                                    .lineLimit(shouldExpand ? nil : 1)
-                                    .fixedSize(horizontal: false, vertical: shouldExpand)
-                                Spacer()
-                                if index == viewModel.currentIndex {
-                                    Image(systemName: "play.fill")
-                                }
-                            }
-                            .font(.system(size: 13))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 6)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(index == viewModel.currentIndex ? Color.blue.opacity(0.35) : Color.clear)
-                            .cornerRadius(6)
-                            .contentShape(Rectangle())
-                            .id(index)
-                            .onTapGesture {
-                                viewModel.selectPlaylistItem(index)
-                            }
-                            .onHover { hovering in
-                                if hovering, shouldShowHoverHint(for: filename, at: index) {
-                                    hoveredPlaylistIndex = index
-                                } else if hoveredPlaylistIndex == index {
-                                    hoveredPlaylistIndex = nil
-                                }
-                            }
-                        }
-                    }
-                }
-                .task(id: viewModel.currentIndex) {
-                    // Scroll immediately when current index changes
-                    withAnimation(.easeOut(duration: 0.25)) {
-                        scrollProxy.scrollTo(viewModel.currentIndex, anchor: .center)
-                    }
-                }
-                .onAppear {
-                    // Scroll immediately when playlist panel starts appearing
-                    withAnimation(.easeOut(duration: 0.25)) {
-                        scrollProxy.scrollTo(viewModel.currentIndex, anchor: .center)
-                    }
-                }
-            }
-        }
-        .padding(10)
-        .frame(width: 600)
-        .frame(maxHeight: .infinity, alignment: .top)
-        .background(Color.black.opacity(0.85))
-        .cornerRadius(10)
-        .onHover { hovering in
-            isHoveringPlaylist = hovering
-            if hovering {
-                shouldShowPlaylist = true
-            } else {
-                hoveredPlaylistIndex = nil
-            }
-        }
-    }
-
-    private func recentFilesView(containerWidth: CGFloat) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("最近播放")
-                .font(.system(size: 24, weight: .bold))
-                .foregroundStyle(.white)
-                .padding(.bottom, 4)
-            
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 4) {
-                    ForEach(viewModel.recentFiles, id: \.self) { path in
-                        Button {
-                            viewModel.openExternalFiles([URL(fileURLWithPath: path)])
-                        } label: {
-                            Text(path)
-                                .font(.system(size: 26))
-                                .lineLimit(nil)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .padding(.vertical, 6)
-                                .padding(.horizontal, 8)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.white)
-                        .background(Color.white.opacity(0.1))
-                        .cornerRadius(6)
-                    }
-                }
-            }
-        }
-        .padding(20)
-        .frame(width: containerWidth * 0.8, height: 400)
-        .background(Color.black.opacity(0.75))
-        .cornerRadius(12)
-        .zIndex(1)
-    }
-
-    private var controlBar: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 12) {
-                ZStack(alignment: .leading) {
-                    // Thicker background track for better visibility
-                    RoundedRectangle(cornerRadius: 3)
-                        .fill(Color.white.opacity(0.2))
-                        .frame(height: 4)
-                        .padding(.horizontal, 2)
-
-                    Slider(value: Binding(
-                        get: { seekValue },
-                        set: { newValue in
-                            revealControlsAndScheduleHide()
-                            seekValue = newValue
-                            viewModel.seek(to: newValue)
-                        }
-                    ), in: 0...1)
-                    .tint(.blue)
-                    .accentColor(.blue)
-                    .frame(minWidth: 280)
-                }
-
-                Text("\(format(viewModel.currentTime)) / \(format(viewModel.duration))")
-                    .font(.system(.body, design: .monospaced))
-            }
-
-            HStack(spacing: 8) {
-                Button("打开文件") {
-                    revealControlsAndScheduleHide()
-                    viewModel.openFile()
-                }
-                .keyboardShortcut("o", modifiers: [.command])
-
-                Text("速度：")
-
-                ForEach(viewModel.speedCandidates, id: \.self) { speed in
-                    Button("\(speed, specifier: "%g")x") {
-                        revealControlsAndScheduleHide()
-                        viewModel.setSpeed(speed)
-                    }
-                    .buttonStyle(.bordered)
-                    .tint(abs(viewModel.speed - speed) < 0.001 ? .blue : .gray)
-                }
-
-                LongPressSpeedButton(label: "-0.25x", delta: -0.25) { delta in
-                    revealControlsAndScheduleHide()
-                    viewModel.adjustSpeed(by: delta)
-                }
-                LongPressSpeedButton(label: "+0.25x", delta: 0.25) { delta in
-                    revealControlsAndScheduleHide()
-                    viewModel.adjustSpeed(by: delta)
-                }
-
-                Text(String(format: "当前：%.2fx", viewModel.speed))
-
-                Button {
-                    viewModel.toggleMute()
-                } label: {
-                    Image(systemName: viewModel.isMuted || viewModel.volume == 0 ? "speaker.slash.fill" : "speaker.wave.2.fill")
-                        .foregroundStyle(.white)
-                }
-                .buttonStyle(.plain)
-
-                Slider(value: Binding(
-                    get: { viewModel.volume },
-                    set: { viewModel.setVolume($0) }
-                ), in: 0...100)
-                .frame(width: 80)
-                .foregroundStyle(.white)
-
-                Text(String(format: "%.0f%%", viewModel.volume))
-                    .foregroundStyle(.white)
-                    .frame(width: 35, alignment: .trailing)
-
-                Divider()
-                    .frame(height: 20)
-                    .background(Color.white.opacity(0.3))
-
-                Spacer()
-                Button {
-                    viewModel.switchPlaybackBackend()
-                } label: {
-                    Text(viewModel.playbackEngineStatus)
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color.black.opacity(0.72))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
-        )
-        .foregroundStyle(.white)
-        .shadow(color: .black.opacity(0.18), radius: 8, y: 4)
-        .focusable(false)
-        .onHover { hovering in
-            isHoveringControlBar = hovering
-            if hovering {
-                cancelHide()
-                setControlsVisible(true)
-            } else {
-                scheduleHide()
-            }
-        }
-    }
-
-    private func format(_ time: Double) -> String {
-        guard time.isFinite, time > 0 else { return "00:00" }
-        let total = Int(time)
-        let s = total % 60
-        let m = (total / 60) % 60
-        let h = total / 3600
-        if h > 0 {
-            return String(format: "%d:%02d:%02d", h, m, s)
-        }
-        return String(format: "%02d:%02d", m, s)
-    }
-
-    private func shouldShowHoverHint(for filename: String, at index: Int) -> Bool {
-        let font = NSFont.systemFont(ofSize: 13)
-        let measured = (filename as NSString).size(withAttributes: [.font: font]).width
-        // 播放列表面板宽度固定 600，扣除左右内边距、行内 padding、图标和安全冗余
-        let baseAvailable: CGFloat = 520
-        let iconReserved: CGFloat = index == viewModel.currentIndex ? 18 : 0
-        let available = max(baseAvailable - iconReserved, 380)
-        return measured > available
     }
 
     private func revealControlsAndScheduleHide() {
