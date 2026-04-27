@@ -301,7 +301,11 @@ struct PlayerRootView: View {
                                         .lineLimit(1)
                                         .padding(.horizontal, 8)
                                         .padding(.vertical, 6)
-                                        .background(Color.black.opacity(0.9))
+                                        .background(Color(red: 0.14, green: 0.30, blue: 0.72).opacity(0.96))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 6)
+                                                .stroke(Color.white.opacity(0.25), lineWidth: 1)
+                                        )
                                         .cornerRadius(6)
                                         .offset(y: 28)
                                         .zIndex(20)
@@ -313,8 +317,14 @@ struct PlayerRootView: View {
                             }
                             .onHover { hovering in
                                 if hovering {
-                                    hoveredPlaylistIndex = index
-                                    hoveredPlaylistFilename = url.lastPathComponent
+                                    let filename = url.lastPathComponent
+                                    if shouldShowHoverHint(for: filename, at: index) {
+                                        hoveredPlaylistIndex = index
+                                        hoveredPlaylistFilename = filename
+                                    } else if hoveredPlaylistIndex == index {
+                                        hoveredPlaylistIndex = nil
+                                        hoveredPlaylistFilename = nil
+                                    }
                                 } else if hoveredPlaylistIndex == index {
                                     hoveredPlaylistIndex = nil
                                     hoveredPlaylistFilename = nil
@@ -513,6 +523,16 @@ struct PlayerRootView: View {
             return String(format: "%d:%02d:%02d", h, m, s)
         }
         return String(format: "%02d:%02d", m, s)
+    }
+
+    private func shouldShowHoverHint(for filename: String, at index: Int) -> Bool {
+        let font = NSFont.systemFont(ofSize: 13)
+        let measured = (filename as NSString).size(withAttributes: [.font: font]).width
+        // 播放列表面板宽度固定 600，扣除左右内边距、行内 padding、图标和安全冗余
+        let baseAvailable: CGFloat = 520
+        let iconReserved: CGFloat = index == viewModel.currentIndex ? 18 : 0
+        let available = max(baseAvailable - iconReserved, 380)
+        return measured > available
     }
 
     private func revealControlsAndScheduleHide() {
