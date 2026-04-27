@@ -1,0 +1,13 @@
+2026-04-27_16-05-24_468  MiniMax-M2.7  step=0  msgs=2/1348tok  →  14392ms  tools=0 text_only
+2026-04-27_16-05-50_129  MiniMax-M2.7  step=0  msgs=4/1537tok  →  7898ms  tools=2 [list_directory, glob]
+2026-04-27_16-05-58_082  MiniMax-M2.7  step=0  msgs=7/1662tok  →  13335ms  tools=3 [read_file, list_directory, read_file]
+2026-04-27_16-06-11_427  MiniMax-M2.7  step=0  msgs=11/2412tok  →  18550ms  tools=2 [read_file, read_file]
+2026-04-27_16-06-29_984  MiniMax-M2.7  step=0  msgs=15/4043tok  →  24715ms  tools=0 text_only
+2026-04-27_16-07-21_778  MiniMax-M2.7  step=0  msgs=17/4454tok  →  16995ms  tools=5 [read_file, read_file, read_file, read_file, read_file]
+2026-04-27_16-07-38_779  MiniMax-M2.7  step=0  msgs=23/7688tok  →  11999ms  tools=3 [read_file, read_file, read_file]
+2026-04-27_16-07-50_785  MiniMax-M2.7  step=0  msgs=28/9906tok  →  83194ms  tools=0 text_only
+2026-04-27_16-13-03_319  MiniMax-M2.7  step=0  msgs=2/1359tok  →  9129ms  tools=2 [list_directory, read_file]
+2026-04-27_16-13-12_452  MiniMax-M2.7  step=0  msgs=5/1489tok  →  9534ms  tools=4 [read_file, read_file, glob, glob]
+2026-04-27_16-13-22_038  MiniMax-M2.7  step=0  msgs=10/3252tok  →  9115ms  tools=2 [list_directory, read_file]
+2026-04-27_16-13-31_160  MiniMax-M2.7  step=0  msgs=14/3767tok  →  11788ms  tools=4 [read_file, read_file, read_file, read_file]
+2026-04-27_16-13-42_958  MiniMax-M2.7  step=0  msgs=19/6683tok  →  62577ms  tools=0 text_only
