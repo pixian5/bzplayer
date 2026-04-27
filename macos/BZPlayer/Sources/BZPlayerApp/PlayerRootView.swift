@@ -297,7 +297,7 @@ struct PlayerRootView: View {
                                 if hoveredPlaylistIndex == index, let hoveredPlaylistFilename {
                                     ZStack {
                                         RoundedRectangle(cornerRadius: 6)
-                                            .fill(Color(red: 0.10, green: 0.28, blue: 0.78))
+                                            .fill(Color.black)
                                         RoundedRectangle(cornerRadius: 6)
                                             .stroke(Color.white, lineWidth: 1)
 
@@ -312,6 +312,7 @@ struct PlayerRootView: View {
                                         .compositingGroup()
                                         .blendMode(.normal)
                                         .opacity(1)
+                                        .allowsHitTesting(false)
                                         .offset(y: 28)
                                         .zIndex(20)
                                 }
