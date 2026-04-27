@@ -323,6 +323,14 @@ final class PlayerViewModel: NSObject, ObservableObject {
     }
 
     func prepareForWindowClose() {
+        closeCurrentPlaybackFile(showToast: false)
+    }
+
+    func closeCurrentFile() {
+        closeCurrentPlaybackFile(showToast: true)
+    }
+
+    private func closeCurrentPlaybackFile(showToast: Bool) {
         saveCurrentProgress()
         switch playbackBackend {
         case .native:
@@ -336,11 +344,17 @@ final class PlayerViewModel: NSObject, ObservableObject {
         currentTime = 0
         duration = 0
         isPaused = true
+        currentIndex = -1
+        selectedSubtitlePath = nil
         windowTitle = Self.defaultWindowTitle
         attachedWindow?.title = windowTitle
         playbackError = nil
+        attemptedBackendSwitch = false
         playbackFailureTimer?.invalidate()
         playbackFailureTimer = nil
+        if showToast {
+            showToastMessage("已关闭当前文件")
+        }
     }
 
     func togglePause() {
@@ -689,6 +703,14 @@ final class PlayerViewModel: NSObject, ObservableObject {
         // 空格键
         if event.keyCode == 49 {
             togglePause()
+            return true
+        }
+        // Cmd+W
+        if event.modifierFlags.contains(.command),
+           !event.modifierFlags.contains(.control),
+           !event.modifierFlags.contains(.option),
+           event.keyCode == 13 {
+            closeCurrentFile()
             return true
         }
         // Cmd+O
