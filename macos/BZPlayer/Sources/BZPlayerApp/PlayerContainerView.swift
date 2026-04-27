@@ -32,8 +32,9 @@ struct PlayerContainerView: NSViewRepresentable {
         view.clickView.onCurrentSubtitleBackgroundOpacity = {
             viewModel.subtitleBackgroundOpacity
         }
-        view.clickView.onKeyEvent = { [weak view] event in
-            viewModel.handleKeyEvent(event, in: view?.window)
+        view.clickView.onKeyEvent = { [weak view, weak viewModel] event in
+            guard let viewModel = viewModel else { return false }
+            return InputDispatcher(viewModel: viewModel).handleKeyEvent(event, in: view?.window)
         }
         view.clickView.onSpeedKeyDown = { delta in
             viewModel.adjustSpeed(by: delta)
