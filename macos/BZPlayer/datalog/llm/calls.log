@@ -1,0 +1,7 @@
+2026-04-27_16-47-37_141  MiniMax-M2.7  step=0  msgs=24/7849tok  →  8850ms  tools=2 [bash, bash]
+2026-04-27_16-47-46_080  MiniMax-M2.7  step=0  msgs=27/8084tok  →  11069ms  tools=1 [bash]
+2026-04-27_16-47-57_202  MiniMax-M2.7  step=0  msgs=29/8169tok  →  12783ms  tools=1 [bash]
+2026-04-27_16-48-10_032  MiniMax-M2.7  step=0  msgs=31/8268tok  →  27744ms  tools=0 text_only
+2026-04-27_17-20-36_891  MiniMax-M2.7  step=0  msgs=22/6265tok  →  12437ms  tools=1 [read_file]
+2026-04-27_17-20-49_335  MiniMax-M2.7  step=0  msgs=24/6313tok  →  5825ms  tools=1 [edit_file]
+2026-04-27_17-20-55_169  MiniMax-M2.7  step=0  msgs=26/6444tok  →  8318ms  tools=0 text_only

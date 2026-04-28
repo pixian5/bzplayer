@@ -11,3 +11,4 @@
 2026-04-27_16-13-22_038  MiniMax-M2.7  step=0  msgs=10/3252tok  →  9115ms  tools=2 [list_directory, read_file]
 2026-04-27_16-13-31_160  MiniMax-M2.7  step=0  msgs=14/3767tok  →  11788ms  tools=4 [read_file, read_file, read_file, read_file]
 2026-04-27_16-13-42_958  MiniMax-M2.7  step=0  msgs=19/6683tok  →  62577ms  tools=0 text_only
+2026-04-27_16-47-27_809  MiniMax-M2.7  step=0  msgs=21/7723tok  →  9272ms  tools=2 [read_file, bash]

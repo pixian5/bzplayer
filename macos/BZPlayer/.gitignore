@@ -1,3 +1,5 @@
 .build/
 .swiftpm/
 .deploy_version
+BZPlayer.app/
+dist/
