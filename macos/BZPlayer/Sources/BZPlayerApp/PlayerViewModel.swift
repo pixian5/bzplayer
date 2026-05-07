@@ -367,6 +367,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         volume = max(0, min(100, newVolume))
         mpvPlayer.setVolume(volume)
         nativePlayer.volume = Float(volume / 100.0)
+        print("[BZPlayer] setVolume: \(volume), nativePlayer.volume: \(nativePlayer.volume), isMuted: \(isMuted)")
         UserDefaults.standard.set(volume, forKey: Self.volumeKey)
         if volume > 0 {
             isMuted = false

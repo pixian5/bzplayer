@@ -42,6 +42,8 @@ struct ControlBarView: View {
                 }
                 .keyboardShortcut("o", modifiers: [.command])
 
+                Text(String(format: "当前：%.2fx", viewModel.speed))
+
                 Text("速度：")
 
                 ForEach(viewModel.speedCandidates, id: \.self) { speed in
@@ -61,8 +63,6 @@ struct ControlBarView: View {
                     revealControlsAndScheduleHide()
                     viewModel.adjustSpeed(by: delta)
                 }
-
-                Text(String(format: "当前：%.2fx", viewModel.speed))
 
                 Button {
                     viewModel.toggleMute()

@@ -87,9 +87,17 @@ mkdir -p "${APP_DIR}/Contents/MacOS"
     <true/>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
 </dict>
 </plist>
 EOF
+
+echo "[deploy] Copying resources..."
+mkdir -p "${APP_DIR}/Contents/Resources"
+if [[ -f "${PROJECT_DIR}/Resources/AppIcon.icns" ]]; then
+    cp "${PROJECT_DIR}/Resources/AppIcon.icns" "${APP_DIR}/Contents/Resources/AppIcon.icns"
+fi
 
 cp "${BIN_SOURCE}" "${APP_DIR}/Contents/MacOS/BZPlayer"
 chmod +x "${APP_DIR}/Contents/MacOS/BZPlayer"
