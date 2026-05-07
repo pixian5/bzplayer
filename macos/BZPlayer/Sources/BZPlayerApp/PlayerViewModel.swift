@@ -220,6 +220,8 @@ final class PlayerViewModel: NSObject, ObservableObject {
         // Apply volume and mute settings to mpv player
         mpvPlayer.setVolume(volume)
         mpvPlayer.setMuted(isMuted)
+        nativePlayer.volume = Float(volume / 100.0)
+        nativePlayer.isMuted = isMuted
         
         // Force migration of old navigation defaults to avoid conflict with new speed shortcuts
         if UserDefaults.standard.object(forKey: Self.previousFileKeyCodeKey) == nil || 
@@ -364,10 +366,12 @@ final class PlayerViewModel: NSObject, ObservableObject {
     func setVolume(_ newVolume: Double) {
         volume = max(0, min(100, newVolume))
         mpvPlayer.setVolume(volume)
+        nativePlayer.volume = Float(volume / 100.0)
         UserDefaults.standard.set(volume, forKey: Self.volumeKey)
         if volume > 0 {
             isMuted = false
             mpvPlayer.setMuted(false)
+            nativePlayer.isMuted = false
             UserDefaults.standard.set(false, forKey: Self.isMutedKey)
         }
     }
@@ -375,6 +379,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
     func toggleMute() {
         isMuted.toggle()
         mpvPlayer.setMuted(isMuted)
+        nativePlayer.isMuted = isMuted
         UserDefaults.standard.set(isMuted, forKey: Self.isMutedKey)
     }
 
@@ -915,6 +920,8 @@ killall lsd >/dev/null 2>&1 || true
         case .native:
             playbackEngineStatus = "播放引擎：AVPlayer"
             syncText = "播放链路：系统原生"
+            nativePlayer.volume = Float(volume / 100.0)
+            nativePlayer.isMuted = isMuted
         case .mpv:
             playbackEngineStatus = "播放引擎：mpv/libmpv"
             syncText = "播放链路：mpv/libmpv"
