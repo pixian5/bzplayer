@@ -182,7 +182,6 @@ final class PlayerViewModel: NSObject, ObservableObject {
     private static let audioDelayMsKey = "settings.audioDelayMs"
     private static let audioDelayStepMsKey = "settings.audioDelayStepMs"
     private static let showRecentFilesKey = "settings.showRecentFiles"
-    private static let recentFilesKey = "settings.recentFiles"
     private static let subtitleBackgroundOpacityKey = "settings.subtitleBackgroundOpacity"
 
     override init() {
@@ -213,10 +212,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         audioDelayMs = UserDefaults.standard.object(forKey: Self.audioDelayMsKey) as? Double ?? 0
         audioDelayStepMs = UserDefaults.standard.object(forKey: Self.audioDelayStepMsKey) as? Double ?? 50
         showRecentFiles = UserDefaults.standard.object(forKey: Self.showRecentFilesKey) as? Bool ?? true
-        recentFiles = UserDefaults.standard.stringArray(forKey: Self.recentFilesKey) ?? []
-        if let diskFiles = Self.loadRecentFilesFromDisk() {
-            recentFiles = diskFiles
-        }
+        recentFiles = Self.loadRecentFilesFromDisk() ?? []
         subtitleBackgroundOpacity = Self.clampSubtitleOpacity(UserDefaults.standard.object(forKey: Self.subtitleBackgroundOpacityKey) as? Int ?? 0)
         super.init()
 
@@ -575,7 +571,6 @@ final class PlayerViewModel: NSObject, ObservableObject {
         if recentFiles.count > 10 {
             recentFiles = Array(recentFiles.prefix(10))
         }
-        UserDefaults.standard.set(recentFiles, forKey: Self.recentFilesKey)
         Self.saveRecentFilesToDisk(recentFiles)
     }
 
