@@ -165,79 +165,158 @@ final class PlayerViewModel: NSObject, ObservableObject {
     private var playbackFailureTimer: Timer?
     private var selectedSubtitlePath: String?
 
-    private static let shortcutSeekSecondsKey = "settings.shortcutSeekSeconds"
-    private static let shortcutFrameStepCountKey = "settings.shortcutFrameStepCount"
-    private static let previousFileKeyCodeKey = "settings.previousFileKeyCode"
-    private static let nextFileKeyCodeKey = "settings.nextFileKeyCode"
-    private static let audioStepDownKeyCodeKey = "settings.audioStepDownKeyCode"
-    private static let audioStepUpKeyCodeKey = "settings.audioStepUpKeyCode"
-    private static let speedToggleKeyCodeKey = "settings.speedToggleKeyCode"
-    private static let playlistOrderKey = "settings.playlistOrder"
-    private static let loopModeKey = "settings.loopMode"
-    private static let windowOpenBehaviorKey = "settings.windowOpenBehavior"
-    private static let lastWindowFrameKey = "settings.lastWindowFrame"
-    private static let volumeKey = "settings.volume"
-    private static let isMutedKey = "settings.isMuted"
-    private static let allowMultipleWindowsKey = "settings.allowMultipleWindows"
-    private static let audioDelayMsKey = "settings.audioDelayMs"
-    private static let audioDelayStepMsKey = "settings.audioDelayStepMs"
-    private static let showRecentFilesKey = "settings.showRecentFiles"
-    private static let subtitleBackgroundOpacityKey = "settings.subtitleBackgroundOpacity"
+    private static let shortcutSeekSecondsKey = "shortcutSeekSeconds"
+    private static let shortcutFrameStepCountKey = "shortcutFrameStepCount"
+    private static let previousFileKeyCodeKey = "previousFileKeyCode"
+    private static let nextFileKeyCodeKey = "nextFileKeyCode"
+    private static let audioStepDownKeyCodeKey = "audioStepDownKeyCode"
+    private static let audioStepUpKeyCodeKey = "audioStepUpKeyCode"
+    private static let speedToggleKeyCodeKey = "speedToggleKeyCode"
+    private static let playlistOrderKey = "playlistOrder"
+    private static let loopModeKey = "loopMode"
+    private static let windowOpenBehaviorKey = "windowOpenBehavior"
+    private static let volumeKey = "volume"
+    private static let isMutedKey = "isMuted"
+    private static let allowMultipleWindowsKey = "allowMultipleWindows"
+    private static let audioDelayMsKey = "audioDelayMs"
+    private static let audioDelayStepMsKey = "audioDelayStepMs"
+    private static let showRecentFilesKey = "showRecentFiles"
+    private static let subtitleBackgroundOpacityKey = "subtitleBackgroundOpacity"
+
+    // MARK: - 文件存储路径
+    private static var settingsDir: URL {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let dir = appSupport.appendingPathComponent("BZPlayer")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    private static var settingsURL: URL {
+        settingsDir.appendingPathComponent("settings.json")
+    }
+
+    private static var fileSettingsURL: URL {
+        settingsDir.appendingPathComponent("fileSettings.json")
+    }
+
+    // MARK: - 全局设置数据结构
+    private struct AppSettings: Codable {
+        var shortcutSeekSeconds: Double = 5
+        var shortcutFrameStepCount: Int = 1
+        var previousFileKeyCode: Int = 33
+        var nextFileKeyCode: Int = 30
+        var audioStepDownKeyCode: Int = 43
+        var audioStepUpKeyCode: Int = 47
+        var speedToggleKeyCode: Int = 24
+        var playlistOrder: String = PlaylistOrder.ascending.rawValue
+        var loopMode: String = LoopMode.playlist.rawValue
+        var windowOpenBehavior: String = WindowOpenBehavior.maximized.rawValue
+        var volume: Double = 100.0
+        var isMuted: Bool = false
+        var allowMultipleWindows: Bool = true
+        var audioDelayMs: Double = 0
+        var audioDelayStepMs: Double = 50
+        var showRecentFiles: Bool = true
+        var subtitleBackgroundOpacity: Int = 0
+        var lastWindowFrame: String? = nil
+    }
+
+    // MARK: - 单文件设置数据结构（进度/速度/音频延迟）
+    private struct FileSettings: Codable {
+        var progress: Double = 0
+        var speed: Double = 1.0
+        var audioDelayMs: Double = 0
+    }
 
     override init() {
-        let storedSeekSeconds = UserDefaults.standard.object(forKey: Self.shortcutSeekSecondsKey) as? Double
-        let storedFrameStepCount = UserDefaults.standard.object(forKey: Self.shortcutFrameStepCountKey) as? Int
-        let storedPreviousFileKeyCode = UserDefaults.standard.object(forKey: Self.previousFileKeyCodeKey) as? Int
-        let storedNextFileKeyCode = UserDefaults.standard.object(forKey: Self.nextFileKeyCodeKey) as? Int
-        let storedAudioStepDownKeyCode = UserDefaults.standard.object(forKey: Self.audioStepDownKeyCodeKey) as? Int
-        let storedAudioStepUpKeyCode = UserDefaults.standard.object(forKey: Self.audioStepUpKeyCodeKey) as? Int
-        let storedSpeedToggleKeyCode = UserDefaults.standard.object(forKey: Self.speedToggleKeyCodeKey) as? Int
-        let storedPlaylistOrder = UserDefaults.standard.string(forKey: Self.playlistOrderKey).flatMap(PlaylistOrder.init(rawValue:))
-        let storedLoopMode = UserDefaults.standard.string(forKey: Self.loopModeKey).flatMap(LoopMode.init(rawValue:))
-        let storedWindowOpenBehavior = UserDefaults.standard.string(forKey: Self.windowOpenBehaviorKey).flatMap(WindowOpenBehavior.init(rawValue:))
-        let storedAllowMultipleWindows = UserDefaults.standard.object(forKey: Self.allowMultipleWindowsKey) as? Bool
-        shortcutSeekSeconds = max(storedSeekSeconds ?? 5, 0.1)
-        shortcutFrameStepCount = max(storedFrameStepCount ?? 1, 1)
-        previousFileKeyCode = UInt16(storedPreviousFileKeyCode ?? 33) // [
-        nextFileKeyCode = UInt16(storedNextFileKeyCode ?? 30)     // ]
-        audioStepDownKeyCode = UInt16(storedAudioStepDownKeyCode ?? 43)  // ,
-        audioStepUpKeyCode = UInt16(storedAudioStepUpKeyCode ?? 47)      // .
-        speedToggleKeyCode = UInt16(storedSpeedToggleKeyCode ?? 24)      // =
-        playlistOrder = storedPlaylistOrder ?? .ascending
-        loopMode = storedLoopMode ?? .playlist
-        windowOpenBehavior = storedWindowOpenBehavior ?? .maximized
-        allowMultipleWindows = storedAllowMultipleWindows ?? true
-        volume = UserDefaults.standard.object(forKey: Self.volumeKey) as? Double ?? 100.0
-        isMuted = UserDefaults.standard.bool(forKey: Self.isMutedKey)
-        audioDelayMs = UserDefaults.standard.object(forKey: Self.audioDelayMsKey) as? Double ?? 0
-        audioDelayStepMs = UserDefaults.standard.object(forKey: Self.audioDelayStepMsKey) as? Double ?? 50
-        showRecentFiles = UserDefaults.standard.object(forKey: Self.showRecentFilesKey) as? Bool ?? true
+        let settings = Self.loadSettings()
+        shortcutSeekSeconds = max(settings.shortcutSeekSeconds, 0.1)
+        shortcutFrameStepCount = max(settings.shortcutFrameStepCount, 1)
+        previousFileKeyCode = UInt16(settings.previousFileKeyCode)
+        nextFileKeyCode = UInt16(settings.nextFileKeyCode)
+        audioStepDownKeyCode = UInt16(settings.audioStepDownKeyCode)
+        audioStepUpKeyCode = UInt16(settings.audioStepUpKeyCode)
+        speedToggleKeyCode = UInt16(settings.speedToggleKeyCode)
+        playlistOrder = PlaylistOrder(rawValue: settings.playlistOrder) ?? .ascending
+        loopMode = LoopMode(rawValue: settings.loopMode) ?? .playlist
+        windowOpenBehavior = WindowOpenBehavior(rawValue: settings.windowOpenBehavior) ?? .maximized
+        volume = settings.volume
+        isMuted = settings.isMuted
+        allowMultipleWindows = settings.allowMultipleWindows
+        audioDelayMs = settings.audioDelayMs
+        audioDelayStepMs = settings.audioDelayStepMs
+        showRecentFiles = settings.showRecentFiles
+        subtitleBackgroundOpacity = Self.clampSubtitleOpacity(settings.subtitleBackgroundOpacity)
         recentFiles = Self.loadRecentFilesFromDisk() ?? []
-        subtitleBackgroundOpacity = Self.clampSubtitleOpacity(UserDefaults.standard.object(forKey: Self.subtitleBackgroundOpacityKey) as? Int ?? 0)
         super.init()
 
-        // Apply volume and mute settings to mpv player
         mpvPlayer.setVolume(volume)
         mpvPlayer.setMuted(isMuted)
         nativePlayer.volume = Float(volume / 100.0)
         nativePlayer.isMuted = isMuted
-        
-        // Force migration of old navigation defaults to avoid conflict with new speed shortcuts
-        if UserDefaults.standard.object(forKey: Self.previousFileKeyCodeKey) == nil || 
-           UserDefaults.standard.integer(forKey: Self.previousFileKeyCodeKey) == 41 {
-            previousFileKeyCode = 33
-            UserDefaults.standard.set(33, forKey: Self.previousFileKeyCodeKey)
-        }
-        if UserDefaults.standard.object(forKey: Self.nextFileKeyCodeKey) == nil || 
-           UserDefaults.standard.integer(forKey: Self.nextFileKeyCodeKey) == 39 {
-            nextFileKeyCode = 30
-            UserDefaults.standard.set(30, forKey: Self.nextFileKeyCodeKey)
-        }
 
         bindMpvCallbacks()
         bindNativePlayer()
         selectBackend(.native)
         mpvPlayer.setSubtitleBackgroundOpacity(subtitleBackgroundOpacity)
+    }
+
+    private static func loadSettings() -> AppSettings {
+        guard let data = try? Data(contentsOf: settingsURL),
+              let settings = try? JSONDecoder().decode(AppSettings.self, from: data) else {
+            return AppSettings()
+        }
+        return settings
+    }
+
+    private func saveSettings() {
+        var settings = Self.loadSettings()
+        settings.shortcutSeekSeconds = shortcutSeekSeconds
+        settings.shortcutFrameStepCount = shortcutFrameStepCount
+        settings.previousFileKeyCode = Int(previousFileKeyCode)
+        settings.nextFileKeyCode = Int(nextFileKeyCode)
+        settings.audioStepDownKeyCode = Int(audioStepDownKeyCode)
+        settings.audioStepUpKeyCode = Int(audioStepUpKeyCode)
+        settings.speedToggleKeyCode = Int(speedToggleKeyCode)
+        settings.playlistOrder = playlistOrder.rawValue
+        settings.loopMode = loopMode.rawValue
+        settings.windowOpenBehavior = windowOpenBehavior.rawValue
+        settings.volume = volume
+        settings.isMuted = isMuted
+        settings.allowMultipleWindows = allowMultipleWindows
+        settings.audioDelayMs = audioDelayMs
+        settings.audioDelayStepMs = audioDelayStepMs
+        settings.showRecentFiles = showRecentFiles
+        settings.subtitleBackgroundOpacity = subtitleBackgroundOpacity
+        if let frame = attachedWindow {
+            settings.lastWindowFrame = NSStringFromRect(frame.frame)
+        }
+        guard let data = try? JSONEncoder().encode(settings) else { return }
+        try? data.write(to: Self.settingsURL)
+    }
+
+    private static func loadFileSettings() -> [String: FileSettings] {
+        guard let data = try? Data(contentsOf: fileSettingsURL),
+              let dict = try? JSONDecoder().decode([String: FileSettings].self, from: data) else {
+            return [:]
+        }
+        return dict
+    }
+
+    private static func saveFileSettings(_ dict: [String: FileSettings]) {
+        guard let data = try? JSONEncoder().encode(dict) else { return }
+        try? data.write(to: fileSettingsURL)
+    }
+
+    private func loadFileSettings(for url: URL) -> FileSettings {
+        let dict = Self.loadFileSettings()
+        return dict[url.path] ?? FileSettings()
+    }
+
+    private func saveFileSettings(for url: URL, _ settings: FileSettings) {
+        var dict = Self.loadFileSettings()
+        dict[url.path] = settings
+        Self.saveFileSettings(dict)
     }
 
     deinit {
@@ -370,20 +449,19 @@ final class PlayerViewModel: NSObject, ObservableObject {
         mpvPlayer.setVolume(volume)
         nativePlayer.volume = Float(volume / 100.0)
         print("[BZPlayer] setVolume: \(volume), nativePlayer.volume: \(nativePlayer.volume), isMuted: \(isMuted)")
-        UserDefaults.standard.set(volume, forKey: Self.volumeKey)
         if volume > 0 {
             isMuted = false
             mpvPlayer.setMuted(false)
             nativePlayer.isMuted = false
-            UserDefaults.standard.set(false, forKey: Self.isMutedKey)
         }
+        saveSettings()
     }
 
     func toggleMute() {
         isMuted.toggle()
         mpvPlayer.setMuted(isMuted)
         nativePlayer.isMuted = isMuted
-        UserDefaults.standard.set(isMuted, forKey: Self.isMutedKey)
+        saveSettings()
     }
 
     func selectPlaylistItem(_ index: Int) {
@@ -456,61 +534,67 @@ final class PlayerViewModel: NSObject, ObservableObject {
     func setShortcutSeekSeconds(_ value: Double) {
         let normalized = max(value, 0.1)
         shortcutSeekSeconds = normalized
-        UserDefaults.standard.set(normalized, forKey: Self.shortcutSeekSecondsKey)
+        saveSettings()
     }
 
     func setShortcutFrameStepCount(_ value: Int) {
         let normalized = max(value, 1)
         shortcutFrameStepCount = normalized
-        UserDefaults.standard.set(normalized, forKey: Self.shortcutFrameStepCountKey)
+        saveSettings()
     }
 
     func setPreviousFileKeyCode(_ value: UInt16) {
         previousFileKeyCode = value
-        UserDefaults.standard.set(Int(value), forKey: Self.previousFileKeyCodeKey)
+        saveSettings()
     }
 
     func setNextFileKeyCode(_ value: UInt16) {
         nextFileKeyCode = value
-        UserDefaults.standard.set(Int(value), forKey: Self.nextFileKeyCodeKey)
+        saveSettings()
     }
 
     func setAudioStepDownKeyCode(_ value: UInt16) {
         audioStepDownKeyCode = value
-        UserDefaults.standard.set(Int(value), forKey: Self.audioStepDownKeyCodeKey)
+        saveSettings()
     }
 
     func setAudioStepUpKeyCode(_ value: UInt16) {
         audioStepUpKeyCode = value
-        UserDefaults.standard.set(Int(value), forKey: Self.audioStepUpKeyCodeKey)
+        saveSettings()
     }
 
     func setSpeedToggleKeyCode(_ value: UInt16) {
         speedToggleKeyCode = value
-        UserDefaults.standard.set(Int(value), forKey: Self.speedToggleKeyCodeKey)
+        saveSettings()
     }
 
     func setWindowOpenBehavior(_ behavior: WindowOpenBehavior) {
         windowOpenBehavior = behavior
-        UserDefaults.standard.set(behavior.rawValue, forKey: Self.windowOpenBehaviorKey)
+        saveSettings()
         applyInitialWindowBehaviorIfNeeded(force: true)
     }
 
     func setAllowMultipleWindows(_ value: Bool) {
         allowMultipleWindows = value
-        UserDefaults.standard.set(value, forKey: Self.allowMultipleWindowsKey)
+        saveSettings()
     }
 
     func setShowRecentFiles(_ value: Bool) {
         showRecentFiles = value
-        UserDefaults.standard.set(value, forKey: Self.showRecentFilesKey)
+        saveSettings()
     }
 
     func setSubtitleBackgroundOpacity(_ value: Int) {
         let normalized = Self.clampSubtitleOpacity(value)
         subtitleBackgroundOpacity = normalized
-        UserDefaults.standard.set(normalized, forKey: Self.subtitleBackgroundOpacityKey)
+        saveSettings()
         mpvPlayer.setSubtitleBackgroundOpacity(normalized)
+    }
+
+    func setAudioDelayStepMs(_ value: Double) {
+        let normalized = max(value, 1)
+        audioDelayStepMs = normalized
+        saveSettings()
     }
 
     func subtitleMenuEntries() -> [SubtitleMenuEntry] {
@@ -595,32 +679,26 @@ final class PlayerViewModel: NSObject, ObservableObject {
 
     func adjustAudioDelay(by deltaMs: Double) {
         audioDelayMs += deltaMs
-        UserDefaults.standard.set(audioDelayMs, forKey: Self.audioDelayMsKey)
+        saveSettings()
         applyAudioDelay()
-        // 保存文件级别的音频延迟
         if let url = currentFileURL {
-            saveAudioDelayForFile(url)
+            var fileSettings = loadFileSettings(for: url)
+            fileSettings.audioDelayMs = audioDelayMs
+            saveFileSettings(for: url, fileSettings)
         }
-        // 显示 Toast 提示
         showToastMessage(String(format: "音频延迟: %.0f ms", audioDelayMs))
     }
 
     func resetAudioDelay() {
         audioDelayMs = 0
-        UserDefaults.standard.set(0, forKey: Self.audioDelayMsKey)
+        saveSettings()
         applyAudioDelay()
-        // 保存文件级别的音频延迟
         if let url = currentFileURL {
-            saveAudioDelayForFile(url)
+            var fileSettings = loadFileSettings(for: url)
+            fileSettings.audioDelayMs = 0
+            saveFileSettings(for: url, fileSettings)
         }
-        // 显示 Toast 提示
         showToastMessage("音频延迟: 已重置")
-    }
-
-    func setAudioDelayStepMs(_ value: Double) {
-        let normalized = max(value, 1)
-        audioDelayStepMs = normalized
-        UserDefaults.standard.set(normalized, forKey: Self.audioDelayStepMsKey)
     }
 
     func applyAudioDelay() {
@@ -632,32 +710,23 @@ final class PlayerViewModel: NSObject, ObservableObject {
     }
 
     func refreshPreferences() {
-        let storedSeekSeconds = UserDefaults.standard.object(forKey: Self.shortcutSeekSecondsKey) as? Double
-        let storedFrameStepCount = UserDefaults.standard.object(forKey: Self.shortcutFrameStepCountKey) as? Int
-        let storedPreviousFileKeyCode = UserDefaults.standard.object(forKey: Self.previousFileKeyCodeKey) as? Int
-        let storedNextFileKeyCode = UserDefaults.standard.object(forKey: Self.nextFileKeyCodeKey) as? Int
-        let storedWindowOpenBehavior = UserDefaults.standard.string(forKey: Self.windowOpenBehaviorKey).flatMap(WindowOpenBehavior.init(rawValue:))
-        let storedAllowMultipleWindows = UserDefaults.standard.object(forKey: Self.allowMultipleWindowsKey) as? Bool
-        let storedAudioDelayStepMs = UserDefaults.standard.object(forKey: Self.audioDelayStepMsKey) as? Double
-        let storedShowRecentFiles = UserDefaults.standard.object(forKey: Self.showRecentFilesKey) as? Bool
-        let storedSubtitleBackgroundOpacity = UserDefaults.standard.object(forKey: Self.subtitleBackgroundOpacityKey) as? Int
-
-        shortcutSeekSeconds = max(storedSeekSeconds ?? shortcutSeekSeconds, 0.1)
-        shortcutFrameStepCount = max(storedFrameStepCount ?? shortcutFrameStepCount, 1)
-        previousFileKeyCode = UInt16(storedPreviousFileKeyCode ?? Int(previousFileKeyCode))
-        nextFileKeyCode = UInt16(storedNextFileKeyCode ?? Int(nextFileKeyCode))
-        windowOpenBehavior = storedWindowOpenBehavior ?? windowOpenBehavior
-        allowMultipleWindows = storedAllowMultipleWindows ?? allowMultipleWindows
-        audioDelayStepMs = max(storedAudioDelayStepMs ?? audioDelayStepMs, 1)
-        showRecentFiles = storedShowRecentFiles ?? showRecentFiles
-        subtitleBackgroundOpacity = Self.clampSubtitleOpacity(storedSubtitleBackgroundOpacity ?? subtitleBackgroundOpacity)
+        let settings = Self.loadSettings()
+        shortcutSeekSeconds = max(settings.shortcutSeekSeconds, 0.1)
+        shortcutFrameStepCount = max(settings.shortcutFrameStepCount, 1)
+        previousFileKeyCode = UInt16(settings.previousFileKeyCode)
+        nextFileKeyCode = UInt16(settings.nextFileKeyCode)
+        windowOpenBehavior = WindowOpenBehavior(rawValue: settings.windowOpenBehavior) ?? windowOpenBehavior
+        allowMultipleWindows = settings.allowMultipleWindows
+        audioDelayStepMs = max(settings.audioDelayStepMs, 1)
+        showRecentFiles = settings.showRecentFiles
+        subtitleBackgroundOpacity = Self.clampSubtitleOpacity(settings.subtitleBackgroundOpacity)
         mpvPlayer.setSubtitleBackgroundOpacity(subtitleBackgroundOpacity)
     }
 
     func togglePlaylistOrder() {
         playlist.reverse()
         playlistOrder = playlistOrder == .ascending ? .descending : .ascending
-        UserDefaults.standard.set(playlistOrder.rawValue, forKey: Self.playlistOrderKey)
+        saveSettings()
         if let currentFileURL {
             currentIndex = playlist.firstIndex(of: currentFileURL) ?? -1
         }
@@ -672,7 +741,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         case .none:
             loopMode = .singleFile
         }
-        UserDefaults.standard.set(loopMode.rawValue, forKey: Self.loopModeKey)
+        saveSettings()
     }
 
     func switchPlaybackBackend() {
@@ -965,9 +1034,8 @@ killall lsd >/dev/null 2>&1 || true
         // IMPORTANT: If loopMode was set to .none due to playback failure, restore it
         // We detect this by checking if it was changed while a playbackError existed
         if loopMode == .none && playbackError == nil {
-            let savedMode = UserDefaults.standard.string(forKey: Self.loopModeKey)
-            let restoredMode = LoopMode(rawValue: savedMode ?? "") ?? .playlist
-            loopMode = restoredMode
+            let settings = Self.loadSettings()
+            loopMode = LoopMode(rawValue: settings.loopMode) ?? .playlist
             debugLog("[BZPlayer] Restored loop mode to: \(loopMode)")
         }
 
@@ -1005,8 +1073,7 @@ killall lsd >/dev/null 2>&1 || true
         if let savedAudioDelay = loadAudioDelayForFile(url) {
             audioDelayMs = savedAudioDelay
         } else {
-            // 如果该文件没有记忆的延迟,使用全局默认值
-            audioDelayMs = UserDefaults.standard.object(forKey: Self.audioDelayMsKey) as? Double ?? 0
+            audioDelayMs = 0
         }
 
         let resumeTime = forceStartAtBeginning ? nil : loadSavedProgress(for: url)
@@ -1238,53 +1305,47 @@ killall lsd >/dev/null 2>&1 || true
         attachedWindow?.title = windowTitle
     }
 
-    private func progressKey(for url: URL) -> String {
-        "playback.progress.\(url.path)"
-    }
-
     private func loadSavedProgress(for url: URL) -> Double? {
-        let value = UserDefaults.standard.double(forKey: progressKey(for: url))
-        return value > 0 ? value : nil
+        let settings = loadFileSettings(for: url)
+        return settings.progress > 0 ? settings.progress : nil
     }
 
     private func saveCurrentProgress() {
         guard let url = currentFileURL, currentTime.isFinite, currentTime > 0 else { return }
-        // Don't save progress if we're at the end of the video (will be cleared)
         if duration > 0 && currentTime >= max(duration - 0.5, 0) {
             return
         }
-        UserDefaults.standard.set(currentTime, forKey: progressKey(for: url))
+        var fileSettings = loadFileSettings(for: url)
+        fileSettings.progress = currentTime
+        saveFileSettings(for: url, fileSettings)
     }
 
     private func clearSavedProgress(for url: URL) {
-        UserDefaults.standard.set(0, forKey: progressKey(for: url))
-    }
-
-    private func speedKey(for url: URL) -> String {
-        "playback.speed.\(url.path)"
+        var fileSettings = loadFileSettings(for: url)
+        fileSettings.progress = 0
+        saveFileSettings(for: url, fileSettings)
     }
 
     private func loadSpeedForFile(_ url: URL) -> Double? {
-        let value = UserDefaults.standard.double(forKey: speedKey(for: url))
-        return value > 0 ? value : nil
+        let settings = loadFileSettings(for: url)
+        return settings.speed > 0 ? settings.speed : nil
     }
 
     private func saveSpeedForFile(_ url: URL) {
-        UserDefaults.standard.set(speed, forKey: speedKey(for: url))
-    }
-
-    private func audioDelayKey(for url: URL) -> String {
-        "playback.audioDelay.\(url.path)"
+        var fileSettings = loadFileSettings(for: url)
+        fileSettings.speed = speed
+        saveFileSettings(for: url, fileSettings)
     }
 
     private func loadAudioDelayForFile(_ url: URL) -> Double? {
-        let key = audioDelayKey(for: url)
-        guard UserDefaults.standard.object(forKey: key) != nil else { return nil }
-        return UserDefaults.standard.double(forKey: key)
+        let settings = loadFileSettings(for: url)
+        return settings.audioDelayMs != 0 ? settings.audioDelayMs : nil
     }
 
     private func saveAudioDelayForFile(_ url: URL) {
-        UserDefaults.standard.set(audioDelayMs, forKey: audioDelayKey(for: url))
+        var fileSettings = loadFileSettings(for: url)
+        fileSettings.audioDelayMs = audioDelayMs
+        saveFileSettings(for: url, fileSettings)
     }
 
     private func showToastMessage(_ message: String) {
@@ -1407,7 +1468,8 @@ killall lsd >/dev/null 2>&1 || true
     }
 
     private func restoreRememberedWindowFrame(on window: NSWindow) -> Bool {
-        guard let frameString = UserDefaults.standard.string(forKey: Self.lastWindowFrameKey) else { return false }
+        let settings = Self.loadSettings()
+        guard let frameString = settings.lastWindowFrame else { return false }
         let frame = NSRectFromString(frameString)
         guard !frame.isEmpty else { return false }
         exitFullscreenIfNeeded(window) {
@@ -1447,7 +1509,7 @@ killall lsd >/dev/null 2>&1 || true
 
     private func persistWindowFrameIfNeeded(_ window: NSWindow) {
         guard !window.styleMask.contains(.fullScreen) else { return }
-        UserDefaults.standard.set(NSStringFromRect(window.frame), forKey: Self.lastWindowFrameKey)
+        saveSettings()
     }
 
     private func showAlert(title: String, message: String) {
