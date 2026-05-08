@@ -289,6 +289,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         settings.audioDelayStepMs = audioDelayStepMs
         settings.showRecentFiles = showRecentFiles
         settings.subtitleBackgroundOpacity = subtitleBackgroundOpacity
+        settings.lastUsedSpeed = speed
         if let frame = attachedWindow {
             settings.lastWindowFrame = NSStringFromRect(frame.frame)
         }
@@ -511,11 +512,9 @@ final class PlayerViewModel: NSObject, ObservableObject {
             saveSpeedForFile(url)
             debugLog("[BZPlayer] saveSpeedForFile called - url: \(url.lastPathComponent), speed: \(speed)")
         }
-        // Remember as global last used speed
-        var settings = Self.loadSettings()
-        settings.lastUsedSpeed = speed
-        Self.saveSettings(settings)
-        
+        // Remember as global last used speed and save all settings
+        saveSettings()
+
         switch playbackBackend {
         case .native:
             nativePlayer.rate = isPaused ? 0 : Float(speed)
@@ -1072,9 +1071,11 @@ killall lsd >/dev/null 2>&1 || true
             speed = savedSpeed
             debugLog("[BZPlayer] Restored speed for file: \(savedSpeed)")
         } else {
+            // 没有独立速度时，继承全局记忆速度，并保存为该文件的独立速度
             let lastUsed = Self.loadSettings().lastUsedSpeed
             speed = lastUsed
-            debugLog("[BZPlayer] No saved speed found, using last used speed: \(lastUsed)")
+            saveSpeedForFile(url)
+            debugLog("[BZPlayer] Inherited last used speed: \(lastUsed), saved as file's own speed")
         }
 
         // 恢复该文件记忆的音频延迟
