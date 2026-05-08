@@ -219,6 +219,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         var showRecentFiles: Bool = true
         var subtitleBackgroundOpacity: Int = 0
         var lastWindowFrame: String? = nil
+        var lastUsedSpeed: Double = 1.0
     }
 
     // MARK: - 单文件设置数据结构（进度/速度/音频延迟）
@@ -510,6 +511,11 @@ final class PlayerViewModel: NSObject, ObservableObject {
             saveSpeedForFile(url)
             debugLog("[BZPlayer] saveSpeedForFile called - url: \(url.lastPathComponent), speed: \(speed)")
         }
+        // Remember as global last used speed
+        var settings = Self.loadSettings()
+        settings.lastUsedSpeed = speed
+        Self.saveSettings(settings)
+        
         switch playbackBackend {
         case .native:
             nativePlayer.rate = isPaused ? 0 : Float(speed)
@@ -1066,7 +1072,9 @@ killall lsd >/dev/null 2>&1 || true
             speed = savedSpeed
             debugLog("[BZPlayer] Restored speed for file: \(savedSpeed)")
         } else {
-            debugLog("[BZPlayer] No saved speed found, keeping current speed: \(speed)")
+            let lastUsed = Self.loadSettings().lastUsedSpeed
+            speed = lastUsed
+            debugLog("[BZPlayer] No saved speed found, using last used speed: \(lastUsed)")
         }
 
         // 恢复该文件记忆的音频延迟
