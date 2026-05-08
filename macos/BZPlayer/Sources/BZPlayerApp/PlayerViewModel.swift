@@ -214,6 +214,9 @@ final class PlayerViewModel: NSObject, ObservableObject {
         audioDelayStepMs = UserDefaults.standard.object(forKey: Self.audioDelayStepMsKey) as? Double ?? 50
         showRecentFiles = UserDefaults.standard.object(forKey: Self.showRecentFilesKey) as? Bool ?? true
         recentFiles = UserDefaults.standard.stringArray(forKey: Self.recentFilesKey) ?? []
+        if let diskFiles = Self.loadRecentFilesFromDisk() {
+            recentFiles = diskFiles
+        }
         subtitleBackgroundOpacity = Self.clampSubtitleOpacity(UserDefaults.standard.object(forKey: Self.subtitleBackgroundOpacityKey) as? Int ?? 0)
         super.init()
 
@@ -573,6 +576,26 @@ final class PlayerViewModel: NSObject, ObservableObject {
             recentFiles = Array(recentFiles.prefix(10))
         }
         UserDefaults.standard.set(recentFiles, forKey: Self.recentFilesKey)
+        Self.saveRecentFilesToDisk(recentFiles)
+    }
+
+    private static var persistentRecentFilesURL: URL? {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+        let dir = appSupport?.appendingPathComponent("BZPlayer")
+        if let dir = dir, !FileManager.default.fileExists(atPath: dir.path) {
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        }
+        return dir?.appendingPathComponent("recentFiles.json")
+    }
+
+    private static func loadRecentFilesFromDisk() -> [String]? {
+        guard let url = persistentRecentFilesURL, let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode([String].self, from: data)
+    }
+
+    private static func saveRecentFilesToDisk(_ files: [String]) {
+        guard let url = persistentRecentFilesURL, let data = try? JSONEncoder().encode(files) else { return }
+        try? data.write(to: url)
     }
 
     func adjustAudioDelay(by deltaMs: Double) {

@@ -160,7 +160,7 @@ struct PlayerRootView: View {
                         }
                     }
 
-                if !viewModel.hasOpenedFile && viewModel.showRecentFiles && !viewModel.recentFiles.isEmpty {
+                if !viewModel.hasOpenedFile && viewModel.showRecentFiles {
                     RecentFilesView(containerWidth: proxy.size.width)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
