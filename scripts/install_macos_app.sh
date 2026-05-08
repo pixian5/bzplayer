@@ -1,7 +1,13 @@
 #!/bin/zsh
 set -euo pipefail
 
-APP_NAME="BZPlayer.app"
+# 用法: zsh scripts/install_macos_app.sh "commit 消息"
+# 示例: zsh scripts/install_macos_app.sh "修复播放卡顿"
+if [[ $# -lt 1 ]]; then
+    echo "用法: zsh scripts/install_macos_app.sh \"commit 消息\""
+    exit 1
+fi
+COMMIT_MSG="$1"
 APP_DIR="/Applications/${APP_NAME}"
 BIN_SOURCE="/Users/x/code/bzplayer-main/macos/BZPlayer/.build/arm64-apple-macosx/release/BZPlayer"
 PROJECT_DIR="/Users/x/code/bzplayer-main/macos/BZPlayer"
@@ -106,3 +112,10 @@ chmod +x "${APP_DIR}/Contents/MacOS/BZPlayer"
 killall cfprefsd >/dev/null 2>&1 || true
 killall lsd >/dev/null 2>&1 || true
 open -a "${APP_DIR}"
+
+echo "[deploy] Committing and pushing..."
+cd /Users/x/code/bzplayer-main
+git add -A
+git commit -m "$(printf '%s\n\nCo-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>' "$COMMIT_MSG")"
+git push origin main
+echo "[deploy] Done!"
