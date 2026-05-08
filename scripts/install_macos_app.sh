@@ -88,7 +88,7 @@ mkdir -p "${APP_DIR}/Contents/MacOS"
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
     <key>CFBundleIconFile</key>
-    <string>AppIcon</string>
+    <string>AppIcon.icns</string>
 </dict>
 </plist>
 EOF

@@ -306,6 +306,9 @@ final class PlayerViewModel: NSObject, ObservableObject {
         case .native:
             nativePlayer.play()
             nativePlayer.rate = Float(speed)
+            // 强制刷新视频帧：AVPlayer 暂停后恢复时可能不渲染，seek 0.001s 强制刷新
+            let currentTime = nativePlayer.currentTime()
+            nativePlayer.seek(to: currentTime, toleranceBefore: .zero, toleranceAfter: .zero)
             isPaused = false
         case .mpv:
             mpvPlayer.play()
