@@ -1067,15 +1067,21 @@ killall lsd >/dev/null 2>&1 || true
         applyWindowBehaviorForCurrentMedia(isFirstOpen: isFirstOpen)
 
         // 恢复该文件记忆的速度
-        if let savedSpeed = loadSpeedForFile(url) {
-            speed = savedSpeed
-            debugLog("[BZPlayer] Restored speed for file: \(savedSpeed)")
+        if isFirstOpen {
+            // 首次打开：用文件独立速度或全局记忆速度
+            if let savedSpeed = loadSpeedForFile(url) {
+                speed = savedSpeed
+                debugLog("[BZPlayer] Restored speed for file: \(savedSpeed)")
+            } else {
+                let lastUsed = Self.loadSettings().lastUsedSpeed
+                speed = lastUsed
+                saveSpeedForFile(url)
+                debugLog("[BZPlayer] Inherited last used speed: \(lastUsed)")
+            }
         } else {
-            // 没有独立速度时，继承全局记忆速度，并保存为该文件的独立速度
-            let lastUsed = Self.loadSettings().lastUsedSpeed
-            speed = lastUsed
+            // 同一窗口切换：保持当前速度，并保存为新文件的独立速度
             saveSpeedForFile(url)
-            debugLog("[BZPlayer] Inherited last used speed: \(lastUsed), saved as file's own speed")
+            debugLog("[BZPlayer] Keeping current speed: \(speed) for new file")
         }
 
         // 恢复该文件记忆的音频延迟
