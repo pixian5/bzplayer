@@ -179,3 +179,13 @@ func codecDescription(from formatDescription: Any?, mediaType: String) -> String
     let subtype = CMFormatDescriptionGetMediaSubType(formatDescription as! CMFormatDescription)
     return "\(fourCCString(subtype)) (\(subtype))"
 }
+func formatSeconds(_ time: Double) -> String {
+    let total = Int(time)
+    let s = total % 60
+    let m = (total / 60) % 60
+    let h = total / 3600
+    if h > 0 {
+        return String(format: "%d:%02d:%02d", h, m, s)
+    }
+    return String(format: "%02d:%02d", m, s)
+}

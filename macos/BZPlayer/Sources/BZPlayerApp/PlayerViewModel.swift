@@ -125,6 +125,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
     @Published var showRecentFiles: Bool = true
     @Published var recentFiles: [String] = []
     @Published var subtitleBackgroundOpacity: Int
+    @Published var playlistDurations: [URL: Double] = [:]
 
     var onShowFileInfo: ((String) -> Void)?
 
@@ -1370,6 +1371,24 @@ killall lsd >/dev/null 2>&1 || true
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
             self?.showToast = false
         }
+    }
+
+    func fetchPlaylistDuration(for url: URL) async {
+        if playlistDurations[url] != nil { return }
+        let asset = AVURLAsset(url: url)
+        do {
+            let duration = try await asset.load(.duration)
+            let seconds = CMTimeGetSeconds(duration)
+            if seconds.isFinite {
+                playlistDurations[url] = seconds
+            }
+        } catch {
+            debugLog("Failed to fetch duration for \(url): \(error)")
+        }
+    }
+
+    func revealInFinder(url: URL) {
+        NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 
     private func applyInitialWindowBehaviorIfNeeded(force: Bool = false) {

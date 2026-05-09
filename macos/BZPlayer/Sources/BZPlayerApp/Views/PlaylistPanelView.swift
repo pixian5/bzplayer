@@ -6,6 +6,8 @@ struct PlaylistPanelView: View {
     @Binding var isHoveringPlaylist: Bool
     @Binding var hoveredPlaylistIndex: Int?
 
+    @State private var visibleDurations: Set<URL> = []
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
@@ -48,9 +50,11 @@ struct PlaylistPanelView: View {
                         ForEach(Array(viewModel.playlist.enumerated()), id: \.offset) { index, url in
                             let filename = url.lastPathComponent
                             let shouldExpand = hoveredPlaylistIndex == index && shouldShowHoverHint(for: filename, at: index)
+                            let hasDuration = visibleDurations.contains(url)
+                            let durationText = hasDuration ? (viewModel.playlistDurations[url].map { " [\(formatSeconds($0))]" } ?? " [...]") : ""
 
                             HStack(alignment: .top) {
-                                Text(filename)
+                                Text(filename + durationText)
                                     .lineLimit(shouldExpand ? nil : 1)
                                     .fixedSize(horizontal: false, vertical: shouldExpand)
                                 Spacer()
@@ -68,13 +72,38 @@ struct PlaylistPanelView: View {
                             .contentShape(Rectangle())
                             .id(index)
                             .onTapGesture {
-                                viewModel.selectPlaylistItem(index)
+                                let flags = NSApp.currentEvent?.modifierFlags ?? []
+                                if flags.contains(.shift) || flags.contains(.control) {
+                                    Task {
+                                        await viewModel.fetchPlaylistDuration(for: url)
+                                        if let d = viewModel.playlistDurations[url] {
+                                            viewModel.toastMessage = "文件时长: \(formatSeconds(d))"
+                                            viewModel.showToast = true
+                                            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                                                viewModel.showToast = false
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    viewModel.selectPlaylistItem(index)
+                                }
                             }
                             .onHover { hovering in
                                 if hovering, shouldShowHoverHint(for: filename, at: index) {
                                     hoveredPlaylistIndex = index
                                 } else if hoveredPlaylistIndex == index {
                                     hoveredPlaylistIndex = nil
+                                }
+                            }
+                            .contextMenu {
+                                Button("打开文件位置") {
+                                    viewModel.revealInFinder(url: url)
+                                }
+                                Button("显示文件时长") {
+                                    visibleDurations.insert(url)
+                                    Task {
+                                        await viewModel.fetchPlaylistDuration(for: url)
+                                    }
                                 }
                             }
                         }
