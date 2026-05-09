@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 struct PlaylistPanelView: View {
     @EnvironmentObject var viewModel: PlayerViewModel
@@ -9,8 +10,8 @@ struct PlaylistPanelView: View {
     @State private var visibleDurations: Set<URL> = []
     @State private var selectedIndices: Set<Int> = []
     @State private var lastClickedIndex: Int? = nil
-    @State private var selectionClearTaskID: UUID = UUID()
-
+    // 监听 Cmd 键松开
+    @State private var flagsMonitor: Any? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -74,17 +75,20 @@ struct PlaylistPanelView: View {
                             .id(index)
                             .onTapGesture {
                                 let flags = NSApp.currentEvent?.modifierFlags ?? []
+                                let isCmd = flags.contains(.command)
                                 let isShift = flags.contains(.shift)
-                                let isCtrl = flags.contains(.command)
 
-                                if isCtrl {
+                                if isCmd {
+                                    // Cmd 点击：逐个选/取消，立即更新 toast
                                     if selectedIndices.contains(index) {
                                         selectedIndices.remove(index)
                                     } else {
                                         selectedIndices.insert(index)
-                                        lastClickedIndex = index
                                     }
+                                    lastClickedIndex = index
+                                    showTotalDurationToast()
                                 } else if isShift {
+                                    // Shift 连选
                                     if let last = lastClickedIndex {
                                         let minIndex = min(last, index)
                                         let maxIndex = max(last, index)
@@ -93,35 +97,11 @@ struct PlaylistPanelView: View {
                                         selectedIndices.insert(index)
                                     }
                                     lastClickedIndex = index
+                                    showTotalDurationToast()
                                 } else {
-                                    selectedIndices.removeAll()
-                                    lastClickedIndex = index
+                                    // 普通点击：清空选中，直接播放
+                                    clearSelection()
                                     viewModel.selectPlaylistItem(index)
-                                    return
-                                }
-
-                                if !selectedIndices.isEmpty {
-                                    Task {
-                                        var totalDuration: Double = 0
-                                        for i in selectedIndices {
-                                            guard i >= 0 && i < viewModel.playlist.count else { continue }
-                                            let u = viewModel.playlist[i]
-                                            await viewModel.fetchPlaylistDuration(for: u)
-                                            if let d = viewModel.playlistDurations[u] {
-                                                totalDuration += d
-                                            }
-                                        }
-                                        let currentTaskID = UUID()
-                                        selectionClearTaskID = currentTaskID
-                                        viewModel.toastMessage = "选中 \(selectedIndices.count) 个文件，总时长: \(formatSeconds(totalDuration))"
-                                        viewModel.showToast = true
-                                        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
-                                            if selectionClearTaskID == currentTaskID {
-                                                viewModel.showToast = false
-                                                selectedIndices.removeAll()
-                                            }
-                                        }
-                                    }
                                 }
                             }
                             .onHover { hovering in
@@ -166,11 +146,63 @@ struct PlaylistPanelView: View {
             isHoveringPlaylist = hovering
             if hovering {
                 shouldShowPlaylist = true
+                startFlagsMonitor()
             } else {
                 hoveredPlaylistIndex = nil
+                stopFlagsMonitor()
             }
         }
     }
+
+    // MARK: - 选中状态管理
+
+    private func clearSelection() {
+        selectedIndices.removeAll()
+        lastClickedIndex = nil
+        viewModel.showToast = false
+    }
+
+    /// 启动修饰键监听：Cmd 松开时清除选中
+    private func startFlagsMonitor() {
+        guard flagsMonitor == nil else { return }
+        flagsMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in
+            // 如果 command 键不再按下，且当前有选中项，则清空
+            if !event.modifierFlags.contains(.command), !self.selectedIndices.isEmpty {
+                self.clearSelection()
+            }
+            return event
+        }
+    }
+
+    private func stopFlagsMonitor() {
+        if let m = flagsMonitor {
+            NSEvent.removeMonitor(m)
+            flagsMonitor = nil
+        }
+    }
+
+    /// 异步计算选中文件总时长并更新 toast（立即显示，不自动隐藏）
+    private func showTotalDurationToast() {
+        guard !selectedIndices.isEmpty else {
+            viewModel.showToast = false
+            return
+        }
+        Task {
+            var totalDuration: Double = 0
+            for i in selectedIndices {
+                guard i >= 0 && i < viewModel.playlist.count else { continue }
+                let u = viewModel.playlist[i]
+                await viewModel.fetchPlaylistDuration(for: u)
+                if let d = viewModel.playlistDurations[u] {
+                    totalDuration += d
+                }
+            }
+            viewModel.toastMessage = "选中 \(selectedIndices.count) 个文件，总时长: \(formatSeconds(totalDuration))"
+            viewModel.showToast = true
+        }
+    }
+
+    // MARK: - 辅助
 
     private func shouldShowHoverHint(for filename: String, at index: Int) -> Bool {
         let font = NSFont.systemFont(ofSize: 13)
