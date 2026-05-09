@@ -75,7 +75,7 @@ struct PlaylistPanelView: View {
                             .onTapGesture {
                                 let flags = NSApp.currentEvent?.modifierFlags ?? []
                                 let isShift = flags.contains(.shift)
-                                let isCtrl = flags.contains(.control) || flags.contains(.command)
+                                let isCtrl = flags.contains(.command)
 
                                 if isCtrl {
                                     if selectedIndices.contains(index) {
