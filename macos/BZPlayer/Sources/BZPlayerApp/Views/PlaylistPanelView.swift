@@ -7,6 +7,8 @@ struct PlaylistPanelView: View {
     @Binding var hoveredPlaylistIndex: Int?
 
     @State private var visibleDurations: Set<URL> = []
+    @State private var selectedIndices: Set<Int> = []
+    @State private var lastClickedIndex: Int? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -58,34 +60,61 @@ struct PlaylistPanelView: View {
                                     .lineLimit(shouldExpand ? nil : 1)
                                     .fixedSize(horizontal: false, vertical: shouldExpand)
                                 Spacer()
-                                if index == viewModel.currentIndex {
-                                    Image(systemName: "play.fill")
-                                }
                             }
                             .font(.system(size: 13))
                             .foregroundStyle(.white)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 6)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(index == viewModel.currentIndex ? Color.blue.opacity(0.35) : Color.clear)
+                            .background(index == viewModel.currentIndex ? Color.blue.opacity(0.35) : (selectedIndices.contains(index) ? Color.white.opacity(0.2) : Color.clear))
                             .cornerRadius(6)
                             .contentShape(Rectangle())
                             .id(index)
                             .onTapGesture {
                                 let flags = NSApp.currentEvent?.modifierFlags ?? []
-                                if flags.contains(.shift) || flags.contains(.control) {
+                                let isShift = flags.contains(.shift)
+                                let isCtrl = flags.contains(.control) || flags.contains(.command)
+
+                                if isCtrl {
+                                    if selectedIndices.contains(index) {
+                                        selectedIndices.remove(index)
+                                    } else {
+                                        selectedIndices.insert(index)
+                                        lastClickedIndex = index
+                                    }
+                                } else if isShift {
+                                    if let last = lastClickedIndex {
+                                        let minIndex = min(last, index)
+                                        let maxIndex = max(last, index)
+                                        selectedIndices.formUnion(minIndex...maxIndex)
+                                    } else {
+                                        selectedIndices.insert(index)
+                                    }
+                                    lastClickedIndex = index
+                                } else {
+                                    selectedIndices.removeAll()
+                                    lastClickedIndex = index
+                                    viewModel.selectPlaylistItem(index)
+                                    return
+                                }
+
+                                if !selectedIndices.isEmpty {
                                     Task {
-                                        await viewModel.fetchPlaylistDuration(for: url)
-                                        if let d = viewModel.playlistDurations[url] {
-                                            viewModel.toastMessage = "文件时长: \(formatSeconds(d))"
-                                            viewModel.showToast = true
-                                            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                                                viewModel.showToast = false
+                                        var totalDuration: Double = 0
+                                        for i in selectedIndices {
+                                            guard i >= 0 && i < viewModel.playlist.count else { continue }
+                                            let u = viewModel.playlist[i]
+                                            await viewModel.fetchPlaylistDuration(for: u)
+                                            if let d = viewModel.playlistDurations[u] {
+                                                totalDuration += d
                                             }
                                         }
+                                        viewModel.toastMessage = "选中 \(selectedIndices.count) 个文件，总时长: \(formatSeconds(totalDuration))"
+                                        viewModel.showToast = true
+                                        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                                            viewModel.showToast = false
+                                        }
                                     }
-                                } else {
-                                    viewModel.selectPlaylistItem(index)
                                 }
                             }
                             .onHover { hovering in
