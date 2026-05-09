@@ -9,6 +9,8 @@ struct PlaylistPanelView: View {
     @State private var visibleDurations: Set<URL> = []
     @State private var selectedIndices: Set<Int> = []
     @State private var lastClickedIndex: Int? = nil
+    @State private var selectionClearTaskID: UUID = UUID()
+
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -109,10 +111,15 @@ struct PlaylistPanelView: View {
                                                 totalDuration += d
                                             }
                                         }
+                                        let currentTaskID = UUID()
+                                        selectionClearTaskID = currentTaskID
                                         viewModel.toastMessage = "选中 \(selectedIndices.count) 个文件，总时长: \(formatSeconds(totalDuration))"
                                         viewModel.showToast = true
                                         DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
-                                            viewModel.showToast = false
+                                            if selectionClearTaskID == currentTaskID {
+                                                viewModel.showToast = false
+                                                selectedIndices.removeAll()
+                                            }
                                         }
                                     }
                                 }
