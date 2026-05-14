@@ -163,6 +163,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
     private var nativeStallCount = 0
     private var lastStallPosition: Double = 0
     private var attemptedBackendSwitch = false
+    private var mpvAttemptedSoftwareFallback = false
     private var playbackFailureTimer: Timer?
     private var selectedSubtitlePath: String?
 
@@ -636,7 +637,8 @@ final class PlayerViewModel: NSObject, ObservableObject {
         let wasPaused = isPaused
         if playbackBackend != .mpv {
             selectBackend(.mpv)
-            mpvPlayer.setHardwareDecodingEnabled(false)
+            mpvAttemptedSoftwareFallback = false
+            mpvPlayer.setHardwareDecodingEnabled(true)
             mpvPlayer.setSpeed(speed)
             mpvPlayer.load(url: mediaURL, resumeAt: resumeAt)
             if !wasPaused {
@@ -760,7 +762,8 @@ final class PlayerViewModel: NSObject, ObservableObject {
         case .native:
             openWithNative(url: url, resumeAt: resumeAt)
         case .mpv:
-            mpvPlayer.setHardwareDecodingEnabled(false)
+            mpvAttemptedSoftwareFallback = false
+            mpvPlayer.setHardwareDecodingEnabled(true)
             mpvPlayer.setSpeed(speed)
             mpvPlayer.load(url: url, resumeAt: resumeAt)
             mpvPlayer.play()
@@ -1034,6 +1037,7 @@ killall lsd >/dev/null 2>&1 || true
         // Clear previous error and reset backend switch flag
         playbackError = nil
         attemptedBackendSwitch = false
+        mpvAttemptedSoftwareFallback = false
         playbackFailureTimer?.invalidate()
         playbackFailureTimer = nil
 
@@ -1103,7 +1107,7 @@ killall lsd >/dev/null 2>&1 || true
         case .native:
             openWithNative(url: url, resumeAt: resumeTime)
         case .mpv:
-            mpvPlayer.setHardwareDecodingEnabled(false)
+            mpvPlayer.setHardwareDecodingEnabled(true)
             mpvPlayer.setSpeed(speed)
             mpvPlayer.load(url: url, resumeAt: resumeTime)
             mpvPlayer.play()
@@ -1130,6 +1134,17 @@ killall lsd >/dev/null 2>&1 || true
 
         guard hasFailed else { return }
 
+        if originalBackend == .mpv && !mpvAttemptedSoftwareFallback {
+            mpvAttemptedSoftwareFallback = true
+            print("[BZPlayer] Playback failed with mpv hardware decoding, falling back to software decoding")
+            mpvPlayer.setHardwareDecodingEnabled(false)
+            mpvPlayer.setSpeed(speed)
+            mpvPlayer.load(url: url, resumeAt: resumeAt)
+            mpvPlayer.play()
+            schedulePlaybackFailureCheck(for: url, backend: .mpv, resumeAt: resumeAt)
+            return
+        }
+
         if !attemptedBackendSwitch {
             // Try switching to the other backend
             attemptedBackendSwitch = true
@@ -1142,7 +1157,8 @@ killall lsd >/dev/null 2>&1 || true
             case .native:
                 openWithNative(url: url, resumeAt: resumeAt)
             case .mpv:
-                mpvPlayer.setHardwareDecodingEnabled(false)
+                mpvAttemptedSoftwareFallback = false
+                mpvPlayer.setHardwareDecodingEnabled(true)
                 mpvPlayer.setSpeed(speed)
                 mpvPlayer.load(url: url, resumeAt: resumeAt)
                 mpvPlayer.play()
