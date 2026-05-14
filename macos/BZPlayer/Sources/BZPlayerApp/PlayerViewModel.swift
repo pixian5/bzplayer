@@ -1192,7 +1192,10 @@ killall lsd >/dev/null 2>&1 || true
 
     private func chooseBackend(for url: URL, ffprobeInfo: FFprobeInfo? = nil) -> PlaybackBackend {
         // MKV, AVI and other containers are not natively supported by AVPlayer on macOS
-        let nonNativeContainers: Set<String> = ["mkv", "avi", "flv", "wmv", "webm", "rmvb", "ts", "mpeg", "mpg"]
+        let nonNativeContainers: Set<String> = [
+            "mkv", "avi", "flv", "wmv", "webm", "rmvb", "ts", "mpeg", "mpg",
+            "ogg", "oga", "opus", "wma", "ape", "mka"
+        ]
         if nonNativeContainers.contains(url.pathExtension.lowercased()) {
             return .mpv
         }
@@ -1216,11 +1219,12 @@ killall lsd >/dev/null 2>&1 || true
 
     private func shouldPreferMpv(ffprobeInfo: FFprobeInfo) -> Bool {
         let nativeSafeVideoCodecs: Set<String> = [
-            "h264", "hevc", "mpeg4", "mjpeg", "prores", "jpeg2000", "dvvideo", "h263"
+            "h264", "hevc", "mpeg4", "mjpeg", "prores", "jpeg2000", "dvvideo", "h263", "vp9"
         ]
         
-        // Certain codec tags/variants are known to cause issues with AVPlayer despite being H.264
-        let nativeUnsafeVideoTags: Set<String> = ["avc2", "avc3", "avc4", "hev1", "hvc1", "vp09", "vp9"]
+        // VP9 may be supported on modern macOS in MP4/WebM containers, but WebM is usually routed to mpv due to container check.
+        // AVC/HEVC tags like avc1, hvc1, hev1 are natively supported.
+        let nativeUnsafeVideoTags: Set<String> = []
 
         if ffprobeInfo.videoStreams.contains(where: { stream in
             if !nativeSafeVideoCodecs.contains(stream.codecName) { return true }
@@ -1231,8 +1235,9 @@ killall lsd >/dev/null 2>&1 || true
         }
 
         let nativeSafeAudioCodecs: Set<String> = [
-            "aac", "ac3", "eac3", "alac", "mp3", "opus",
-            "pcm_s16le", "pcm_s24le", "pcm_s32le", "pcm_f32le", "pcm_f64le", "pcm_u8"
+            "aac", "ac3", "eac3", "alac", "mp3", "opus", "flac",
+            "pcm_s16le", "pcm_s24le", "pcm_s32le", "pcm_f32le", "pcm_f64le", "pcm_u8",
+            "pcm_s16be", "pcm_s24be", "pcm_s32be"
         ]
 
         if ffprobeInfo.audioStreams.contains(where: { !nativeSafeAudioCodecs.contains($0.codecName) }) {
