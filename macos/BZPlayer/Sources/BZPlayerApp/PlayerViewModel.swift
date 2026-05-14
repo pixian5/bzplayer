@@ -104,7 +104,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
     @Published var currentIndex: Int = -1
     @Published var windowTitle = PlayerViewModel.defaultWindowTitle
     @Published var fileAssociationStatus = "未执行格式关联"
-    @Published var playbackEngineStatus = "播放引擎：AVPlayer"
+    @Published var playbackEngineStatus = "AVPlayer"
     @Published var playbackBackend: PlaybackBackend = .native
     @Published var shortcutSeekSeconds: Double
     @Published var shortcutFrameStepCount: Int
@@ -955,7 +955,7 @@ killall lsd >/dev/null 2>&1 || true
             let isHardware = hwdecMode != "no" && !hwdecMode.isEmpty
             let modeLabel = isHardware ? "硬解(\(hwdecMode))" : "软解"
             self.syncText = "播放链路：mpv/libmpv · \(modeLabel)"
-            self.playbackEngineStatus = "播放引擎：mpv/libmpv · \(modeLabel)"
+            self.playbackEngineStatus = "mpv/libmpv · \(modeLabel)"
         }
     }
 
@@ -1030,12 +1030,12 @@ killall lsd >/dev/null 2>&1 || true
 
         switch backend {
         case .native:
-            playbackEngineStatus = "播放引擎：AVPlayer · 硬解"
+            playbackEngineStatus = "AVPlayer · 硬解"
             syncText = "播放链路：系统原生 · 硬解"
             nativePlayer.volume = Float(volume / 100.0)
             nativePlayer.isMuted = isMuted
         case .mpv:
-            playbackEngineStatus = "播放引擎：mpv/libmpv"
+            playbackEngineStatus = "mpv/libmpv"
             syncText = "播放链路：mpv/libmpv"
             mpvPlayer.setSubtitleBackgroundOpacity(subtitleBackgroundOpacity)
             if let selectedSubtitlePath {
@@ -1205,7 +1205,7 @@ killall lsd >/dev/null 2>&1 || true
                     let seconds = item.duration.seconds
                     self.duration = seconds.isFinite ? max(0, seconds) : 0
                     self.syncText = "播放链路：系统原生 · 硬解"
-                    self.playbackEngineStatus = "播放引擎：AVPlayer · 硬解"
+                    self.playbackEngineStatus = "AVPlayer · 硬解"
                     if let resumeAt, resumeAt > 0 {
                         self.nativePlayer.seek(to: CMTime(seconds: resumeAt, preferredTimescale: 600))
                     }

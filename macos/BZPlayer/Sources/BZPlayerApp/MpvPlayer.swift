@@ -63,13 +63,13 @@ final class MpvPlayer: NSObject {
 
     func load(url: URL, resumeAt: Double?) {
         guard let handle else {
-            onStatusChanged?("播放引擎：mpv 尚未初始化")
+            onStatusChanged?("mpv 尚未初始化")
             return
         }
 
         pendingResumeTime = resumeAt
         configuredSpeed = max(0.25, configuredSpeed)
-        onStatusChanged?("播放引擎：mpv/libmpv")
+        onStatusChanged?("mpv/libmpv")
         command(["loadfile", url.path, "replace"], on: handle)
 
         // Re-apply mute state after loading new file
@@ -168,7 +168,7 @@ final class MpvPlayer: NSObject {
 
     private func createPlayer() {
         guard let handle = mpv_create() else {
-            onStatusChanged?("播放引擎：mpv 创建失败")
+            onStatusChanged?("mpv 创建失败")
             return
         }
 
@@ -191,7 +191,7 @@ final class MpvPlayer: NSObject {
 
         let result = mpv_initialize(handle)
         guard result >= 0 else {
-            onStatusChanged?("播放引擎：mpv 初始化失败")
+            onStatusChanged?("mpv 初始化失败")
             mpv_terminate_destroy(handle)
             self.handle = nil
             return
@@ -201,7 +201,7 @@ final class MpvPlayer: NSObject {
         observeProperties(on: handle)
         createRenderContextIfNeeded()
         applyPlaybackProfile(for: configuredSpeed)
-        onStatusChanged?("播放引擎：mpv/libmpv")
+        onStatusChanged?("mpv/libmpv")
     }
 
     private func createRenderContextIfNeeded() {
@@ -228,7 +228,7 @@ final class MpvPlayer: NSObject {
         }
 
         guard result >= 0, let context else {
-            onStatusChanged?("播放引擎：mpv OpenGL render 初始化失败")
+            onStatusChanged?("mpv OpenGL render 初始化失败")
             return
         }
 
