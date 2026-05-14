@@ -1030,8 +1030,8 @@ killall lsd >/dev/null 2>&1 || true
 
         switch backend {
         case .native:
-            playbackEngineStatus = "AVPlayer · 硬解"
-            syncText = "播放链路：系统原生 · 硬解"
+            playbackEngineStatus = "AVPlayer"
+            syncText = "播放链路：系统原生"
             nativePlayer.volume = Float(volume / 100.0)
             nativePlayer.isMuted = isMuted
         case .mpv:
@@ -1204,8 +1204,8 @@ killall lsd >/dev/null 2>&1 || true
                 if item.status == .readyToPlay {
                     let seconds = item.duration.seconds
                     self.duration = seconds.isFinite ? max(0, seconds) : 0
-                    self.syncText = "播放链路：系统原生 · 硬解"
-                    self.playbackEngineStatus = "AVPlayer · 硬解"
+                    self.syncText = "播放链路：系统原生"
+                    self.playbackEngineStatus = "AVPlayer"
                     if let resumeAt, resumeAt > 0 {
                         self.nativePlayer.seek(to: CMTime(seconds: resumeAt, preferredTimescale: 600))
                     }
