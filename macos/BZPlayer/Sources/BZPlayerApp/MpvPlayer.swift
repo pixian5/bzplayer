@@ -12,6 +12,7 @@ final class MpvPlayer: NSObject {
     var onFileLoaded: (() -> Void)?
     var onStatusChanged: ((String) -> Void)?
     var onEndReached: (() -> Void)?
+    var onHwdecChanged: ((String) -> Void)?
 
     private var handle: OpaquePointer?
     private var renderContext: OpaquePointer?
@@ -243,6 +244,7 @@ final class MpvPlayer: NSObject {
         _ = mpv_observe_property(handle, 5, "container-fps", MPV_FORMAT_DOUBLE)
         _ = mpv_observe_property(handle, 6, "display-fps", MPV_FORMAT_DOUBLE)
         _ = mpv_observe_property(handle, 7, "audio-delay", MPV_FORMAT_DOUBLE)
+        _ = mpv_observe_property(handle, 8, "hwdec-current", MPV_FORMAT_STRING)
     }
 
     func processEvents() {
@@ -412,6 +414,11 @@ final class MpvPlayer: NSObject {
             if fps.isFinite, fps > 1 {
                 displayFPS = fps
             }
+        case "hwdec-current":
+            guard property.format == MPV_FORMAT_STRING,
+                  let ptr = property.data?.assumingMemoryBound(to: UnsafePointer<CChar>?.self),
+                  let cstr = ptr.pointee else { return }
+            onHwdecChanged?(String(cString: cstr))
         default:
             return
         }

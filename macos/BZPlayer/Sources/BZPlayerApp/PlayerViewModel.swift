@@ -755,18 +755,23 @@ final class PlayerViewModel: NSObject, ObservableObject {
     func switchPlaybackBackend() {
         guard let url = currentFileURL else { return }
         let resumeAt = currentTime > 0 && currentTime < duration ? currentTime : nil
+        let wasPaused = isPaused
         let newBackend: PlaybackBackend = playbackBackend == .native ? .mpv : .native
         selectBackend(newBackend)
 
         switch newBackend {
         case .native:
-            openWithNative(url: url, resumeAt: resumeAt)
+            openWithNative(url: url, resumeAt: resumeAt, startPaused: wasPaused)
         case .mpv:
             mpvAttemptedSoftwareFallback = false
             mpvPlayer.setHardwareDecodingEnabled(true)
             mpvPlayer.setSpeed(speed)
             mpvPlayer.load(url: url, resumeAt: resumeAt)
-            mpvPlayer.play()
+            if wasPaused {
+                mpvPlayer.pause()
+            } else {
+                mpvPlayer.play()
+            }
             applyAudioDelay()
         }
     }
@@ -931,7 +936,6 @@ killall lsd >/dev/null 2>&1 || true
         }
         mpvPlayer.onFileLoaded = { [weak self] in
             guard let self, self.playbackBackend == .mpv else { return }
-            self.syncText = "播放链路：mpv/libmpv"
             self.mpvPlayer.setSubtitleBackgroundOpacity(self.subtitleBackgroundOpacity)
             if let path = self.selectedSubtitlePath {
                 self.mpvPlayer.setExternalSubtitle(url: URL(fileURLWithPath: path))
@@ -944,6 +948,14 @@ killall lsd >/dev/null 2>&1 || true
         mpvPlayer.onEndReached = { [weak self] in
             guard let self, self.playbackBackend == .mpv else { return }
             self.handlePlaybackFinished()
+        }
+        mpvPlayer.onHwdecChanged = { [weak self] hwdecMode in
+            guard let self, self.playbackBackend == .mpv else { return }
+            // hwdec-current returns "no" for software, or the actual hw api name for hardware
+            let isHardware = hwdecMode != "no" && !hwdecMode.isEmpty
+            let modeLabel = isHardware ? "硬解(\(hwdecMode))" : "软解"
+            self.syncText = "播放链路：mpv/libmpv · \(modeLabel)"
+            self.playbackEngineStatus = "播放引擎：mpv/libmpv · \(modeLabel)"
         }
     }
 
@@ -1018,8 +1030,8 @@ killall lsd >/dev/null 2>&1 || true
 
         switch backend {
         case .native:
-            playbackEngineStatus = "播放引擎：AVPlayer"
-            syncText = "播放链路：系统原生"
+            playbackEngineStatus = "播放引擎：AVPlayer · 硬解"
+            syncText = "播放链路：系统原生 · 硬解"
             nativePlayer.volume = Float(volume / 100.0)
             nativePlayer.isMuted = isMuted
         case .mpv:
@@ -1183,7 +1195,7 @@ killall lsd >/dev/null 2>&1 || true
         }
     }
 
-    private func openWithNative(url: URL, resumeAt: Double?) {
+    private func openWithNative(url: URL, resumeAt: Double?, startPaused: Bool = false) {
         let item = AVPlayerItem(url: url)
         nativeItemStatusObserver = item.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in
             guard let self else { return }
@@ -1192,14 +1204,19 @@ killall lsd >/dev/null 2>&1 || true
                 if item.status == .readyToPlay {
                     let seconds = item.duration.seconds
                     self.duration = seconds.isFinite ? max(0, seconds) : 0
-                    self.syncText = "播放链路：系统原生"
-                    self.playbackEngineStatus = "播放引擎：AVPlayer"
-                    self.isPaused = false
+                    self.syncText = "播放链路：系统原生 · 硬解"
+                    self.playbackEngineStatus = "播放引擎：AVPlayer · 硬解"
                     if let resumeAt, resumeAt > 0 {
                         self.nativePlayer.seek(to: CMTime(seconds: resumeAt, preferredTimescale: 600))
                     }
-                    self.nativePlayer.play()
-                    self.nativePlayer.rate = Float(self.speed)
+                    if startPaused {
+                        self.nativePlayer.pause()
+                        self.isPaused = true
+                    } else {
+                        self.nativePlayer.play()
+                        self.nativePlayer.rate = Float(self.speed)
+                        self.isPaused = false
+                    }
                 }
             }
         }
