@@ -953,7 +953,7 @@ killall lsd >/dev/null 2>&1 || true
             guard let self, self.playbackBackend == .mpv else { return }
             // hwdec-current returns "no" for software, or the actual hw api name for hardware
             let isHardware = hwdecMode != "no" && !hwdecMode.isEmpty
-            let modeLabel = isHardware ? "硬解(\(hwdecMode))" : "软解"
+            let modeLabel = isHardware ? "硬解" : "软解"
             self.syncText = "播放链路：mpv/libmpv · \(modeLabel)"
             self.playbackEngineStatus = "mpv/libmpv · \(modeLabel)"
         }
