@@ -158,6 +158,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
     private var nativeEndObserver: NSObjectProtocol?
     private weak var attachedWindow: NSWindow?
     private static var globalLastNavigationTime: TimeInterval = 0
+    private static var hasCompletedNativeVP9Warmup = false
     private var lastAutoNextJumpTimes: [TimeInterval] = []
     private var windowFrameObservers: [NSObjectProtocol] = []
     private var hasAppliedInitialWindowBehavior = false
@@ -165,7 +166,6 @@ final class PlayerViewModel: NSObject, ObservableObject {
     private var lastStallPosition: Double = 0
     private var attemptedBackendSwitch = false
     private var mpvAttemptedSoftwareFallback = false
-    private var hasCompletedNativeVP9Warmup = false
     private var playbackFailureTimer: Timer?
     private var selectedSubtitlePath: String?
 
@@ -1120,14 +1120,15 @@ killall lsd >/dev/null 2>&1 || true
         switch backend {
         case .native:
             let needsNativeWarmupReload = shouldRefreshNativeVideoSurface(url: url, ffprobeInfo: ffprobeInfo)
-            if needsNativeWarmupReload && !hasCompletedNativeVP9Warmup {
+            let shouldWarmupThroughMpv = needsNativeWarmupReload && !Self.hasCompletedNativeVP9Warmup
+            if shouldWarmupThroughMpv {
                 warmupNativeVP9PlaybackThroughMpv(url: url, resumeAt: resumeTime, startPaused: false)
             } else {
                 openWithNative(
                     url: url,
                     resumeAt: resumeTime,
-                    refreshVideoSurfaceAfterReady: needsNativeWarmupReload,
-                    reloadItemAfterReady: needsNativeWarmupReload
+                    refreshVideoSurfaceAfterReady: false,
+                    reloadItemAfterReady: false
                 )
             }
         case .mpv:
@@ -1390,7 +1391,7 @@ killall lsd >/dev/null 2>&1 || true
     }
 
     private func warmupNativeVP9PlaybackThroughMpv(url: URL, resumeAt: Double?, startPaused: Bool) {
-        hasCompletedNativeVP9Warmup = true
+        Self.hasCompletedNativeVP9Warmup = true
         debugLog("[BZPlayer] Warming native VP9 playback through mpv roundtrip")
         selectBackend(.mpv)
         mpvAttemptedSoftwareFallback = false
