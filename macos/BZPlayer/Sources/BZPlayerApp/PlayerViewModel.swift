@@ -1213,17 +1213,31 @@ killall lsd >/dev/null 2>&1 || true
                     self.duration = seconds.isFinite ? max(0, seconds) : 0
                     self.syncText = "播放链路：系统原生"
                     self.playbackEngineStatus = "AVPlayer"
+                    // Trigger AVPlayerView layer rebuild BEFORE starting playback.
+                    // VP9 (and some other codecs) suffer from a video-layer init bug:
+                    // the view layer isn't ready on first display, causing blank video.
+                    // forceReattach (in updateBackend) hides/shows the view after 150ms.
+                    // We delay play() by 200ms so the first frame is decoded AFTER the
+                    // layer has been fully rebuilt — matching the switch-to-mpv-and-back
+                    // workaround that users previously had to do manually.
                     self.nativePlayerNeedsReattach = true
                     if let resumeAt, resumeAt > 0 {
                         self.nativePlayer.seek(to: CMTime(seconds: resumeAt, preferredTimescale: 600))
                     }
-                    if startPaused {
-                        self.nativePlayer.pause()
-                        self.isPaused = true
-                    } else {
-                        self.nativePlayer.play()
-                        self.nativePlayer.rate = Float(self.speed)
-                        self.isPaused = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+                        guard let self, self.playbackBackend == .native else { return }
+                        if startPaused {
+                            self.nativePlayer.pause()
+                            self.isPaused = true
+                        } else {
+                            self.nativePlayer.play()
+                            self.nativePlayer.rate = Float(self.speed)
+                            self.isPaused = false
+                            // Seek to current position to force the video decoder to
+                            // emit the first frame into the now-ready layer.
+                            let ct = self.nativePlayer.currentTime()
+                            self.nativePlayer.seek(to: ct, toleranceBefore: .zero, toleranceAfter: .zero)
+                        }
                     }
                 }
             }
@@ -1259,17 +1273,15 @@ killall lsd >/dev/null 2>&1 || true
     }
 
     private func shouldPreferMpv(ffprobeInfo: FFprobeInfo) -> Bool {
-        // VP9 is technically supported by AVPlayer on macOS 12+ in MP4 containers,
-        // but suffers from a rendering initialization bug: on first open, only audio
-        // plays and the video layer shows blank (the ((Q)) icon). Switching backends
-        // and back fixes it, which means AVPlayerView's video layer is not properly
-        // initialized for VP9 on initial load. Route VP9 through mpv to avoid this.
+        // VP9 is natively supported by AVPlayer on macOS 12+ in MP4 containers.
+        // The video-layer initialization timing is handled in openWithNative by
+        // delaying playback start until after forceReattach completes.
         let nativeSafeVideoCodecs: Set<String> = [
-            "h264", "hevc", "mpeg4", "mjpeg", "prores", "jpeg2000", "dvvideo", "h263", "av1"
+            "h264", "hevc", "mpeg4", "mjpeg", "prores", "jpeg2000", "dvvideo", "h263", "av1", "vp9"
         ]
 
-        // vp09 is the codec tag for VP9 in MP4 containers — also force mpv for it
-        let nativeUnsafeVideoTags: Set<String> = ["vp09", "vp08"]
+        // AVC/HEVC tags like avc1, hvc1, hev1 are natively supported.
+        let nativeUnsafeVideoTags: Set<String> = []
 
         if ffprobeInfo.videoStreams.contains(where: { stream in
             if !nativeSafeVideoCodecs.contains(stream.codecName) { return true }
@@ -1280,14 +1292,10 @@ killall lsd >/dev/null 2>&1 || true
         }
 
         let nativeSafeAudioCodecs: Set<String> = [
-            "aac", "ac3", "eac3", "alac", "mp3", "flac",
+            "aac", "ac3", "eac3", "alac", "mp3", "opus", "flac",
             "pcm_s16le", "pcm_s24le", "pcm_s32le", "pcm_f32le", "pcm_f64le", "pcm_u8",
             "pcm_s16be", "pcm_s24be", "pcm_s32be"
         ]
-        // Note: opus in nativeSafeAudioCodecs is intentionally removed here because
-        // VP9+Opus combination in MP4 (from YouTube downloads) is the primary trigger
-        // of the AVPlayer video-layer init bug. Now VP9 routes to mpv anyway, but
-        // standalone opus audio should also go to mpv for better compatibility.
 
         if ffprobeInfo.audioStreams.contains(where: { !nativeSafeAudioCodecs.contains($0.codecName) }) {
             return true
