@@ -1240,6 +1240,10 @@ killall lsd >/dev/null 2>&1 || true
             return .mpv
         }
 
+        if shouldPreferMpv(asset: asset) {
+            return .mpv
+        }
+
         if let ffprobeInfo, !ffprobeInfo.audioStreams.isEmpty {
             let audioTracks = asset.tracks(withMediaType: .audio)
             if audioTracks.isEmpty {
@@ -1278,6 +1282,45 @@ killall lsd >/dev/null 2>&1 || true
         }
 
         return false
+    }
+
+    private func shouldPreferMpv(asset: AVURLAsset) -> Bool {
+        let nativeSafeVideoSubtypes: Set<String> = [
+            "avc1", "hvc1", "hev1", "mp4v", "jpeg", "mjp2", "apcn", "apcs", "apco", "apch", "ap4h", "dvc "
+        ]
+        let knownNativeUnsafeVideoSubtypes: Set<String> = [
+            "vp09", "vp9 ", "vp08", "vp8 ", "90pv", "80pv"
+        ]
+        let nativeSafeAudioSubtypes: Set<String> = [
+            "aac ", "ac-3", "ec-3", "alac", ".mp3", "mp4a",
+            "lpcm", "twos", "sowt", "fl32", "fl64", "in24", "in32"
+        ]
+        let knownNativeUnsafeAudioSubtypes: Set<String> = [
+            "opus", "supo"
+        ]
+
+        for track in asset.tracks(withMediaType: .video) {
+            for formatDescription in track.formatDescriptions {
+                let subtype = codecSubtypeString(from: formatDescription)
+                if knownNativeUnsafeVideoSubtypes.contains(subtype) { return true }
+                if !subtype.isEmpty && !nativeSafeVideoSubtypes.contains(subtype) { return true }
+            }
+        }
+
+        for track in asset.tracks(withMediaType: .audio) {
+            for formatDescription in track.formatDescriptions {
+                let subtype = codecSubtypeString(from: formatDescription)
+                if knownNativeUnsafeAudioSubtypes.contains(subtype) { return true }
+                if !subtype.isEmpty && !nativeSafeAudioSubtypes.contains(subtype) { return true }
+            }
+        }
+
+        return false
+    }
+
+    private func codecSubtypeString(from formatDescription: Any) -> String {
+        let subtype = CMFormatDescriptionGetMediaSubType(formatDescription as! CMFormatDescription)
+        return fourCCString(subtype).lowercased()
     }
 
     private func loadPlaylist(with selectedURL: URL) {
@@ -1599,7 +1642,7 @@ killall lsd >/dev/null 2>&1 || true
             let tracks = try await asset.load(.tracks)
             let fileSizeBytes = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize
             let ffprobeInfo = probeMediaInfo(url: url)
-            let recommendedBackend = chooseBackend(for: url)
+            let recommendedBackend = chooseBackend(for: url, ffprobeInfo: ffprobeInfo)
 
             var lines: [String] = []
             lines.append("文件：\(url.lastPathComponent)")
