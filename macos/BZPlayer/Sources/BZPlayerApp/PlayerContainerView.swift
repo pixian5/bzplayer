@@ -60,8 +60,8 @@ struct PlayerContainerView: NSViewRepresentable {
     }
 }
 
-final class PlayerHostView: NSView {
-    let nativePlayerView = AVPlayerView()
+class PlayerHostView: NSView {
+    var nativePlayerView = AVPlayerView()
     let playerSurfaceView = MpvRenderView(frame: .zero)
     let clickView = ClickCaptureView()
     var onViewReady: ((MpvRenderView) -> Void)?
@@ -112,6 +112,26 @@ final class PlayerHostView: NSView {
         onViewReady?(playerSurfaceView)
     }
 
+    private func recreateNativePlayerView() {
+        nativePlayerView.removeFromSuperview()
+        
+        nativePlayerView = AVPlayerView()
+        nativePlayerView.translatesAutoresizingMaskIntoConstraints = false
+        nativePlayerView.controlsStyle = .none
+        nativePlayerView.videoGravity = .resizeAspect
+        nativePlayerView.showsFullScreenToggleButton = false
+        nativePlayerView.player = nil
+        
+        addSubview(nativePlayerView, positioned: .below, relativeTo: playerSurfaceView)
+        
+        NSLayoutConstraint.activate([
+            nativePlayerView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            nativePlayerView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            nativePlayerView.topAnchor.constraint(equalTo: topAnchor),
+            nativePlayerView.bottomAnchor.constraint(equalTo: bottomAnchor)
+        ])
+    }
+
     func updateBackend(_ backend: PlayerViewModel.PlaybackBackend, player: AVPlayer, forceReattach: Bool = false) {
         switch backend {
         case .native:
@@ -123,6 +143,7 @@ final class PlayerHostView: NSView {
                 nativePlayerView.player = nil
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
                     guard let self else { return }
+                    self.recreateNativePlayerView()
                     self.nativePlayerView.player = player
                     self.nativePlayerView.isHidden = false
                     self.isReattachingNativePlayer = false
