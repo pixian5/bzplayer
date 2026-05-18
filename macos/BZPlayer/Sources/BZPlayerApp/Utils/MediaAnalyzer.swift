@@ -163,11 +163,10 @@ func formatBytes(_ bytes: Int64) -> String {
 }
 
 func fourCCString(_ code: FourCharCode) -> String {
-    let n = Int(code.bigEndian)
-    let c1 = Character(UnicodeScalar((n >> 24) & 255)!)
-    let c2 = Character(UnicodeScalar((n >> 16) & 255)!)
-    let c3 = Character(UnicodeScalar((n >> 8) & 255)!)
-    let c4 = Character(UnicodeScalar(n & 255)!)
+    let c1 = Character(UnicodeScalar((code >> 24) & 255)!)
+    let c2 = Character(UnicodeScalar((code >> 16) & 255)!)
+    let c3 = Character(UnicodeScalar((code >> 8) & 255)!)
+    let c4 = Character(UnicodeScalar(code & 255)!)
     let text = String([c1, c2, c3, c4])
     return text.trimmingCharacters(in: .controlCharacters).isEmpty ? "\(code)" : text
 }
