@@ -1256,7 +1256,7 @@ killall lsd >/dev/null 2>&1 || true
 
     private func shouldPreferMpv(ffprobeInfo: FFprobeInfo) -> Bool {
         let nativeSafeVideoCodecs: Set<String> = [
-            "h264", "hevc", "mpeg4", "mjpeg", "prores", "jpeg2000", "dvvideo", "h263", "av1"
+            "h264", "hevc", "mpeg4", "mjpeg", "prores", "jpeg2000", "dvvideo", "h263", "av1", "vp9"
         ]
         
         // VP9 may be supported on modern macOS in MP4/WebM containers, but WebM is usually routed to mpv due to container check.
@@ -1286,23 +1286,18 @@ killall lsd >/dev/null 2>&1 || true
 
     private func shouldPreferMpv(asset: AVURLAsset) -> Bool {
         let nativeSafeVideoSubtypes: Set<String> = [
-            "avc1", "hvc1", "hev1", "mp4v", "jpeg", "mjp2", "apcn", "apcs", "apco", "apch", "ap4h", "dvc "
-        ]
-        let knownNativeUnsafeVideoSubtypes: Set<String> = [
-            "vp09", "vp9 ", "vp08", "vp8 ", "90pv", "80pv"
+            "avc1", "hvc1", "hev1", "mp4v", "jpeg", "mjp2", "apcn", "apcs", "apco", "apch", "ap4h", "dvc ",
+            "vp09", "vp9 ", "90pv"
         ]
         let nativeSafeAudioSubtypes: Set<String> = [
             "aac ", "ac-3", "ec-3", "alac", ".mp3", "mp4a",
-            "lpcm", "twos", "sowt", "fl32", "fl64", "in24", "in32"
-        ]
-        let knownNativeUnsafeAudioSubtypes: Set<String> = [
+            "lpcm", "twos", "sowt", "fl32", "fl64", "in24", "in32",
             "opus", "supo"
         ]
 
         for track in asset.tracks(withMediaType: .video) {
             for formatDescription in track.formatDescriptions {
                 let subtype = codecSubtypeString(from: formatDescription)
-                if knownNativeUnsafeVideoSubtypes.contains(subtype) { return true }
                 if !subtype.isEmpty && !nativeSafeVideoSubtypes.contains(subtype) { return true }
             }
         }
@@ -1310,7 +1305,6 @@ killall lsd >/dev/null 2>&1 || true
         for track in asset.tracks(withMediaType: .audio) {
             for formatDescription in track.formatDescriptions {
                 let subtype = codecSubtypeString(from: formatDescription)
-                if knownNativeUnsafeAudioSubtypes.contains(subtype) { return true }
                 if !subtype.isEmpty && !nativeSafeAudioSubtypes.contains(subtype) { return true }
             }
         }
