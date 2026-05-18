@@ -9,6 +9,7 @@ struct PlayerContainerView: NSViewRepresentable {
     func makeNSView(context: Context) -> PlayerHostView {
         let view = PlayerHostView()
         // Assign the native player immediately so video renders on first file open
+        view.nativePlayerView.player = viewModel.nativePlayer
         view.onViewReady = { playerSurfaceView in
             viewModel.attachPlayerView(playerSurfaceView)
         }
@@ -60,12 +61,11 @@ struct PlayerContainerView: NSViewRepresentable {
     }
 }
 
-class PlayerHostView: NSView {
-    var nativePlayerView = AVPlayerView()
+final class PlayerHostView: NSView {
+    let nativePlayerView = AVPlayerView()
     let playerSurfaceView = MpvRenderView(frame: .zero)
     let clickView = ClickCaptureView()
     var onViewReady: ((MpvRenderView) -> Void)?
-    private var isReattachingNativePlayer = false
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -112,46 +112,23 @@ class PlayerHostView: NSView {
         onViewReady?(playerSurfaceView)
     }
 
-    private func recreateNativePlayerView() {
-        nativePlayerView.removeFromSuperview()
-        
-        nativePlayerView = AVPlayerView()
-        nativePlayerView.translatesAutoresizingMaskIntoConstraints = false
-        nativePlayerView.controlsStyle = .none
-        nativePlayerView.videoGravity = .resizeAspect
-        nativePlayerView.showsFullScreenToggleButton = false
-        nativePlayerView.player = nil
-        
-        addSubview(nativePlayerView, positioned: .below, relativeTo: playerSurfaceView)
-        
-        NSLayoutConstraint.activate([
-            nativePlayerView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            nativePlayerView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            nativePlayerView.topAnchor.constraint(equalTo: topAnchor),
-            nativePlayerView.bottomAnchor.constraint(equalTo: bottomAnchor)
-        ])
-    }
-
     func updateBackend(_ backend: PlayerViewModel.PlaybackBackend, player: AVPlayer, forceReattach: Bool = false) {
         switch backend {
         case .native:
+            if nativePlayerView.player !== player {
+                nativePlayerView.player = player
+            }
             if forceReattach {
-                isReattachingNativePlayer = true
-                // VP9 and other non-standard codecs: AVPlayerView may not detect video track
-                // on initial load. Toggle hidden state with a real delay to force layer rebuild.
+                // Some codecs: AVPlayerView may not detect video track on initial load.
+                // Toggle hidden state with a longer delay to force layer rebuild.
                 nativePlayerView.isHidden = true
                 nativePlayerView.player = nil
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
                     guard let self else { return }
-                    self.recreateNativePlayerView()
                     self.nativePlayerView.player = player
                     self.nativePlayerView.isHidden = false
-                    self.isReattachingNativePlayer = false
                 }
-            } else if !isReattachingNativePlayer {
-                if nativePlayerView.player !== player {
-                    nativePlayerView.player = player
-                }
+            } else {
                 nativePlayerView.isHidden = false
             }
             playerSurfaceView.isHidden = true

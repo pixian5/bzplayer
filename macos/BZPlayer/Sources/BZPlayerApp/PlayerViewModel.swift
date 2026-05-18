@@ -106,6 +106,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
     @Published var fileAssociationStatus = "未执行格式关联"
     @Published var playbackEngineStatus = "AVPlayer"
     @Published var playbackBackend: PlaybackBackend = .native
+    @Published var nativePlayerNeedsReattach = false
     @Published var shortcutSeekSeconds: Double
     @Published var shortcutFrameStepCount: Int
     @Published var previousFileKeyCode: UInt16
@@ -1022,7 +1023,7 @@ killall lsd >/dev/null 2>&1 || true
             mpvPlayer.cancelPendingRender()
         }
         
-        if previousBackend == .native {
+        if previousBackend == .native && backend != .native {
             nativePlayer.pause()
             nativeItemStatusObserver = nil
             nativePlayer.replaceCurrentItem(with: nil)
@@ -1196,7 +1197,13 @@ killall lsd >/dev/null 2>&1 || true
     }
 
     private func openWithNative(url: URL, resumeAt: Double?, startPaused: Bool = false) {
-        let item = AVPlayerItem(url: url)
+        // Clean up previous native playback state
+        nativeItemStatusObserver = nil
+        nativePlayer.pause()
+        nativePlayer.replaceCurrentItem(with: nil)
+
+        let asset = AVURLAsset(url: url)
+        let item = AVPlayerItem(asset: asset, automaticallyLoadedAssetKeys: ["tracks", "duration", "playable"])
         nativeItemStatusObserver = item.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in
             guard let self else { return }
             Task { @MainActor [weak self] in
@@ -1206,6 +1213,7 @@ killall lsd >/dev/null 2>&1 || true
                     self.duration = seconds.isFinite ? max(0, seconds) : 0
                     self.syncText = "播放链路：系统原生"
                     self.playbackEngineStatus = "AVPlayer"
+                    self.nativePlayerNeedsReattach = true
                     if let resumeAt, resumeAt > 0 {
                         self.nativePlayer.seek(to: CMTime(seconds: resumeAt, preferredTimescale: 600))
                     }
@@ -1251,13 +1259,17 @@ killall lsd >/dev/null 2>&1 || true
     }
 
     private func shouldPreferMpv(ffprobeInfo: FFprobeInfo) -> Bool {
+        // VP9 is technically supported by AVPlayer on macOS 12+ in MP4 containers,
+        // but suffers from a rendering initialization bug: on first open, only audio
+        // plays and the video layer shows blank (the ((Q)) icon). Switching backends
+        // and back fixes it, which means AVPlayerView's video layer is not properly
+        // initialized for VP9 on initial load. Route VP9 through mpv to avoid this.
         let nativeSafeVideoCodecs: Set<String> = [
-            "h264", "hevc", "mpeg4", "mjpeg", "prores", "jpeg2000", "dvvideo", "h263", "av1", "vp9"
+            "h264", "hevc", "mpeg4", "mjpeg", "prores", "jpeg2000", "dvvideo", "h263", "av1"
         ]
-        
-        // VP9 is natively supported by AVPlayer on macOS 12+ in MP4 containers.
-        // AVC/HEVC tags like avc1, hvc1, hev1 are natively supported.
-        let nativeUnsafeVideoTags: Set<String> = []
+
+        // vp09 is the codec tag for VP9 in MP4 containers — also force mpv for it
+        let nativeUnsafeVideoTags: Set<String> = ["vp09", "vp08"]
 
         if ffprobeInfo.videoStreams.contains(where: { stream in
             if !nativeSafeVideoCodecs.contains(stream.codecName) { return true }
@@ -1268,10 +1280,14 @@ killall lsd >/dev/null 2>&1 || true
         }
 
         let nativeSafeAudioCodecs: Set<String> = [
-            "aac", "ac3", "eac3", "alac", "mp3", "opus", "flac",
+            "aac", "ac3", "eac3", "alac", "mp3", "flac",
             "pcm_s16le", "pcm_s24le", "pcm_s32le", "pcm_f32le", "pcm_f64le", "pcm_u8",
             "pcm_s16be", "pcm_s24be", "pcm_s32be"
         ]
+        // Note: opus in nativeSafeAudioCodecs is intentionally removed here because
+        // VP9+Opus combination in MP4 (from YouTube downloads) is the primary trigger
+        // of the AVPlayer video-layer init bug. Now VP9 routes to mpv anyway, but
+        // standalone opus audio should also go to mpv for better compatibility.
 
         if ffprobeInfo.audioStreams.contains(where: { !nativeSafeAudioCodecs.contains($0.codecName) }) {
             return true
