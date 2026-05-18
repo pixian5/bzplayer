@@ -134,7 +134,6 @@ final class PlayerViewModel: NSObject, ObservableObject {
     let speedCandidates: [Double] = [0.25, 0.5, 1, 1.25, 1.5, 1.75, 2, 3, 4, 8, 16]
 
     var onNativePlaybackStart: (() -> Void)?
-    var onNativePlaybackReady: (() -> Void)?
 
     var hasOpenedFile: Bool {
         currentFileURL != nil
@@ -1223,9 +1222,6 @@ killall lsd >/dev/null 2>&1 || true
                     if let resumeAt, resumeAt > 0 {
                         self.nativePlayer.seek(to: CMTime(seconds: resumeAt, preferredTimescale: 600))
                     }
-                    
-                    // Reattach the AVPlayerView now that the item is fully ready.
-                    self.onNativePlaybackReady?()
 
                     // Start playback immediately.
                     if startPaused {

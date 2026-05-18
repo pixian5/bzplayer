@@ -15,18 +15,13 @@ struct PlayerContainerView: NSViewRepresentable {
             viewModel.attachPlayerView(playerSurfaceView)
         }
 
-        viewModel.onNativePlaybackStart = { [weak view] in
-            guard let view else { return }
-            view.isPreparingNativeVideo = true
-            view.nativePlayerView.isHidden = true
-            view.nativePlayerView.player = nil
-        }
-
-        viewModel.onNativePlaybackReady = { [weak view, weak viewModel] in
+        viewModel.onNativePlaybackStart = { [weak view, weak viewModel] in
             guard let view, let viewModel else { return }
-            view.isPreparingNativeVideo = false
+            // Completely unbind and rebind the player to the view.
+            // This forces AVPlayerView to discard its old video layer state and
+            // prepare for a fresh AVPlayerItem, which fixes VP9 initialization bugs.
+            view.nativePlayerView.player = nil
             view.nativePlayerView.player = viewModel.nativePlayer
-            view.nativePlayerView.isHidden = false
         }
         view.clickView.onSingleClick = {
             viewModel.togglePause()
@@ -122,27 +117,15 @@ final class PlayerHostView: NSView {
         onViewReady?(playerSurfaceView)
     }
 
-    /// Set to true when a new native AVPlayerItem is about to be loaded.
-    /// Prevents updateBackend from aggressively attaching the player to the view
-    /// before the item is `readyToPlay`. For VP9 to initialize its video layer
-    /// correctly, the player MUST NOT be attached to AVPlayerView until after
-    /// it is ready.
-    var isPreparingNativeVideo = false
-
     func updateBackend(_ backend: PlayerViewModel.PlaybackBackend, player: AVPlayer) {
         switch backend {
         case .native:
             playerSurfaceView.isHidden = true
-            // If we are in the middle of preparing a new AVPlayerItem,
-            // DO NOT attach it to the view yet. Wait for onNativePlaybackReady.
-            if !isPreparingNativeVideo {
-                if nativePlayerView.player !== player {
-                    nativePlayerView.player = player
-                }
-                nativePlayerView.isHidden = false
+            if nativePlayerView.player !== player {
+                nativePlayerView.player = player
             }
+            nativePlayerView.isHidden = false
         case .mpv:
-            isPreparingNativeVideo = false
             nativePlayerView.player = nil
             nativePlayerView.isHidden = true
             playerSurfaceView.isHidden = false
