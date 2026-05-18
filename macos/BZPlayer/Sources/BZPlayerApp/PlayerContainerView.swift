@@ -46,7 +46,11 @@ struct PlayerContainerView: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: PlayerHostView, context: Context) {
-        nsView.updateBackend(viewModel.playbackBackend, player: viewModel.nativePlayer)
+        nsView.updateBackend(
+            viewModel.playbackBackend,
+            player: viewModel.nativePlayer,
+            nativeRefreshID: viewModel.nativePlayerSurfaceRefreshID
+        )
         // Only attach the view for mpv backend to avoid unnecessary rendering calls to a hidden view
         if nsView.window != nil && viewModel.playbackBackend == .mpv {
             viewModel.attachPlayerView(nsView.playerSurfaceView)
@@ -59,6 +63,7 @@ final class PlayerHostView: NSView {
     let playerSurfaceView = MpvRenderView(frame: .zero)
     let clickView = ClickCaptureView()
     var onViewReady: ((MpvRenderView) -> Void)?
+    private var lastNativeRefreshID = 0
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -105,12 +110,16 @@ final class PlayerHostView: NSView {
         onViewReady?(playerSurfaceView)
     }
 
-    func updateBackend(_ backend: PlayerViewModel.PlaybackBackend, player: AVPlayer) {
+    func updateBackend(_ backend: PlayerViewModel.PlaybackBackend, player: AVPlayer, nativeRefreshID: Int) {
         switch backend {
         case .native:
             if nativePlayerView.player !== player {
                 nativePlayerView.player = player
+            } else if nativeRefreshID != lastNativeRefreshID {
+                nativePlayerView.player = nil
+                nativePlayerView.player = player
             }
+            lastNativeRefreshID = nativeRefreshID
             nativePlayerView.isHidden = false
             playerSurfaceView.isHidden = true
         case .mpv:

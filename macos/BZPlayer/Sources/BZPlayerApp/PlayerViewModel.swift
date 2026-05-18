@@ -126,6 +126,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
     @Published var recentFiles: [String] = []
     @Published var subtitleBackgroundOpacity: Int
     @Published var playlistDurations: [URL: Double] = [:]
+    @Published var nativePlayerSurfaceRefreshID: Int = 0
 
     var onShowFileInfo: ((String) -> Void)?
 
@@ -1117,7 +1118,7 @@ killall lsd >/dev/null 2>&1 || true
 
         switch backend {
         case .native:
-            openWithNative(url: url, resumeAt: resumeTime)
+            openWithNative(url: url, resumeAt: resumeTime, refreshVideoSurfaceAfterReady: shouldRefreshNativeVideoSurface(url: url, ffprobeInfo: ffprobeInfo))
         case .mpv:
             mpvPlayer.setHardwareDecodingEnabled(true)
             mpvPlayer.setSpeed(speed)
@@ -1167,7 +1168,7 @@ killall lsd >/dev/null 2>&1 || true
 
             switch newBackend {
             case .native:
-                openWithNative(url: url, resumeAt: resumeAt)
+                openWithNative(url: url, resumeAt: resumeAt, refreshVideoSurfaceAfterReady: shouldRefreshNativeVideoSurface(url: url))
             case .mpv:
                 mpvAttemptedSoftwareFallback = false
                 mpvPlayer.setHardwareDecodingEnabled(true)
@@ -1195,7 +1196,7 @@ killall lsd >/dev/null 2>&1 || true
         }
     }
 
-    private func openWithNative(url: URL, resumeAt: Double?, startPaused: Bool = false) {
+    private func openWithNative(url: URL, resumeAt: Double?, startPaused: Bool = false, refreshVideoSurfaceAfterReady: Bool = false) {
         let item = AVPlayerItem(url: url)
         nativeItemStatusObserver = item.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in
             guard let self else { return }
@@ -1216,6 +1217,9 @@ killall lsd >/dev/null 2>&1 || true
                         self.nativePlayer.play()
                         self.nativePlayer.rate = Float(self.speed)
                         self.isPaused = false
+                    }
+                    if refreshVideoSurfaceAfterReady {
+                        self.refreshNativeVideoSurface()
                     }
                 }
             }
@@ -1315,6 +1319,28 @@ killall lsd >/dev/null 2>&1 || true
     private func codecSubtypeString(from formatDescription: Any) -> String {
         let subtype = CMFormatDescriptionGetMediaSubType(formatDescription as! CMFormatDescription)
         return fourCCString(subtype).lowercased()
+    }
+
+    private func shouldRefreshNativeVideoSurface(url: URL, ffprobeInfo: FFprobeInfo? = nil) -> Bool {
+        if let ffprobeInfo, ffprobeInfo.videoStreams.contains(where: { $0.codecName == "vp9" }) {
+            return true
+        }
+
+        let asset = AVURLAsset(url: url)
+        let vp9Subtypes: Set<String> = ["vp09", "vp9 ", "90pv"]
+        return asset.tracks(withMediaType: .video).contains { track in
+            track.formatDescriptions.contains { formatDescription in
+                vp9Subtypes.contains(codecSubtypeString(from: formatDescription))
+            }
+        }
+    }
+
+    private func refreshNativeVideoSurface() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+            guard let self, self.playbackBackend == .native else { return }
+            debugLog("[BZPlayer] Refreshing native video surface")
+            self.nativePlayerSurfaceRefreshID += 1
+        }
     }
 
     private func loadPlaylist(with selectedURL: URL) {
