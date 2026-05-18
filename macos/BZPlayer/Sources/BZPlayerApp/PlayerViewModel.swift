@@ -1252,10 +1252,10 @@ killall lsd >/dev/null 2>&1 || true
 
     private func shouldPreferMpv(ffprobeInfo: FFprobeInfo) -> Bool {
         let nativeSafeVideoCodecs: Set<String> = [
-            "h264", "hevc", "mpeg4", "mjpeg", "prores", "jpeg2000", "dvvideo", "h263", "av1"
+            "h264", "hevc", "mpeg4", "mjpeg", "prores", "jpeg2000", "dvvideo", "h263", "av1", "vp9"
         ]
         
-        // VP9 may be supported on modern macOS in MP4/WebM containers, but WebM is usually routed to mpv due to container check.
+        // VP9 is natively supported by AVPlayer on macOS 12+ in MP4 containers.
         // AVC/HEVC tags like avc1, hvc1, hev1 are natively supported.
         let nativeUnsafeVideoTags: Set<String> = []
 
