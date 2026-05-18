@@ -112,27 +112,46 @@ final class PlayerHostView: NSView {
         onViewReady?(playerSurfaceView)
     }
 
+    /// Guards the forceReattach delay window. While true, non-forceReattach
+    /// updateBackend calls must NOT reconnect the player or unhide the view,
+    /// because doing so would defeat the layer-teardown that forceReattach needs.
+    ///
+    /// Without this flag the sequence is:
+    ///   1. forceReattach=true  → hide view, nil player, schedule 150ms reconnect
+    ///   2. SwiftUI resets nativePlayerNeedsReattach=false → triggers updateNSView
+    ///   3. forceReattach=false → IMMEDIATELY reconnects player & unhides view
+    ///   4. 150ms later the scheduled reconnect fires, but view is already live
+    /// Result: the view is only disconnected for one run-loop tick (µs), which is
+    /// not enough for AVPlayerView to tear down its VP9 video rendering layer.
+    private var isReattaching = false
+
     func updateBackend(_ backend: PlayerViewModel.PlaybackBackend, player: AVPlayer, forceReattach: Bool = false) {
         switch backend {
         case .native:
-            if nativePlayerView.player !== player {
-                nativePlayerView.player = player
-            }
             if forceReattach {
-                // Some codecs: AVPlayerView may not detect video track on initial load.
-                // Toggle hidden state with a longer delay to force layer rebuild.
+                // Full layer teardown: disconnect player, hide view, wait, then reconnect.
+                // VP9 and other non-standard codecs need the video layer to fully reset
+                // before the new content can be rendered.
+                isReattaching = true
                 nativePlayerView.isHidden = true
                 nativePlayerView.player = nil
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
                     guard let self else { return }
+                    self.isReattaching = false
                     self.nativePlayerView.player = player
                     self.nativePlayerView.isHidden = false
                 }
-            } else {
+            } else if !isReattaching {
+                // Normal (non-reattach) path: connect player if needed and show view.
+                // Skipped while isReattaching is true to protect the teardown window.
+                if nativePlayerView.player !== player {
+                    nativePlayerView.player = player
+                }
                 nativePlayerView.isHidden = false
             }
             playerSurfaceView.isHidden = true
         case .mpv:
+            isReattaching = false
             nativePlayerView.player = nil
             nativePlayerView.isHidden = true
             playerSurfaceView.isHidden = false
