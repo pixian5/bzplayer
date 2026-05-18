@@ -8,17 +8,25 @@ struct PlayerContainerView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> PlayerHostView {
         let view = PlayerHostView()
-        // Assign the native player immediately so video renders on first file open
-        view.nativePlayerView.player = viewModel.nativePlayer
+        // Remove the initial assignment of nativePlayer here.
+        // It will be assigned when the backend is updated or when readyToPlay triggers.
+        // view.nativePlayerView.player = viewModel.nativePlayer
         view.onViewReady = { playerSurfaceView in
             viewModel.attachPlayerView(playerSurfaceView)
         }
-        // Register a direct (non-SwiftUI) callback for video-layer teardown+rebuild.
-        // This bypasses @Published / updateNSView so SwiftUI cannot coalesce the
-        // true→false nativePlayerNeedsReattach change into a no-op render pass.
-        viewModel.onNativeVideoLayerReattach = { [weak view, weak viewModel] in
+
+        viewModel.onNativePlaybackStart = { [weak view] in
+            guard let view else { return }
+            view.isPreparingNativeVideo = true
+            view.nativePlayerView.isHidden = true
+            view.nativePlayerView.player = nil
+        }
+
+        viewModel.onNativePlaybackReady = { [weak view, weak viewModel] in
             guard let view, let viewModel else { return }
-            view.performForceReattach(player: viewModel.nativePlayer)
+            view.isPreparingNativeVideo = false
+            view.nativePlayerView.player = viewModel.nativePlayer
+            view.nativePlayerView.isHidden = false
         }
         view.clickView.onSingleClick = {
             viewModel.togglePause()
@@ -114,44 +122,27 @@ final class PlayerHostView: NSView {
         onViewReady?(playerSurfaceView)
     }
 
-    /// Set to true while performForceReattach is in progress.
-    /// Prevents updateBackend from reconnecting the player or un-hiding the view
-    /// during the teardown window, which would cancel the reattach effect.
-    private var isReattaching = false
-
-    /// Called directly from PlayerViewModel (NOT via SwiftUI updateNSView) to
-    /// perform a full video-layer teardown + rebuild for VP9 and other codecs
-    /// that suffer from AVPlayerView rendering initialisation bugs.
-    ///
-    /// Unlike the old @Published-based forceReattach path, this is invoked
-    /// synchronously on the main thread the moment the AVPlayerItem becomes
-    /// ready, so there is no risk of SwiftUI batching the call away.
-    func performForceReattach(player: AVPlayer) {
-        isReattaching = true
-        nativePlayerView.isHidden = true
-        nativePlayerView.player = nil
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
-            guard let self else { return }
-            self.isReattaching = false
-            self.nativePlayerView.player = player
-            self.nativePlayerView.isHidden = false
-        }
-    }
+    /// Set to true when a new native AVPlayerItem is about to be loaded.
+    /// Prevents updateBackend from aggressively attaching the player to the view
+    /// before the item is `readyToPlay`. For VP9 to initialize its video layer
+    /// correctly, the player MUST NOT be attached to AVPlayerView until after
+    /// it is ready.
+    var isPreparingNativeVideo = false
 
     func updateBackend(_ backend: PlayerViewModel.PlaybackBackend, player: AVPlayer) {
         switch backend {
         case .native:
             playerSurfaceView.isHidden = true
-            // Skip reconnecting during performForceReattach's teardown window;
-            // the reattach closure will reconnect when ready.
-            if !isReattaching {
+            // If we are in the middle of preparing a new AVPlayerItem,
+            // DO NOT attach it to the view yet. Wait for onNativePlaybackReady.
+            if !isPreparingNativeVideo {
                 if nativePlayerView.player !== player {
                     nativePlayerView.player = player
                 }
                 nativePlayerView.isHidden = false
             }
         case .mpv:
-            isReattaching = false
+            isPreparingNativeVideo = false
             nativePlayerView.player = nil
             nativePlayerView.isHidden = true
             playerSurfaceView.isHidden = false

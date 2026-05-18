@@ -133,11 +133,8 @@ final class PlayerViewModel: NSObject, ObservableObject {
     let nativePlayer = AVPlayer()
     let speedCandidates: [Double] = [0.25, 0.5, 1, 1.25, 1.5, 1.75, 2, 3, 4, 8, 16]
 
-    /// Called directly (bypassing SwiftUI) when AVPlayer item is ready and the
-    /// video layer needs to be torn down and rebuilt to work around the VP9 /
-    /// non-standard-codec rendering initialisation bug in AVPlayerView.
-    /// Set by PlayerContainerView.makeNSView.
-    var onNativeVideoLayerReattach: (() -> Void)?
+    var onNativePlaybackStart: (() -> Void)?
+    var onNativePlaybackReady: (() -> Void)?
 
     var hasOpenedFile: Bool {
         currentFileURL != nil
@@ -1202,6 +1199,11 @@ killall lsd >/dev/null 2>&1 || true
     }
 
     private func openWithNative(url: URL, resumeAt: Double?, startPaused: Bool = false) {
+        // Disconnect AVPlayerView from player BEFORE loading the new item.
+        // This is crucial for VP9: if the player is attached to a view before the
+        // item is loaded, AVPlayerView fails to initialize the video layer correctly.
+        onNativePlaybackStart?()
+
         // Clean up previous native playback state
         nativeItemStatusObserver = nil
         nativePlayer.pause()
@@ -1221,29 +1223,21 @@ killall lsd >/dev/null 2>&1 || true
                     if let resumeAt, resumeAt > 0 {
                         self.nativePlayer.seek(to: CMTime(seconds: resumeAt, preferredTimescale: 600))
                     }
-                    // Directly invoke the view's layer-teardown callback, bypassing
-                    // SwiftUI's @Published / updateNSView path entirely.
-                    // SwiftUI batches published-property changes and can coalesce
-                    // true→false into a single render pass, so forceReattach would
-                    // never actually fire through that path.
-                    // The callback hides AVPlayerView, disconnects the player,
-                    // waits 150 ms for the video layer to reset, then reconnects.
-                    // We wait an extra 50 ms on top (200 ms total) before play() so
-                    // the first frame is decoded into the freshly rebuilt layer.
-                    self.onNativeVideoLayerReattach?()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
-                        guard let self, self.playbackBackend == .native else { return }
-                        if startPaused {
-                            self.nativePlayer.pause()
-                            self.isPaused = true
-                        } else {
-                            self.nativePlayer.play()
-                            self.nativePlayer.rate = Float(self.speed)
-                            self.isPaused = false
-                            // Force-emit first frame into the rebuilt video layer.
-                            let ct = self.nativePlayer.currentTime()
-                            self.nativePlayer.seek(to: ct, toleranceBefore: .zero, toleranceAfter: .zero)
-                        }
+                    
+                    // Reattach the AVPlayerView now that the item is fully ready.
+                    self.onNativePlaybackReady?()
+
+                    // Start playback immediately.
+                    if startPaused {
+                        self.nativePlayer.pause()
+                        self.isPaused = true
+                    } else {
+                        self.nativePlayer.play()
+                        self.nativePlayer.rate = Float(self.speed)
+                        self.isPaused = false
+                        // Force-emit first frame into the newly attached video layer.
+                        let ct = self.nativePlayer.currentTime()
+                        self.nativePlayer.seek(to: ct, toleranceBefore: .zero, toleranceAfter: .zero)
                     }
                 }
             }
