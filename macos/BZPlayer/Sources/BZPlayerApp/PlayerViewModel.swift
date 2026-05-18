@@ -165,6 +165,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
     private var lastStallPosition: Double = 0
     private var attemptedBackendSwitch = false
     private var mpvAttemptedSoftwareFallback = false
+    private var hasCompletedNativeVP9Warmup = false
     private var playbackFailureTimer: Timer?
     private var selectedSubtitlePath: String?
 
@@ -1118,7 +1119,17 @@ killall lsd >/dev/null 2>&1 || true
 
         switch backend {
         case .native:
-            openWithNative(url: url, resumeAt: resumeTime, refreshVideoSurfaceAfterReady: shouldRefreshNativeVideoSurface(url: url, ffprobeInfo: ffprobeInfo))
+            let needsNativeWarmupReload = shouldRefreshNativeVideoSurface(url: url, ffprobeInfo: ffprobeInfo)
+            if needsNativeWarmupReload && !hasCompletedNativeVP9Warmup {
+                warmupNativeVP9PlaybackThroughMpv(url: url, resumeAt: resumeTime, startPaused: false)
+            } else {
+                openWithNative(
+                    url: url,
+                    resumeAt: resumeTime,
+                    refreshVideoSurfaceAfterReady: needsNativeWarmupReload,
+                    reloadItemAfterReady: needsNativeWarmupReload
+                )
+            }
         case .mpv:
             mpvPlayer.setHardwareDecodingEnabled(true)
             mpvPlayer.setSpeed(speed)
@@ -1196,7 +1207,13 @@ killall lsd >/dev/null 2>&1 || true
         }
     }
 
-    private func openWithNative(url: URL, resumeAt: Double?, startPaused: Bool = false, refreshVideoSurfaceAfterReady: Bool = false) {
+    private func openWithNative(
+        url: URL,
+        resumeAt: Double?,
+        startPaused: Bool = false,
+        refreshVideoSurfaceAfterReady: Bool = false,
+        reloadItemAfterReady: Bool = false
+    ) {
         let item = AVPlayerItem(url: url)
         nativeItemStatusObserver = item.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in
             guard let self else { return }
@@ -1220,6 +1237,9 @@ killall lsd >/dev/null 2>&1 || true
                     }
                     if refreshVideoSurfaceAfterReady {
                         self.refreshNativeVideoSurface()
+                    }
+                    if reloadItemAfterReady {
+                        self.reloadNativeItemAfterWarmup(url: url, resumeAt: resumeAt, startPaused: startPaused)
                     }
                 }
             }
@@ -1340,6 +1360,64 @@ killall lsd >/dev/null 2>&1 || true
             guard let self, self.playbackBackend == .native else { return }
             debugLog("[BZPlayer] Refreshing native video surface")
             self.nativePlayerSurfaceRefreshID += 1
+        }
+    }
+
+    private func reloadNativeItemAfterWarmup(url: URL, resumeAt: Double?, startPaused: Bool) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+            guard let self else { return }
+            guard self.playbackBackend == .native, self.currentFileURL == url else { return }
+
+            let currentSeconds = self.nativePlayer.currentTime().seconds
+            let reloadResumeAt: Double?
+            if currentSeconds.isFinite, currentSeconds > 0 {
+                reloadResumeAt = currentSeconds
+            } else {
+                reloadResumeAt = resumeAt
+            }
+
+            debugLog("[BZPlayer] Reloading native VP9 item after AV warmup")
+            self.nativeItemStatusObserver = nil
+            self.nativePlayer.replaceCurrentItem(with: nil)
+            self.openWithNative(
+                url: url,
+                resumeAt: reloadResumeAt,
+                startPaused: startPaused,
+                refreshVideoSurfaceAfterReady: true,
+                reloadItemAfterReady: false
+            )
+        }
+    }
+
+    private func warmupNativeVP9PlaybackThroughMpv(url: URL, resumeAt: Double?, startPaused: Bool) {
+        hasCompletedNativeVP9Warmup = true
+        debugLog("[BZPlayer] Warming native VP9 playback through mpv roundtrip")
+        selectBackend(.mpv)
+        mpvAttemptedSoftwareFallback = false
+        mpvPlayer.setHardwareDecodingEnabled(true)
+        mpvPlayer.setSpeed(speed)
+        mpvPlayer.load(url: url, resumeAt: resumeAt)
+        if startPaused {
+            mpvPlayer.pause()
+        } else {
+            mpvPlayer.play()
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+            guard let self else { return }
+            guard self.currentFileURL == url, self.playbackBackend == .mpv else { return }
+
+            let mpvTime = self.mpvPlayer.getDoubleProperty("time-pos")
+            let nativeResumeAt = (mpvTime?.isFinite == true && (mpvTime ?? 0) > 0) ? mpvTime : resumeAt
+            debugLog("[BZPlayer] Returning to native after VP9 warmup")
+            self.selectBackend(.native)
+            self.openWithNative(
+                url: url,
+                resumeAt: nativeResumeAt,
+                startPaused: startPaused,
+                refreshVideoSurfaceAfterReady: true,
+                reloadItemAfterReady: true
+            )
         }
     }
 
