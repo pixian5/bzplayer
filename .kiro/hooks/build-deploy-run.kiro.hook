@@ -1,0 +1,13 @@
+{
+  "enabled": true,
+  "name": "构建部署运行",
+  "description": "执行 deploy.sh 脚本：构建、部署到应用程序文件夹、运行、推送git",
+  "version": "1",
+  "when": {
+    "type": "userTriggered"
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "请执行项目根目录的 deploy.sh 脚本完成构建部署。如果用户提供了 commit 消息，用该消息作为参数传入；否则不传参（脚本会默认使用当前时间）。执行命令示例：`./deploy.sh \"消息\"` 或 `./deploy.sh`。如果脚本执行失败，报告错误。"
+  }
+}

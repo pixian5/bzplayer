@@ -121,6 +121,9 @@ struct PlaylistPanelView: View {
                                         await viewModel.fetchPlaylistDuration(for: url)
                                     }
                                 }
+                                Button("显示全部视频时长") {
+                                    showAllDurationsToast()
+                                }
                             }
                         }
                     }
@@ -178,6 +181,25 @@ struct PlaylistPanelView: View {
         if let m = flagsMonitor {
             NSEvent.removeMonitor(m)
             flagsMonitor = nil
+        }
+    }
+
+    /// 异步获取全部视频时长，显示在每个视频后面，并 toast 总时长
+    private func showAllDurationsToast() {
+        // 将所有 URL 加入 visibleDurations，使时长显示在文件名后面
+        for url in viewModel.playlist {
+            visibleDurations.insert(url)
+        }
+        Task {
+            var totalDuration: Double = 0
+            for url in viewModel.playlist {
+                await viewModel.fetchPlaylistDuration(for: url)
+                if let d = viewModel.playlistDurations[url] {
+                    totalDuration += d
+                }
+            }
+            viewModel.toastMessage = "播放列表共 \(viewModel.playlist.count) 个文件，总时长: \(formatSeconds(totalDuration))"
+            viewModel.showToast = true
         }
     }
 
