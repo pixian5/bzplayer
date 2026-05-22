@@ -14,6 +14,12 @@ echo "✅ 构建成功"
 echo "📦 复制编译产物到 .app 包..."
 cp .build/arm64-apple-macosx/debug/BZPlayer BZPlayer.app/Contents/MacOS/BZPlayer
 
+echo "📦 复制 VLCKit.framework 到 .app 包..."
+VLCKIT_SRC=".build/artifacts/vlckit-spm/VLCKit-all/VLCKit-all.xcframework/macos-arm64_x86_64/VLCKit.framework"
+mkdir -p BZPlayer.app/Contents/Frameworks
+rm -rf BZPlayer.app/Contents/Frameworks/VLCKit.framework
+cp -R "$VLCKIT_SRC" BZPlayer.app/Contents/Frameworks/VLCKit.framework
+
 echo "🛑 关闭旧应用..."
 osascript -e 'quit app "BZPlayer"' 2>/dev/null || true
 sleep 1
