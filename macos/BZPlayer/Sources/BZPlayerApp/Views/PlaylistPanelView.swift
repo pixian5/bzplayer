@@ -184,7 +184,7 @@ struct PlaylistPanelView: View {
         }
     }
 
-    /// 异步获取全部视频时长，显示在每个视频后面，并 toast 总时长
+    /// 异步获取全部视频时长，显示在每个视频后面，并 toast 总时长（5秒后自动消失）
     private func showAllDurationsToast() {
         // 将所有 URL 加入 visibleDurations，使时长显示在文件名后面
         for url in viewModel.playlist {
@@ -200,6 +200,9 @@ struct PlaylistPanelView: View {
             }
             viewModel.toastMessage = "播放列表共 \(viewModel.playlist.count) 个文件，总时长: \(formatSeconds(totalDuration))"
             viewModel.showToast = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
+                viewModel.showToast = false
+            }
         }
     }
 
