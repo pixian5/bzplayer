@@ -2,6 +2,7 @@ import AppKit
 import AVKit
 import OpenGL.GL3
 import SwiftUI
+import VLCKitSPM
 
 struct PlayerContainerView: NSViewRepresentable {
     @ObservedObject var viewModel: PlayerViewModel
@@ -51,9 +52,13 @@ struct PlayerContainerView: NSViewRepresentable {
             player: viewModel.nativePlayer,
             nativeRefreshID: viewModel.nativePlayerSurfaceRefreshID
         )
-        // Only attach the view for mpv backend to avoid unnecessary rendering calls to a hidden view
-        if nsView.window != nil && viewModel.playbackBackend == .mpv {
-            viewModel.attachPlayerView(nsView.playerSurfaceView)
+        // Only attach the view for the active backend to avoid unnecessary rendering calls to hidden views
+        if nsView.window != nil {
+            if viewModel.playbackBackend == .mpv {
+                viewModel.attachPlayerView(nsView.playerSurfaceView)
+            } else if viewModel.playbackBackend == .vlc {
+                viewModel.attachVLCView(nsView.vlcVideoView)
+            }
         }
     }
 }
@@ -61,6 +66,7 @@ struct PlayerContainerView: NSViewRepresentable {
 final class PlayerHostView: NSView {
     let nativePlayerView = AVPlayerView()
     let playerSurfaceView = MpvRenderView(frame: .zero)
+    let vlcVideoView = VLCVideoView(frame: .zero)
     let clickView = ClickCaptureView()
     var onViewReady: ((MpvRenderView) -> Void)?
     private var lastNativeRefreshID = 0
@@ -77,10 +83,13 @@ final class PlayerHostView: NSView {
         nativePlayerView.player = nil
 
         playerSurfaceView.translatesAutoresizingMaskIntoConstraints = false
+        vlcVideoView.translatesAutoresizingMaskIntoConstraints = false
+        vlcVideoView.isHidden = true
         clickView.translatesAutoresizingMaskIntoConstraints = false
 
         addSubview(nativePlayerView)
         addSubview(playerSurfaceView)
+        addSubview(vlcVideoView)
         addSubview(clickView)
 
         NSLayoutConstraint.activate([
@@ -92,6 +101,10 @@ final class PlayerHostView: NSView {
             playerSurfaceView.trailingAnchor.constraint(equalTo: trailingAnchor),
             playerSurfaceView.topAnchor.constraint(equalTo: topAnchor),
             playerSurfaceView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            vlcVideoView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            vlcVideoView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            vlcVideoView.topAnchor.constraint(equalTo: topAnchor),
+            vlcVideoView.bottomAnchor.constraint(equalTo: bottomAnchor),
             clickView.leadingAnchor.constraint(equalTo: leadingAnchor),
             clickView.trailingAnchor.constraint(equalTo: trailingAnchor),
             clickView.topAnchor.constraint(equalTo: topAnchor),
@@ -122,10 +135,17 @@ final class PlayerHostView: NSView {
             lastNativeRefreshID = nativeRefreshID
             nativePlayerView.isHidden = false
             playerSurfaceView.isHidden = true
+            vlcVideoView.isHidden = true
         case .mpv:
             nativePlayerView.player = nil
             nativePlayerView.isHidden = true
             playerSurfaceView.isHidden = false
+            vlcVideoView.isHidden = true
+        case .vlc:
+            nativePlayerView.player = nil
+            nativePlayerView.isHidden = true
+            playerSurfaceView.isHidden = true
+            vlcVideoView.isHidden = false
         }
     }
 }

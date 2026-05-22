@@ -5,6 +5,7 @@ import AppKit
 import CoreServices
 import Foundation
 import UniformTypeIdentifiers
+import VLCKitSPM
 
 // Debug logger
 private let debugLogURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Documents/BZPlayer.log")
@@ -34,6 +35,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
     enum PlaybackBackend: String {
         case native
         case mpv
+        case vlc
     }
 
     enum PlaylistOrder: String, CaseIterable {
@@ -131,6 +133,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
     var onShowFileInfo: ((String) -> Void)?
 
     let mpvPlayer = MpvPlayer()
+    let vlcPlayer = VLCPlayer()
     let nativePlayer = AVPlayer()
     let speedCandidates: [Double] = [0.25, 0.5, 1, 1.25, 1.5, 1.75, 2, 3, 4, 8, 16]
 
@@ -257,10 +260,13 @@ final class PlayerViewModel: NSObject, ObservableObject {
 
         mpvPlayer.setVolume(volume)
         mpvPlayer.setMuted(isMuted)
+        vlcPlayer.setVolume(volume)
+        vlcPlayer.setMuted(isMuted)
         nativePlayer.volume = Float(volume / 100.0)
         nativePlayer.isMuted = isMuted
 
         bindMpvCallbacks()
+        bindVLCCallbacks()
         bindNativePlayer()
         selectBackend(.native)
         mpvPlayer.setSubtitleBackgroundOpacity(subtitleBackgroundOpacity)
@@ -338,6 +344,10 @@ final class PlayerViewModel: NSObject, ObservableObject {
         mpvPlayer.attach(to: view)
     }
 
+    func attachVLCView(_ view: VLCVideoView) {
+        vlcPlayer.attach(to: view)
+    }
+
     func attachWindow(_ window: NSWindow) {
         if attachedWindow !== window {
             attachedWindow = window
@@ -397,6 +407,9 @@ final class PlayerViewModel: NSObject, ObservableObject {
         case .mpv:
             mpvPlayer.play()
             isPaused = false
+        case .vlc:
+            vlcPlayer.play()
+            isPaused = false
         }
     }
 
@@ -406,6 +419,8 @@ final class PlayerViewModel: NSObject, ObservableObject {
             nativePlayer.pause()
         case .mpv:
             mpvPlayer.pause()
+        case .vlc:
+            vlcPlayer.pause()
         }
         isPaused = true
         saveCurrentProgress()
@@ -427,6 +442,8 @@ final class PlayerViewModel: NSObject, ObservableObject {
             nativePlayer.replaceCurrentItem(with: nil)
         case .mpv:
             mpvPlayer.stop()
+        case .vlc:
+            vlcPlayer.stop()
         }
         currentFileURL = nil
         openedFilePath = ""
@@ -453,11 +470,13 @@ final class PlayerViewModel: NSObject, ObservableObject {
     func setVolume(_ newVolume: Double) {
         volume = max(0, min(100, newVolume))
         mpvPlayer.setVolume(volume)
+        vlcPlayer.setVolume(volume)
         nativePlayer.volume = Float(volume / 100.0)
         print("[BZPlayer] setVolume: \(volume), nativePlayer.volume: \(nativePlayer.volume), isMuted: \(isMuted)")
         if volume > 0 {
             isMuted = false
             mpvPlayer.setMuted(false)
+            vlcPlayer.setMuted(false)
             nativePlayer.isMuted = false
         }
         saveSettings()
@@ -466,6 +485,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
     func toggleMute() {
         isMuted.toggle()
         mpvPlayer.setMuted(isMuted)
+        vlcPlayer.setMuted(isMuted)
         nativePlayer.isMuted = isMuted
         saveSettings()
     }
@@ -502,6 +522,11 @@ final class PlayerViewModel: NSObject, ObservableObject {
                     self?.isSeeking = false
                 }
             }
+        } else if playbackBackend == .vlc {
+            vlcPlayer.seek(seconds: targetTime)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                self?.isSeeking = false
+            }
         } else {
             mpvPlayer.seek(seconds: targetTime)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
@@ -524,6 +549,8 @@ final class PlayerViewModel: NSObject, ObservableObject {
             nativePlayer.rate = isPaused ? 0 : Float(speed)
         case .mpv:
             mpvPlayer.setSpeed(speed)
+        case .vlc:
+            vlcPlayer.setSpeed(speed)
         }
     }
 
@@ -758,7 +785,12 @@ final class PlayerViewModel: NSObject, ObservableObject {
         guard let url = currentFileURL else { return }
         let resumeAt = currentTime > 0 && currentTime < duration ? currentTime : nil
         let wasPaused = isPaused
-        let newBackend: PlaybackBackend = playbackBackend == .native ? .mpv : .native
+        let newBackend: PlaybackBackend
+        switch playbackBackend {
+        case .native: newBackend = .mpv
+        case .mpv:    newBackend = .vlc
+        case .vlc:    newBackend = .native
+        }
         selectBackend(newBackend)
 
         switch newBackend {
@@ -775,6 +807,14 @@ final class PlayerViewModel: NSObject, ObservableObject {
                 mpvPlayer.play()
             }
             applyAudioDelay()
+        case .vlc:
+            vlcPlayer.setSpeed(speed)
+            vlcPlayer.load(url: url, resumeAt: resumeAt)
+            if wasPaused {
+                vlcPlayer.pause()
+            } else {
+                vlcPlayer.play()
+            }
         }
     }
 
@@ -789,6 +829,11 @@ final class PlayerViewModel: NSObject, ObservableObject {
                 DispatchQueue.main.async {
                     self?.isSeeking = false
                 }
+            }
+        } else if playbackBackend == .vlc {
+            vlcPlayer.seek(seconds: target)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                self?.isSeeking = false
             }
         } else {
             mpvPlayer.seek(seconds: target)
@@ -961,6 +1006,37 @@ killall lsd >/dev/null 2>&1 || true
         }
     }
 
+    private func bindVLCCallbacks() {
+        vlcPlayer.onTimeChanged = { [weak self] time in
+            guard let self, self.playbackBackend == .vlc else { return }
+            self.currentTime = time.isFinite ? time : 0
+            if Int(self.currentTime) % 1 == 0 {
+                self.saveCurrentProgress()
+            }
+        }
+        vlcPlayer.onDurationChanged = { [weak self] duration in
+            guard let self, self.playbackBackend == .vlc else { return }
+            self.duration = duration.isFinite ? duration : 0
+        }
+        vlcPlayer.onPauseChanged = { [weak self] paused in
+            guard let self, self.playbackBackend == .vlc else { return }
+            self.isPaused = paused
+        }
+        vlcPlayer.onFileLoaded = { [weak self] in
+            guard let self, self.playbackBackend == .vlc else { return }
+            self.syncText = "播放链路：VLC/libvlc"
+            self.playbackEngineStatus = "VLC/libvlc"
+        }
+        vlcPlayer.onStatusChanged = { [weak self] status in
+            guard let self, self.playbackBackend == .vlc else { return }
+            self.playbackEngineStatus = status
+        }
+        vlcPlayer.onEndReached = { [weak self] in
+            guard let self, self.playbackBackend == .vlc else { return }
+            self.handlePlaybackFinished()
+        }
+    }
+
     private func bindNativePlayer() {
         nativeTimeObserver = nativePlayer.addPeriodicTimeObserver(
             forInterval: CMTime(seconds: 0.1, preferredTimescale: 600),
@@ -1023,11 +1099,16 @@ killall lsd >/dev/null 2>&1 || true
             mpvPlayer.stop()
             mpvPlayer.cancelPendingRender()
         }
-        
+
         if previousBackend == .native {
             nativePlayer.pause()
             nativeItemStatusObserver = nil
             nativePlayer.replaceCurrentItem(with: nil)
+        }
+
+        if previousBackend == .vlc {
+            vlcPlayer.stop()
+            vlcPlayer.cancelPendingRender()
         }
 
         switch backend {
@@ -1043,6 +1124,11 @@ killall lsd >/dev/null 2>&1 || true
             if let selectedSubtitlePath {
                 mpvPlayer.setExternalSubtitle(url: URL(fileURLWithPath: selectedSubtitlePath))
             }
+        case .vlc:
+            playbackEngineStatus = "VLC/libvlc"
+            syncText = "播放链路：VLC/libvlc"
+            vlcPlayer.setVolume(volume)
+            vlcPlayer.setMuted(isMuted)
         }
     }
 
@@ -1127,8 +1213,8 @@ killall lsd >/dev/null 2>&1 || true
                 openWithNative(
                     url: url,
                     resumeAt: resumeTime,
-                    refreshVideoSurfaceAfterReady: false,
-                    reloadItemAfterReady: false
+                    refreshVideoSurfaceAfterReady: needsNativeWarmupReload,
+                    reloadItemAfterReady: needsNativeWarmupReload
                 )
             }
         case .mpv:
@@ -1137,6 +1223,10 @@ killall lsd >/dev/null 2>&1 || true
             mpvPlayer.load(url: url, resumeAt: resumeTime)
             mpvPlayer.play()
             applyAudioDelay()  // 应用文件记忆的音频延迟
+        case .vlc:
+            vlcPlayer.setSpeed(speed)
+            vlcPlayer.load(url: url, resumeAt: resumeTime)
+            vlcPlayer.play()
         }
 
         // Schedule a failure check after 5 seconds
@@ -1173,7 +1263,12 @@ killall lsd >/dev/null 2>&1 || true
         if !attemptedBackendSwitch {
             // Try switching to the other backend
             attemptedBackendSwitch = true
-            let newBackend: PlaybackBackend = originalBackend == .native ? .mpv : .native
+            let newBackend: PlaybackBackend
+            switch originalBackend {
+            case .native: newBackend = .mpv
+            case .mpv:    newBackend = .native
+            case .vlc:    newBackend = .mpv
+            }
             print("[BZPlayer] Playback failed with \(originalBackend), switching to \(newBackend)")
 
             selectBackend(newBackend)
@@ -1187,13 +1282,17 @@ killall lsd >/dev/null 2>&1 || true
                 mpvPlayer.setSpeed(speed)
                 mpvPlayer.load(url: url, resumeAt: resumeAt)
                 mpvPlayer.play()
+            case .vlc:
+                vlcPlayer.setSpeed(speed)
+                vlcPlayer.load(url: url, resumeAt: resumeAt)
+                vlcPlayer.play()
             }
 
             // Schedule another check after switching backend
             schedulePlaybackFailureCheck(for: url, backend: newBackend, resumeAt: resumeAt)
         } else {
-            // Both backends failed, show error and file info
-            let errorMsg = "无法播放文件：\(url.lastPathComponent)\n两个播放内核都无法解码此文件。"
+            // All tried backends failed, show error and file info
+            let errorMsg = "无法播放文件：\(url.lastPathComponent)\n多个播放内核都无法解码此文件。"
             print("[BZPlayer] \(errorMsg)")
             playbackError = errorMsg
 
@@ -1852,6 +1951,12 @@ killall lsd >/dev/null 2>&1 || true
             if let mpvDuration = mpvPlayer.getDoubleProperty("duration") {
                 effectiveDuration = mpvDuration
                 debugLog("[BZPlayer] Got duration from mpv directly: \(effectiveDuration)")
+            }
+        }
+        if effectiveDuration == 0 && playbackBackend == .vlc {
+            if let vlcDuration = vlcPlayer.getDoubleProperty("duration") {
+                effectiveDuration = vlcDuration
+                debugLog("[BZPlayer] Got duration from VLC directly: \(effectiveDuration)")
             }
         }
 

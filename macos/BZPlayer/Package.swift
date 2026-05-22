@@ -9,6 +9,9 @@ let package = Package(
     products: [
         .executable(name: "BZPlayer", targets: ["BZPlayerApp"])
     ],
+    dependencies: [
+        .package(url: "https://github.com/tylerjonesio/vlckit-spm/", .upToNextMajor(from: "3.5.1"))
+    ],
     targets: [
         .systemLibrary(
             name: "CMpv",
@@ -16,7 +19,10 @@ let package = Package(
         ),
         .executableTarget(
             name: "BZPlayerApp",
-            dependencies: ["CMpv"],
+            dependencies: [
+                "CMpv",
+                .product(name: "VLCKitSPM", package: "vlckit-spm")
+            ],
             path: "Sources/BZPlayerApp",
             linkerSettings: [
                 .linkedFramework("OpenGL"),
