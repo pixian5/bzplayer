@@ -127,6 +127,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
     @Published var showRecentFiles: Bool = true
     @Published var recentFiles: [String] = []
     @Published var subtitleBackgroundOpacity: Int
+    @Published var subtitleFontSize: Int
     @Published var playlistDurations: [URL: Double] = [:]
     @Published var nativePlayerSurfaceRefreshID: Int = 0
 
@@ -189,6 +190,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
     private static let audioDelayStepMsKey = "audioDelayStepMs"
     private static let showRecentFilesKey = "showRecentFiles"
     private static let subtitleBackgroundOpacityKey = "subtitleBackgroundOpacity"
+    private static let subtitleFontSizeKey = "subtitleFontSize"
 
     // MARK: - 文件存储路径
     private static var settingsDir: URL {
@@ -225,6 +227,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         var audioDelayStepMs: Double = 50
         var showRecentFiles: Bool = true
         var subtitleBackgroundOpacity: Int = 0
+        var subtitleFontSize: Int = 55
         var lastWindowFrame: String? = nil
         var lastUsedSpeed: Double = 1.0
     }
@@ -255,6 +258,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         audioDelayStepMs = settings.audioDelayStepMs
         showRecentFiles = settings.showRecentFiles
         subtitleBackgroundOpacity = Self.clampSubtitleOpacity(settings.subtitleBackgroundOpacity)
+        subtitleFontSize = max(1, settings.subtitleFontSize)
         recentFiles = Self.loadRecentFilesFromDisk() ?? []
         super.init()
 
@@ -270,6 +274,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         bindNativePlayer()
         selectBackend(.native)
         mpvPlayer.setSubtitleBackgroundOpacity(subtitleBackgroundOpacity)
+        mpvPlayer.setSubtitleFontSize(subtitleFontSize)
     }
 
     private static func loadSettings() -> AppSettings {
@@ -299,6 +304,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         settings.audioDelayStepMs = audioDelayStepMs
         settings.showRecentFiles = showRecentFiles
         settings.subtitleBackgroundOpacity = subtitleBackgroundOpacity
+        settings.subtitleFontSize = subtitleFontSize
         settings.lastUsedSpeed = speed
         if let frame = attachedWindow {
             settings.lastWindowFrame = NSStringFromRect(frame.frame)
@@ -625,6 +631,12 @@ final class PlayerViewModel: NSObject, ObservableObject {
         subtitleBackgroundOpacity = normalized
         saveSettings()
         mpvPlayer.setSubtitleBackgroundOpacity(normalized)
+    }
+
+    func setSubtitleFontSize(_ size: Int) {
+        subtitleFontSize = max(1, size)
+        saveSettings()
+        mpvPlayer.setSubtitleFontSize(subtitleFontSize)
     }
 
     func setAudioDelayStepMs(_ value: Double) {

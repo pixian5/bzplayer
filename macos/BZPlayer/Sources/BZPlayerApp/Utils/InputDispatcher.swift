@@ -74,6 +74,18 @@ struct InputDispatcher {
         default:
             break
         }
+        switch event.charactersIgnoringModifiers {
+        case "1": viewModel.setSpeed(1.0); return true
+        case "2": viewModel.setSpeed(2.0); return true
+        case "3": viewModel.setSpeed(3.0); return true
+        case "4": viewModel.setSpeed(4.0); return true
+        case "5": viewModel.setSpeed(5.0); return true
+        case "6": viewModel.setSpeed(6.0); return true
+        case "7": viewModel.setSpeed(7.0); return true
+        case "8": viewModel.setSpeed(8.0); return true
+        case "9": viewModel.setSpeed(9.0); return true
+        default: break
+        }
         switch event.charactersIgnoringModifiers?.lowercased() {
         case "f":
             viewModel.toggleFullscreen(in: window)

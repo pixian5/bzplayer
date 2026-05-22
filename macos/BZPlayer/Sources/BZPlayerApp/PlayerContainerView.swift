@@ -33,6 +33,12 @@ struct PlayerContainerView: NSViewRepresentable {
         view.clickView.onCurrentSubtitleBackgroundOpacity = {
             viewModel.subtitleBackgroundOpacity
         }
+        view.clickView.onSetSubtitleFontSize = { size in
+            viewModel.setSubtitleFontSize(size)
+        }
+        view.clickView.onCurrentSubtitleFontSize = {
+            viewModel.subtitleFontSize
+        }
         view.clickView.onKeyEvent = { [weak view, weak viewModel] event in
             guard let viewModel = viewModel else { return false }
             return InputDispatcher(viewModel: viewModel).handleKeyEvent(event, in: view?.window)
@@ -229,6 +235,8 @@ final class ClickCaptureView: NSView {
     var onSelectSubtitleByPath: ((String?) -> Void)?
     var onSetSubtitleBackgroundOpacity: ((Int) -> Void)?
     var onCurrentSubtitleBackgroundOpacity: (() -> Int)?
+    var onSetSubtitleFontSize: ((Int) -> Void)?
+    var onCurrentSubtitleFontSize: (() -> Int)?
     var onKeyEvent: ((NSEvent) -> Bool)?
     var onSpeedKeyDown: ((Double) -> Void)?
     var onSpeedKeyUp: (() -> Void)?
@@ -378,8 +386,23 @@ final class ClickCaptureView: NSView {
             opacityMenu.addItem(item)
         }
         opacityMenuItem.submenu = opacityMenu
+
+        let fontSizeMenuItem = NSMenuItem(title: "字幕字体大小", action: nil, keyEquivalent: "")
+        let fontSizeMenu = NSMenu(title: "字幕字体大小")
+        let fontSizes = [28, 36, 44, 55, 66, 80, 100]
+        let currentFontSize = onCurrentSubtitleFontSize?() ?? 55
+        for size in fontSizes {
+            let item = NSMenuItem(title: "\(size)", action: #selector(handleSubtitleFontSizeSelection(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = size
+            item.state = size == currentFontSize ? .on : .off
+            fontSizeMenu.addItem(item)
+        }
+        fontSizeMenuItem.submenu = fontSizeMenu
+
         subtitleMenu.addItem(NSMenuItem.separator())
         subtitleMenu.addItem(opacityMenuItem)
+        subtitleMenu.addItem(fontSizeMenuItem)
         subtitleMenuItem.submenu = subtitleMenu
         menu.addItem(subtitleMenuItem)
 
@@ -407,5 +430,11 @@ final class ClickCaptureView: NSView {
     private func handleSubtitleBackgroundOpacitySelection(_ sender: NSMenuItem) {
         guard let value = sender.representedObject as? Int else { return }
         onSetSubtitleBackgroundOpacity?(value)
+    }
+
+    @objc
+    private func handleSubtitleFontSizeSelection(_ sender: NSMenuItem) {
+        guard let value = sender.representedObject as? Int else { return }
+        onSetSubtitleFontSize?(value)
     }
 }

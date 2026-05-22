@@ -471,6 +471,10 @@ final class MpvPlayer: NSObject {
         }
     }
 
+    func setSubtitleFontSize(_ size: Int) {
+        setStringProperty("sub-font-size", "\(size)")
+    }
+
     private func applySubtitleBackgroundStyle() {
         let alphaDecimal = 255 - Int((Double(subtitleBackgroundOpacityPercent) / 100.0) * 255.0)
         let alphaHex = String(format: "%02X", max(0, min(255, alphaDecimal)))
