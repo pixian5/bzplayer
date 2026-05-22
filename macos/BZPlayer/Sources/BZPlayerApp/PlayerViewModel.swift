@@ -1547,8 +1547,8 @@ killall lsd >/dev/null 2>&1 || true
     private func showToastMessage(_ message: String) {
         toastMessage = message
         showToast = true
-        // 2秒后自动隐藏
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+        // 3秒后自动隐藏
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
             self?.showToast = false
         }
     }

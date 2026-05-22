@@ -200,7 +200,7 @@ struct PlaylistPanelView: View {
             }
             viewModel.toastMessage = "播放列表共 \(viewModel.playlist.count) 个文件，总时长: \(formatSeconds(totalDuration))"
             viewModel.showToast = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
                 viewModel.showToast = false
             }
         }
