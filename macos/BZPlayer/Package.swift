@@ -24,6 +24,9 @@ let package = Package(
                 .product(name: "VLCKitSPM", package: "vlckit-spm")
             ],
             path: "Sources/BZPlayerApp",
+            resources: [
+                .copy("Resources")
+            ],
             linkerSettings: [
                 .linkedFramework("OpenGL"),
                 .unsafeFlags([

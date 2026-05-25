@@ -167,6 +167,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
     private weak var attachedWindow: NSWindow?
     private static var globalLastNavigationTime: TimeInterval = 0
     private static var hasCompletedNativeVP9Warmup = false
+    private var vp9WarmupPlayer: AVPlayer?
     private var lastAutoNextJumpTimes: [TimeInterval] = []
     private var windowFrameObservers: [NSObjectProtocol] = []
     private var hasAppliedInitialWindowBehavior = false
@@ -279,6 +280,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         selectBackend(.native)
         mpvPlayer.setSubtitleBackgroundOpacity(subtitleBackgroundOpacity)
         mpvPlayer.setSubtitleFontSize(subtitleFontSize)
+        warmupVP9DecoderIfNeeded()
     }
 
     private static func loadSettings() -> AppSettings {
@@ -1223,17 +1225,12 @@ killall lsd >/dev/null 2>&1 || true
         switch backend {
         case .native:
             let needsNativeWarmupReload = shouldRefreshNativeVideoSurface(url: url, ffprobeInfo: ffprobeInfo)
-            let shouldWarmupThroughMpv = needsNativeWarmupReload && !Self.hasCompletedNativeVP9Warmup
-            if shouldWarmupThroughMpv {
-                warmupNativeVP9PlaybackThroughMpv(url: url, resumeAt: resumeTime, startPaused: false)
-            } else {
-                openWithNative(
-                    url: url,
-                    resumeAt: resumeTime,
-                    refreshVideoSurfaceAfterReady: needsNativeWarmupReload,
-                    reloadItemAfterReady: needsNativeWarmupReload
-                )
-            }
+            openWithNative(
+                url: url,
+                resumeAt: resumeTime,
+                refreshVideoSurfaceAfterReady: needsNativeWarmupReload,
+                reloadItemAfterReady: needsNativeWarmupReload
+            )
         case .mpv:
             mpvPlayer.setHardwareDecodingEnabled(true)
             mpvPlayer.setSpeed(speed)
@@ -1506,35 +1503,24 @@ killall lsd >/dev/null 2>&1 || true
         }
     }
 
-    private func warmupNativeVP9PlaybackThroughMpv(url: URL, resumeAt: Double?, startPaused: Bool) {
-        Self.hasCompletedNativeVP9Warmup = true
-        debugLog("[BZPlayer] Warming native VP9 playback through mpv roundtrip")
-        selectBackend(.mpv)
-        mpvAttemptedSoftwareFallback = false
-        mpvPlayer.setHardwareDecodingEnabled(true)
-        mpvPlayer.setSpeed(speed)
-        mpvPlayer.load(url: url, resumeAt: resumeAt)
-        if startPaused {
-            mpvPlayer.pause()
-        } else {
-            mpvPlayer.play()
+    private func warmupVP9DecoderIfNeeded() {
+        guard !Self.hasCompletedNativeVP9Warmup else { return }
+        guard let url = Bundle.module.url(forResource: "Resources/vp9_warmup", withExtension: "mp4") else {
+            debugLog("[BZPlayer] VP9 warmup resource not found, skipping")
+            return
         }
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
-            guard let self else { return }
-            guard self.currentFileURL == url, self.playbackBackend == .mpv else { return }
-
-            let mpvTime = self.mpvPlayer.getDoubleProperty("time-pos")
-            let nativeResumeAt = (mpvTime?.isFinite == true && (mpvTime ?? 0) > 0) ? mpvTime : resumeAt
-            debugLog("[BZPlayer] Returning to native after VP9 warmup")
-            self.selectBackend(.native)
-            self.openWithNative(
-                url: url,
-                resumeAt: nativeResumeAt,
-                startPaused: startPaused,
-                refreshVideoSurfaceAfterReady: true,
-                reloadItemAfterReady: true
-            )
+        Self.hasCompletedNativeVP9Warmup = true
+        debugLog("[BZPlayer] Starting silent VP9 decoder warmup")
+        let item = AVPlayerItem(url: url)
+        let player = AVPlayer(playerItem: item)
+        player.isMuted = true
+        player.volume = 0
+        vp9WarmupPlayer = player
+        player.play()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+            self?.vp9WarmupPlayer?.pause()
+            self?.vp9WarmupPlayer = nil
+            debugLog("[BZPlayer] VP9 decoder warmup complete")
         }
     }
 
