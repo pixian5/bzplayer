@@ -107,6 +107,10 @@ fi
 cp "${BIN_SOURCE}" "${APP_DIR}/Contents/MacOS/BZPlayer"
 chmod +x "${APP_DIR}/Contents/MacOS/BZPlayer"
 
+echo "[deploy] Copying VLCKit.framework..."
+mkdir -p "${APP_DIR}/Contents/Frameworks"
+cp -R "${PROJECT_DIR}/.build/arm64-apple-macosx/release/VLCKit.framework" "${APP_DIR}/Contents/Frameworks/"
+
 "${LSREGISTER}" -f "${APP_DIR}" >/dev/null
 killall cfprefsd >/dev/null 2>&1 || true
 killall lsd >/dev/null 2>&1 || true
