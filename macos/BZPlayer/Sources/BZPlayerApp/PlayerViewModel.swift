@@ -128,6 +128,10 @@ final class PlayerViewModel: NSObject, ObservableObject {
     @Published var recentFiles: [String] = []
     @Published var subtitleBackgroundOpacity: Int
     @Published var subtitleFontSize: Int
+    /// 已打开过但未播完的文件（重启后清空）
+    @Published var openedFiles: Set<URL> = []
+    /// 已完整播放过的文件（重启后清空）
+    @Published var completedFiles: Set<URL> = []
     @Published var playlistDurations: [URL: Double] = [:]
     @Published var nativePlayerSurfaceRefreshID: Int = 0
 
@@ -1167,6 +1171,7 @@ killall lsd >/dev/null 2>&1 || true
         let isFirstOpen = currentFileURL == nil
         currentFileURL = url
         openedFilePath = url.path
+        openedFiles.insert(url)
         addRecentFile(url)
         currentIndex = playlist.firstIndex(of: url) ?? -1
         currentTime = 0
@@ -1994,6 +1999,7 @@ killall lsd >/dev/null 2>&1 || true
 
         // Clear saved progress AFTER guard (we're truly at end), and reset currentTime
         if let url = currentFileURL {
+            completedFiles.insert(url)
             clearSavedProgress(for: url)
         }
         currentTime = 0

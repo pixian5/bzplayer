@@ -59,13 +59,16 @@ struct PlaylistPanelView: View {
                             let durationText = hasDuration ? (viewModel.playlistDurations[url].map { " [\(formatSeconds($0))]" } ?? " [...]") : ""
 
                             HStack(alignment: .top) {
+                                let isCompleted = viewModel.completedFiles.contains(url)
+                                let isOpened = viewModel.openedFiles.contains(url) && !isCompleted
                                 Text(filename + durationText)
                                     .lineLimit(shouldExpand ? nil : 1)
                                     .fixedSize(horizontal: false, vertical: shouldExpand)
+                                    .foregroundStyle(isCompleted ? Color.yellow : Color.white)
+                                    .underline(isOpened)
                                 Spacer()
                             }
                             .font(.system(size: 13))
-                            .foregroundStyle(.white)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 6)
                             .frame(maxWidth: .infinity, alignment: .leading)
