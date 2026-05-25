@@ -1,6 +1,5 @@
 import AppKit
 import AVKit
-import OpenGL.GL3
 import SwiftUI
 import VLCKitSPM
 
@@ -9,9 +8,6 @@ struct PlayerContainerView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> PlayerHostView {
         let view = PlayerHostView()
-        view.onViewReady = { playerSurfaceView in
-            viewModel.attachPlayerView(playerSurfaceView)
-        }
         view.clickView.onSingleClick = {
             viewModel.togglePause()
         }
@@ -58,11 +54,8 @@ struct PlayerContainerView: NSViewRepresentable {
             player: viewModel.nativePlayer,
             nativeRefreshID: viewModel.nativePlayerSurfaceRefreshID
         )
-        // Only attach the view for the active backend to avoid unnecessary rendering calls to hidden views
         if nsView.window != nil {
-            if viewModel.playbackBackend == .mpv {
-                viewModel.attachPlayerView(nsView.playerSurfaceView)
-            } else if viewModel.playbackBackend == .vlc {
+            if viewModel.playbackBackend == .vlc {
                 viewModel.attachVLCView(nsView.vlcVideoView)
             }
         }
@@ -71,10 +64,8 @@ struct PlayerContainerView: NSViewRepresentable {
 
 final class PlayerHostView: NSView {
     let nativePlayerView = AVPlayerView()
-    let playerSurfaceView = MpvRenderView(frame: .zero)
     let vlcVideoView = VLCVideoView(frame: .zero)
     let clickView = ClickCaptureView()
-    var onViewReady: ((MpvRenderView) -> Void)?
     private var lastNativeRefreshID = 0
 
     override init(frame frameRect: NSRect) {
@@ -88,13 +79,11 @@ final class PlayerHostView: NSView {
         nativePlayerView.showsFullScreenToggleButton = false
         nativePlayerView.player = nil
 
-        playerSurfaceView.translatesAutoresizingMaskIntoConstraints = false
         vlcVideoView.translatesAutoresizingMaskIntoConstraints = false
         vlcVideoView.isHidden = true
         clickView.translatesAutoresizingMaskIntoConstraints = false
 
         addSubview(nativePlayerView)
-        addSubview(playerSurfaceView)
         addSubview(vlcVideoView)
         addSubview(clickView)
 
@@ -103,10 +92,6 @@ final class PlayerHostView: NSView {
             nativePlayerView.trailingAnchor.constraint(equalTo: trailingAnchor),
             nativePlayerView.topAnchor.constraint(equalTo: topAnchor),
             nativePlayerView.bottomAnchor.constraint(equalTo: bottomAnchor),
-            playerSurfaceView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            playerSurfaceView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            playerSurfaceView.topAnchor.constraint(equalTo: topAnchor),
-            playerSurfaceView.bottomAnchor.constraint(equalTo: bottomAnchor),
             vlcVideoView.leadingAnchor.constraint(equalTo: leadingAnchor),
             vlcVideoView.trailingAnchor.constraint(equalTo: trailingAnchor),
             vlcVideoView.topAnchor.constraint(equalTo: topAnchor),
@@ -123,12 +108,6 @@ final class PlayerHostView: NSView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        guard window != nil else { return }
-        onViewReady?(playerSurfaceView)
-    }
-
     func updateBackend(_ backend: PlayerViewModel.PlaybackBackend, player: AVPlayer, nativeRefreshID: Int) {
         switch backend {
         case .native:
@@ -140,90 +119,12 @@ final class PlayerHostView: NSView {
             }
             lastNativeRefreshID = nativeRefreshID
             nativePlayerView.isHidden = false
-            playerSurfaceView.isHidden = true
-            vlcVideoView.isHidden = true
-        case .mpv:
-            nativePlayerView.player = nil
-            nativePlayerView.isHidden = true
-            playerSurfaceView.isHidden = false
             vlcVideoView.isHidden = true
         case .vlc:
             nativePlayerView.player = nil
             nativePlayerView.isHidden = true
-            playerSurfaceView.isHidden = true
             vlcVideoView.isHidden = false
         }
-    }
-}
-
-final class MpvRenderView: NSOpenGLView {
-    private var isReady = false
-    var onRendererReady: ((MpvRenderView) -> Void)?
-
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect, pixelFormat: Self.makePixelFormat())!
-        wantsBestResolutionOpenGLSurface = true
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    override var isFlipped: Bool {
-        false
-    }
-
-    override func prepareOpenGL() {
-        super.prepareOpenGL()
-        openGLContext?.makeCurrentContext()
-        var swapInterval: GLint = 1
-        openGLContext?.setValues(&swapInterval, for: .swapInterval)
-        glDisable(GLenum(GL_DITHER))
-        isReady = true
-        onRendererReady?(self)
-    }
-
-    override func reshape() {
-        super.reshape()
-        openGLContext?.update()
-    }
-
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        if openGLContext != nil, isReady {
-            onRendererReady?(self)
-        }
-    }
-
-    func renderFrame(_ renderer: (_ size: SIMD2<Int32>, _ fbo: Int32, _ flipY: Int32) -> Void) {
-        // Critical safeguard: stop rendering if view is hidden, detached from window, or context is invalid
-        guard isReady, !isHidden, window != nil, let ctx = openGLContext else { return }
-        
-        ctx.makeCurrentContext()
-        
-        let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
-        let width = max(Int(bounds.width * scale), 1)
-        let height = max(Int(bounds.height * scale), 1)
-        glViewport(0, 0, GLsizei(width), GLsizei(height))
-        renderer(SIMD2(Int32(width), Int32(height)), 0, 1)
-        glFlush()
-        ctx.flushBuffer()
-    }
-
-    private static func makePixelFormat() -> NSOpenGLPixelFormat {
-        let attributes: [NSOpenGLPixelFormatAttribute] = [
-            UInt32(NSOpenGLPFAOpenGLProfile), UInt32(NSOpenGLProfileVersion3_2Core),
-            UInt32(NSOpenGLPFAColorSize), 24,
-            UInt32(NSOpenGLPFAAlphaSize), 8,
-            UInt32(NSOpenGLPFADoubleBuffer),
-            UInt32(NSOpenGLPFAAccelerated),
-            0
-        ]
-        guard let pixelFormat = NSOpenGLPixelFormat(attributes: attributes) else {
-            fatalError("Unable to create NSOpenGLPixelFormat")
-        }
-        return pixelFormat
     }
 }
 

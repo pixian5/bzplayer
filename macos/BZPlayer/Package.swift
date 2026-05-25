@@ -13,26 +13,14 @@ let package = Package(
         .package(url: "https://github.com/tylerjonesio/vlckit-spm/", .upToNextMajor(from: "3.5.1"))
     ],
     targets: [
-        .systemLibrary(
-            name: "CMpv",
-            path: "Sources/CMpv"
-        ),
         .executableTarget(
             name: "BZPlayerApp",
             dependencies: [
-                "CMpv",
                 .product(name: "VLCKitSPM", package: "vlckit-spm")
             ],
             path: "Sources/BZPlayerApp",
             resources: [
                 .copy("Resources")
-            ],
-            linkerSettings: [
-                .linkedFramework("OpenGL"),
-                .unsafeFlags([
-                    "-L/opt/homebrew/lib",
-                    "-L/usr/local/lib"
-                ])
             ]
         )
     ]

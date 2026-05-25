@@ -1,6 +1,5 @@
 import AVFoundation
 import AVKit
-import CMpv
 import AppKit
 import CoreServices
 import Foundation
@@ -34,7 +33,6 @@ final class PlayerViewModel: NSObject, ObservableObject {
 
     enum PlaybackBackend: String {
         case native
-        case mpv
         case vlc
     }
 
@@ -137,7 +135,6 @@ final class PlayerViewModel: NSObject, ObservableObject {
 
     var onShowFileInfo: ((String) -> Void)?
 
-    let mpvPlayer = MpvPlayer()
     let vlcPlayer = VLCPlayer()
     let nativePlayer = AVPlayer()
     let speedCandidates: [Double] = [0.25, 0.5, 1, 1.25, 1.5, 1.75, 2, 3, 4, 8, 16]
@@ -166,17 +163,16 @@ final class PlayerViewModel: NSObject, ObservableObject {
     private var nativeEndObserver: NSObjectProtocol?
     private weak var attachedWindow: NSWindow?
     private static var globalLastNavigationTime: TimeInterval = 0
-    private static var hasCompletedNativeVP9Warmup = false
-    private var vp9WarmupPlayer: AVPlayer?
     private var lastAutoNextJumpTimes: [TimeInterval] = []
     private var windowFrameObservers: [NSObjectProtocol] = []
     private var hasAppliedInitialWindowBehavior = false
     private var nativeStallCount = 0
     private var lastStallPosition: Double = 0
     private var attemptedBackendSwitch = false
-    private var mpvAttemptedSoftwareFallback = false
     private var playbackFailureTimer: Timer?
     private var selectedSubtitlePath: String?
+    private static var hasCompletedNativeVP9Warmup = false
+    private var vp9WarmupPlayer: AVPlayer?
 
     private static let shortcutSeekSecondsKey = "shortcutSeekSeconds"
     private static let shortcutFrameStepCountKey = "shortcutFrameStepCount"
@@ -267,19 +263,14 @@ final class PlayerViewModel: NSObject, ObservableObject {
         recentFiles = Self.loadRecentFilesFromDisk() ?? []
         super.init()
 
-        mpvPlayer.setVolume(volume)
-        mpvPlayer.setMuted(isMuted)
         vlcPlayer.setVolume(volume)
         vlcPlayer.setMuted(isMuted)
         nativePlayer.volume = Float(volume / 100.0)
         nativePlayer.isMuted = isMuted
 
-        bindMpvCallbacks()
         bindVLCCallbacks()
         bindNativePlayer()
         selectBackend(.native)
-        mpvPlayer.setSubtitleBackgroundOpacity(subtitleBackgroundOpacity)
-        mpvPlayer.setSubtitleFontSize(subtitleFontSize)
         warmupVP9DecoderIfNeeded()
     }
 
@@ -352,10 +343,6 @@ final class PlayerViewModel: NSObject, ObservableObject {
         }
     }
 
-    func attachPlayerView(_ view: MpvRenderView) {
-        mpvPlayer.attach(to: view)
-    }
-
     func attachVLCView(_ view: VLCVideoView) {
         vlcPlayer.attach(to: view)
     }
@@ -416,9 +403,6 @@ final class PlayerViewModel: NSObject, ObservableObject {
             let currentTime = nativePlayer.currentTime()
             nativePlayer.seek(to: currentTime, toleranceBefore: .zero, toleranceAfter: .zero)
             isPaused = false
-        case .mpv:
-            mpvPlayer.play()
-            isPaused = false
         case .vlc:
             vlcPlayer.play()
             isPaused = false
@@ -429,8 +413,6 @@ final class PlayerViewModel: NSObject, ObservableObject {
         switch playbackBackend {
         case .native:
             nativePlayer.pause()
-        case .mpv:
-            mpvPlayer.pause()
         case .vlc:
             vlcPlayer.pause()
         }
@@ -452,8 +434,6 @@ final class PlayerViewModel: NSObject, ObservableObject {
         case .native:
             nativePlayer.pause()
             nativePlayer.replaceCurrentItem(with: nil)
-        case .mpv:
-            mpvPlayer.stop()
         case .vlc:
             vlcPlayer.stop()
         }
@@ -481,13 +461,11 @@ final class PlayerViewModel: NSObject, ObservableObject {
 
     func setVolume(_ newVolume: Double) {
         volume = max(0, min(100, newVolume))
-        mpvPlayer.setVolume(volume)
         vlcPlayer.setVolume(volume)
         nativePlayer.volume = Float(volume / 100.0)
         print("[BZPlayer] setVolume: \(volume), nativePlayer.volume: \(nativePlayer.volume), isMuted: \(isMuted)")
         if volume > 0 {
             isMuted = false
-            mpvPlayer.setMuted(false)
             vlcPlayer.setMuted(false)
             nativePlayer.isMuted = false
         }
@@ -496,7 +474,6 @@ final class PlayerViewModel: NSObject, ObservableObject {
 
     func toggleMute() {
         isMuted.toggle()
-        mpvPlayer.setMuted(isMuted)
         vlcPlayer.setMuted(isMuted)
         nativePlayer.isMuted = isMuted
         saveSettings()
@@ -534,13 +511,8 @@ final class PlayerViewModel: NSObject, ObservableObject {
                     self?.isSeeking = false
                 }
             }
-        } else if playbackBackend == .vlc {
-            vlcPlayer.seek(seconds: targetTime)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-                self?.isSeeking = false
-            }
         } else {
-            mpvPlayer.seek(seconds: targetTime)
+            vlcPlayer.seek(seconds: targetTime)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
                 self?.isSeeking = false
             }
@@ -559,8 +531,6 @@ final class PlayerViewModel: NSObject, ObservableObject {
         switch playbackBackend {
         case .native:
             nativePlayer.rate = isPaused ? 0 : Float(speed)
-        case .mpv:
-            mpvPlayer.setSpeed(speed)
         case .vlc:
             vlcPlayer.setSpeed(speed)
         }
@@ -636,13 +606,11 @@ final class PlayerViewModel: NSObject, ObservableObject {
         let normalized = Self.clampSubtitleOpacity(value)
         subtitleBackgroundOpacity = normalized
         saveSettings()
-        mpvPlayer.setSubtitleBackgroundOpacity(normalized)
     }
 
     func setSubtitleFontSize(_ size: Int) {
         subtitleFontSize = max(1, size)
         saveSettings()
-        mpvPlayer.setSubtitleFontSize(subtitleFontSize)
     }
 
     func setAudioDelayStepMs(_ value: Double) {
@@ -668,39 +636,12 @@ final class PlayerViewModel: NSObject, ObservableObject {
     }
 
     func selectSubtitle(path: String?) {
-        guard let mediaURL = currentFileURL else { return }
-
-        if path == nil {
-            selectedSubtitlePath = nil
-            mpvPlayer.disableSubtitle()
-            showToastMessage("字幕：已关闭")
-            return
-        }
-
-        guard let path, FileManager.default.fileExists(atPath: path) else { return }
         selectedSubtitlePath = path
-
-        let resumeAt = currentTime > 0 && currentTime < duration ? currentTime : nil
-        let wasPaused = isPaused
-        if playbackBackend != .mpv {
-            selectBackend(.mpv)
-            mpvAttemptedSoftwareFallback = false
-            mpvPlayer.setHardwareDecodingEnabled(true)
-            mpvPlayer.setSpeed(speed)
-            mpvPlayer.load(url: mediaURL, resumeAt: resumeAt)
-            if !wasPaused {
-                mpvPlayer.play()
-                isPaused = false
-            } else {
-                mpvPlayer.pause()
-                isPaused = true
-            }
-            applyAudioDelay()
+        if path == nil {
+            showToastMessage("字幕：已关闭")
+        } else if let path {
+            showToastMessage("字幕：\((path as NSString).lastPathComponent)")
         }
-
-        mpvPlayer.setExternalSubtitle(url: URL(fileURLWithPath: path))
-        mpvPlayer.setSubtitleBackgroundOpacity(subtitleBackgroundOpacity)
-        showToastMessage("字幕：\((path as NSString).lastPathComponent)")
     }
 
     private func addRecentFile(_ url: URL) {
@@ -735,7 +676,6 @@ final class PlayerViewModel: NSObject, ObservableObject {
     func adjustAudioDelay(by deltaMs: Double) {
         audioDelayMs += deltaMs
         saveSettings()
-        applyAudioDelay()
         if let url = currentFileURL {
             var fileSettings = loadFileSettings(for: url)
             fileSettings.audioDelayMs = audioDelayMs
@@ -747,7 +687,6 @@ final class PlayerViewModel: NSObject, ObservableObject {
     func resetAudioDelay() {
         audioDelayMs = 0
         saveSettings()
-        applyAudioDelay()
         if let url = currentFileURL {
             var fileSettings = loadFileSettings(for: url)
             fileSettings.audioDelayMs = 0
@@ -756,13 +695,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         showToastMessage("音频延迟: 已重置")
     }
 
-    func applyAudioDelay() {
-        guard playbackBackend == .mpv, let handle = mpvPlayer.playerHandle else { return }
-        var delay = audioDelayMs / 1000.0
-        withUnsafeMutablePointer(to: &delay) {
-            _ = mpv_set_property(handle, "audio-delay", MPV_FORMAT_DOUBLE, $0)
-        }
-    }
+    func applyAudioDelay() {}
 
     func refreshPreferences() {
         let settings = Self.loadSettings()
@@ -775,7 +708,6 @@ final class PlayerViewModel: NSObject, ObservableObject {
         audioDelayStepMs = max(settings.audioDelayStepMs, 1)
         showRecentFiles = settings.showRecentFiles
         subtitleBackgroundOpacity = Self.clampSubtitleOpacity(settings.subtitleBackgroundOpacity)
-        mpvPlayer.setSubtitleBackgroundOpacity(subtitleBackgroundOpacity)
     }
 
     func togglePlaylistOrder() {
@@ -803,28 +735,12 @@ final class PlayerViewModel: NSObject, ObservableObject {
         guard let url = currentFileURL else { return }
         let resumeAt = currentTime > 0 && currentTime < duration ? currentTime : nil
         let wasPaused = isPaused
-        let newBackend: PlaybackBackend
-        switch playbackBackend {
-        case .native: newBackend = .mpv
-        case .mpv:    newBackend = .vlc
-        case .vlc:    newBackend = .native
-        }
+        let newBackend: PlaybackBackend = playbackBackend == .native ? .vlc : .native
         selectBackend(newBackend)
 
         switch newBackend {
         case .native:
             openWithNative(url: url, resumeAt: resumeAt, startPaused: wasPaused)
-        case .mpv:
-            mpvAttemptedSoftwareFallback = false
-            mpvPlayer.setHardwareDecodingEnabled(true)
-            mpvPlayer.setSpeed(speed)
-            mpvPlayer.load(url: url, resumeAt: resumeAt)
-            if wasPaused {
-                mpvPlayer.pause()
-            } else {
-                mpvPlayer.play()
-            }
-            applyAudioDelay()
         case .vlc:
             vlcPlayer.setSpeed(speed)
             vlcPlayer.load(url: url, resumeAt: resumeAt)
@@ -848,13 +764,8 @@ final class PlayerViewModel: NSObject, ObservableObject {
                     self?.isSeeking = false
                 }
             }
-        } else if playbackBackend == .vlc {
-            vlcPlayer.seek(seconds: target)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-                self?.isSeeking = false
-            }
         } else {
-            mpvPlayer.seek(seconds: target)
+            vlcPlayer.seek(seconds: target)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
                 self?.isSeeking = false
             }
@@ -983,47 +894,6 @@ killall lsd >/dev/null 2>&1 || true
         process.waitUntilExit()
     }
 
-    private func bindMpvCallbacks() {
-        mpvPlayer.onTimeChanged = { [weak self] time in
-            guard let self, self.playbackBackend == .mpv else { return }
-            self.currentTime = time.isFinite ? time : 0
-            if Int(self.currentTime) % 1 == 0 {
-                self.saveCurrentProgress()
-            }
-        }
-        mpvPlayer.onDurationChanged = { [weak self] duration in
-            guard let self, self.playbackBackend == .mpv else { return }
-            self.duration = duration.isFinite ? duration : 0
-        }
-        mpvPlayer.onPauseChanged = { [weak self] paused in
-            guard let self, self.playbackBackend == .mpv else { return }
-            self.isPaused = paused
-        }
-        mpvPlayer.onFileLoaded = { [weak self] in
-            guard let self, self.playbackBackend == .mpv else { return }
-            self.mpvPlayer.setSubtitleBackgroundOpacity(self.subtitleBackgroundOpacity)
-            if let path = self.selectedSubtitlePath {
-                self.mpvPlayer.setExternalSubtitle(url: URL(fileURLWithPath: path))
-            }
-        }
-        mpvPlayer.onStatusChanged = { [weak self] status in
-            guard let self, self.playbackBackend == .mpv else { return }
-            self.playbackEngineStatus = status
-        }
-        mpvPlayer.onEndReached = { [weak self] in
-            guard let self, self.playbackBackend == .mpv else { return }
-            self.handlePlaybackFinished()
-        }
-        mpvPlayer.onHwdecChanged = { [weak self] hwdecMode in
-            guard let self, self.playbackBackend == .mpv else { return }
-            // hwdec-current returns "no" for software, or the actual hw api name for hardware
-            let isHardware = hwdecMode != "no" && !hwdecMode.isEmpty
-            let modeLabel = isHardware ? "硬解" : "软解"
-            self.syncText = "播放链路：mpv/libmpv · \(modeLabel)"
-            self.playbackEngineStatus = "mpv/libmpv · \(modeLabel)"
-        }
-    }
-
     private func bindVLCCallbacks() {
         vlcPlayer.onTimeChanged = { [weak self] time in
             guard let self, self.playbackBackend == .vlc else { return }
@@ -1071,8 +941,8 @@ killall lsd >/dev/null 2>&1 || true
                         self.nativeStallCount += 1
                         if self.nativeStallCount > 30 { // ~3 seconds stall
                             self.nativeStallCount = 0
-                            print("检测到原生播放器卡死 (Position: \(seconds))，尝试切至 mpv 内核...")
-                            self.selectBackend(.mpv)
+                            print("检测到原生播放器卡死 (Position: \(seconds))，切至 VLC 内核...")
+                            self.selectBackend(.vlc)
                         }
                     } else {
                         self.nativeStallCount = 0
@@ -1112,12 +982,6 @@ killall lsd >/dev/null 2>&1 || true
         let previousBackend = playbackBackend
         playbackBackend = backend
 
-        // Extensive cleanup for previous backends to prevent cross-engine interference and crashes
-        if previousBackend == .mpv {
-            mpvPlayer.stop()
-            mpvPlayer.cancelPendingRender()
-        }
-
         if previousBackend == .native {
             nativePlayer.pause()
             nativeItemStatusObserver = nil
@@ -1135,13 +999,6 @@ killall lsd >/dev/null 2>&1 || true
             syncText = "播放链路：系统原生"
             nativePlayer.volume = Float(volume / 100.0)
             nativePlayer.isMuted = isMuted
-        case .mpv:
-            playbackEngineStatus = "mpv/libmpv"
-            syncText = "播放链路：mpv/libmpv"
-            mpvPlayer.setSubtitleBackgroundOpacity(subtitleBackgroundOpacity)
-            if let selectedSubtitlePath {
-                mpvPlayer.setExternalSubtitle(url: URL(fileURLWithPath: selectedSubtitlePath))
-            }
         case .vlc:
             playbackEngineStatus = "VLC/libvlc"
             syncText = "播放链路：VLC/libvlc"
@@ -1152,15 +1009,11 @@ killall lsd >/dev/null 2>&1 || true
 
     private func openFromPlaylist(_ url: URL, forceStartAtBeginning: Bool = false) {
         debugLog("[BZPlayer] openFromPlaylist: \(url.lastPathComponent), forceStartAtBeginning: \(forceStartAtBeginning)")
-        // Clear previous error and reset backend switch flag
         playbackError = nil
         attemptedBackendSwitch = false
-        mpvAttemptedSoftwareFallback = false
         playbackFailureTimer?.invalidate()
         playbackFailureTimer = nil
 
-        // IMPORTANT: If loopMode was set to .none due to playback failure, restore it
-        // We detect this by checking if it was changed while a playbackError existed
         if loopMode == .none && playbackError == nil {
             let settings = Self.loadSettings()
             loopMode = LoopMode(rawValue: settings.loopMode) ?? .playlist
@@ -1169,7 +1022,6 @@ killall lsd >/dev/null 2>&1 || true
 
         isPaused = false
         saveCurrentProgress()
-        // Capture whether a file was already playing before this open call
         let isFirstOpen = currentFileURL == nil
         currentFileURL = url
         openedFilePath = url.path
@@ -1184,15 +1036,9 @@ killall lsd >/dev/null 2>&1 || true
         selectedSubtitlePath = pickDefaultSubtitle(for: url, from: discoveredSubtitles)?.path
         updateWindowTitle(url.lastPathComponent)
         showToastMessage(url.lastPathComponent)
-        // Only apply window behavior on first file open (isFirstOpen = true means no file was playing before).
-        // For videoSize/fitLargest modes, always adjust window to match video content.
-        // For maximized/fullscreen/rememberLast, only adjust on first open to avoid resetting the window
-        // position/size every time the user switches to a new file from Finder.
         applyWindowBehaviorForCurrentMedia(isFirstOpen: isFirstOpen)
 
-        // 恢复该文件记忆的速度
         if isFirstOpen {
-            // 首次打开：用文件独立速度或全局记忆速度
             if let savedSpeed = loadSpeedForFile(url) {
                 speed = savedSpeed
                 debugLog("[BZPlayer] Restored speed for file: \(savedSpeed)")
@@ -1203,12 +1049,10 @@ killall lsd >/dev/null 2>&1 || true
                 debugLog("[BZPlayer] Inherited last used speed: \(lastUsed)")
             }
         } else {
-            // 同一窗口切换：保持当前速度，并保存为新文件的独立速度
             saveSpeedForFile(url)
             debugLog("[BZPlayer] Keeping current speed: \(speed) for new file")
         }
 
-        // 恢复该文件记忆的音频延迟
         if let savedAudioDelay = loadAudioDelayForFile(url) {
             audioDelayMs = savedAudioDelay
         } else {
@@ -1231,19 +1075,12 @@ killall lsd >/dev/null 2>&1 || true
                 refreshVideoSurfaceAfterReady: needsNativeWarmupReload,
                 reloadItemAfterReady: needsNativeWarmupReload
             )
-        case .mpv:
-            mpvPlayer.setHardwareDecodingEnabled(true)
-            mpvPlayer.setSpeed(speed)
-            mpvPlayer.load(url: url, resumeAt: resumeTime)
-            mpvPlayer.play()
-            applyAudioDelay()  // 应用文件记忆的音频延迟
         case .vlc:
             vlcPlayer.setSpeed(speed)
             vlcPlayer.load(url: url, resumeAt: resumeTime)
             vlcPlayer.play()
         }
 
-        // Schedule a failure check after 5 seconds
         schedulePlaybackFailureCheck(for: url, backend: backend, resumeAt: resumeTime)
     }
 
@@ -1258,65 +1095,33 @@ killall lsd >/dev/null 2>&1 || true
     }
 
     private func checkAndHandlePlaybackFailure(for url: URL, originalBackend: PlaybackBackend, resumeAt: Double?) {
-        // If duration is still 0 and we're paused or at time 0, playback likely failed
         let hasFailed = duration == 0 && (isPaused || currentTime < 0.5)
-
         guard hasFailed else { return }
 
-        if originalBackend == .mpv && !mpvAttemptedSoftwareFallback {
-            mpvAttemptedSoftwareFallback = true
-            print("[BZPlayer] Playback failed with mpv hardware decoding, falling back to software decoding")
-            mpvPlayer.setHardwareDecodingEnabled(false)
-            mpvPlayer.setSpeed(speed)
-            mpvPlayer.load(url: url, resumeAt: resumeAt)
-            mpvPlayer.play()
-            schedulePlaybackFailureCheck(for: url, backend: .mpv, resumeAt: resumeAt)
-            return
-        }
-
         if !attemptedBackendSwitch {
-            // Try switching to the other backend
             attemptedBackendSwitch = true
-            let newBackend: PlaybackBackend
-            switch originalBackend {
-            case .native: newBackend = .mpv
-            case .mpv:    newBackend = .native
-            case .vlc:    newBackend = .mpv
-            }
+            let newBackend: PlaybackBackend = originalBackend == .native ? .vlc : .native
             print("[BZPlayer] Playback failed with \(originalBackend), switching to \(newBackend)")
-
             selectBackend(newBackend)
 
             switch newBackend {
             case .native:
                 openWithNative(url: url, resumeAt: resumeAt, refreshVideoSurfaceAfterReady: shouldRefreshNativeVideoSurface(url: url))
-            case .mpv:
-                mpvAttemptedSoftwareFallback = false
-                mpvPlayer.setHardwareDecodingEnabled(true)
-                mpvPlayer.setSpeed(speed)
-                mpvPlayer.load(url: url, resumeAt: resumeAt)
-                mpvPlayer.play()
             case .vlc:
                 vlcPlayer.setSpeed(speed)
                 vlcPlayer.load(url: url, resumeAt: resumeAt)
                 vlcPlayer.play()
             }
 
-            // Schedule another check after switching backend
             schedulePlaybackFailureCheck(for: url, backend: newBackend, resumeAt: resumeAt)
         } else {
-            // All tried backends failed, show error and file info
             let errorMsg = "无法播放文件：\(url.lastPathComponent)\n多个播放内核都无法解码此文件。"
             print("[BZPlayer] \(errorMsg)")
             playbackError = errorMsg
-
-            // Stop auto-advance and show file info
             if loopMode != .none {
                 print("[BZPlayer] Stopping playback sequence due to unplayable file")
                 loopMode = .none
             }
-
-            // Show file info panel
             showFileInfo()
         }
     }
@@ -1368,31 +1173,31 @@ killall lsd >/dev/null 2>&1 || true
             "ogg", "oga", "opus", "wma", "ape", "mka"
         ]
         if nonNativeContainers.contains(url.pathExtension.lowercased()) {
-            return .mpv
+            return .vlc
         }
 
         let asset = AVURLAsset(url: url)
         let ffprobeInfo = ffprobeInfo ?? probeMediaInfo(url: url)
 
-        if let ffprobeInfo, shouldPreferMpv(ffprobeInfo: ffprobeInfo) {
-            return .mpv
+        if let ffprobeInfo, shouldPreferVLC(ffprobeInfo: ffprobeInfo) {
+            return .vlc
         }
 
-        if shouldPreferMpv(asset: asset) {
-            return .mpv
+        if shouldPreferVLC(asset: asset) {
+            return .vlc
         }
 
         if let ffprobeInfo, !ffprobeInfo.audioStreams.isEmpty {
             let audioTracks = asset.tracks(withMediaType: .audio)
             if audioTracks.isEmpty {
-                return .mpv
+                return .vlc
             }
         }
 
         return .native
     }
 
-    private func shouldPreferMpv(ffprobeInfo: FFprobeInfo) -> Bool {
+    private func shouldPreferVLC(ffprobeInfo: FFprobeInfo) -> Bool {
         let nativeSafeVideoCodecs: Set<String> = [
             "h264", "hevc", "mpeg4", "mjpeg", "prores", "jpeg2000", "dvvideo", "h263", "av1", "vp9"
         ]
@@ -1422,7 +1227,7 @@ killall lsd >/dev/null 2>&1 || true
         return false
     }
 
-    private func shouldPreferMpv(asset: AVURLAsset) -> Bool {
+    private func shouldPreferVLC(asset: AVURLAsset) -> Bool {
         let nativeSafeVideoSubtypes: Set<String> = [
             "avc1", "hvc1", "hev1", "mp4v", "jpeg", "mjp2", "apcn", "apcs", "apco", "apch", "ap4h", "dvc ",
             "vp09", "vp9 ", "90pv"
@@ -1861,7 +1666,7 @@ killall lsd >/dev/null 2>&1 || true
                 lines.append("时长：\(formatDuration(durationSeconds)) (\(String(format: "%.2f", durationSeconds)) 秒)")
             }
 
-            lines.append("建议播放后端：\(recommendedBackend == .native ? "系统原生" : "mpv/libmpv")")
+            lines.append("建议播放后端：\(recommendedBackend == .native ? "系统原生" : "VLC/libvlc")")
             if let ffprobeInfo {
                 if !ffprobeInfo.videoStreams.isEmpty {
                     lines.append("视频编码：\(codecHeadline(from: ffprobeInfo.videoStreams))")
@@ -1898,7 +1703,7 @@ killall lsd >/dev/null 2>&1 || true
             if audioTracks.isEmpty {
                 if let ffprobeInfo, ffprobeInfo.audioStreams.isEmpty == false {
                     lines.append("提示：AVFoundation 未识别到音轨，但 ffprobe 检测到 \(ffprobeInfo.audioStreams.count) 条音轨。")
-                    lines.append("这类文件会自动切到 mpv 后端播放。")
+                    lines.append("这类文件会自动切到 VLC 后端播放。")
                 } else {
                     lines.append("提示：AVFoundation 未检测到音轨。")
                     lines.append("若文件在其它播放器有声音，更可能是当前系统媒体解析兼容性问题。")
@@ -1952,14 +1757,8 @@ killall lsd >/dev/null 2>&1 || true
             return
         }
 
-        // If duration is 0, try to get it directly from mpv
+        // If duration is 0, try to get it directly from VLC
         var effectiveDuration = duration
-        if effectiveDuration == 0 && playbackBackend == .mpv {
-            if let mpvDuration = mpvPlayer.getDoubleProperty("duration") {
-                effectiveDuration = mpvDuration
-                debugLog("[BZPlayer] Got duration from mpv directly: \(effectiveDuration)")
-            }
-        }
         if effectiveDuration == 0 && playbackBackend == .vlc {
             if let vlcDuration = vlcPlayer.getDoubleProperty("duration") {
                 effectiveDuration = vlcDuration
