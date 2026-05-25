@@ -1660,13 +1660,17 @@ killall lsd >/dev/null 2>&1 || true
         saveFileSettings(for: url, fileSettings)
     }
 
+    private var toastHideWorkItem: DispatchWorkItem?
+
     private func showToastMessage(_ message: String) {
+        toastHideWorkItem?.cancel()
         toastMessage = message
         showToast = true
-        // 3秒后自动隐藏
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+        let work = DispatchWorkItem { [weak self] in
             self?.showToast = false
         }
+        toastHideWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0, execute: work)
     }
 
     func fetchPlaylistDuration(for url: URL) async {

@@ -54,7 +54,7 @@ struct PlayerRootView: View {
                     .padding(.vertical, 10)
                     .background(Color.black.opacity(0.75))
                     .cornerRadius(8)
-                    .transition(.opacity)
+                    .transition(.opacity.animation(.easeInOut(duration: 0.2)))
                     .zIndex(20)
                     .padding(.bottom, 100)
             }
@@ -91,7 +91,7 @@ struct PlayerRootView: View {
         }
         .onPreferenceChange(ControlBarHeightKey.self) { controlBarHeight = $0 }
         .animation(.easeInOut(duration: 0.25), value: isControlsVisible)
-        .animation(.easeInOut(duration: 0.2), value: viewModel.showToast)
+        .animation(nil, value: viewModel.showToast)
         .onAppear {
             syncControlsVisibilityWithPlaybackState()
         }
