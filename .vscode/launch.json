@@ -1,0 +1,24 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:bzplayer-main}/macos/BZPlayer",
+            "name": "Debug BZPlayer (macos/BZPlayer)",
+            "target": "BZPlayer",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug BZPlayer (macos/BZPlayer)"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:bzplayer-main}/macos/BZPlayer",
+            "name": "Release BZPlayer (macos/BZPlayer)",
+            "target": "BZPlayer",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release BZPlayer (macos/BZPlayer)"
+        }
+    ]
+}
