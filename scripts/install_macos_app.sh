@@ -27,15 +27,17 @@ NEXT_VERSION=$((CURRENT_VERSION + 1))
 echo "${NEXT_VERSION}" > "${VERSION_FILE}"
 echo "[deploy] BZPlayer version: ${NEXT_VERSION}"
 
+echo "[deploy] Removing old app..."
+rm -rf "${APP_DIR}"
+
 echo "[deploy] Building release binary..."
 cd "${PROJECT_DIR}"
 swift build -c release
 
+echo "[deploy] Stopping old process..."
 pkill -x BZPlayer || true
-sleep 1
+sleep 0.5
 pkill -9 -x BZPlayer || true
-
-rm -rf "${APP_DIR}"
 mkdir -p "${APP_DIR}/Contents/MacOS"
 
 /bin/cat > "${APP_DIR}/Contents/Info.plist" <<EOF

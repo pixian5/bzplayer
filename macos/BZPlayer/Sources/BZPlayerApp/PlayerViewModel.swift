@@ -126,9 +126,9 @@ final class PlayerViewModel: NSObject, ObservableObject {
     @Published var recentFiles: [String] = []
     @Published var subtitleBackgroundOpacity: Int
     @Published var subtitleFontSize: Int
-    /// 已打开过但未播完的文件（重启后清空）
+    /// 已打开过但未播完的文件（持久化保存）
     @Published var openedFiles: Set<URL> = []
-    /// 已完整播放过的文件（重启后清空）
+    /// 已完整播放过的文件（持久化保存）
     @Published var completedFiles: Set<URL> = []
     @Published var playlistDurations: [URL: Double] = [:]
     @Published var nativePlayerSurfaceRefreshID: Int = 0
@@ -209,6 +209,14 @@ final class PlayerViewModel: NSObject, ObservableObject {
         settingsDir.appendingPathComponent("fileSettings.json")
     }
 
+    private static var openedFilesURL: URL {
+        settingsDir.appendingPathComponent("openedFiles.json")
+    }
+
+    private static var completedFilesURL: URL {
+        settingsDir.appendingPathComponent("completedFiles.json")
+    }
+
     // MARK: - 全局设置数据结构
     private struct AppSettings: Codable {
         var shortcutSeekSeconds: Double = 5
@@ -261,6 +269,8 @@ final class PlayerViewModel: NSObject, ObservableObject {
         subtitleBackgroundOpacity = Self.clampSubtitleOpacity(settings.subtitleBackgroundOpacity)
         subtitleFontSize = max(1, settings.subtitleFontSize)
         recentFiles = Self.loadRecentFilesFromDisk() ?? []
+        openedFiles = Self.loadURLSet(from: Self.openedFilesURL)
+        completedFiles = Self.loadURLSet(from: Self.completedFilesURL)
         super.init()
 
         vlcPlayer.setVolume(volume)
@@ -321,6 +331,28 @@ final class PlayerViewModel: NSObject, ObservableObject {
     private static func saveFileSettings(_ dict: [String: FileSettings]) {
         guard let data = try? JSONEncoder().encode(dict) else { return }
         try? data.write(to: fileSettingsURL)
+    }
+
+    private static func loadURLSet(from url: URL) -> Set<URL> {
+        guard let data = try? Data(contentsOf: url),
+              let paths = try? JSONDecoder().decode([String].self, from: data) else {
+            return []
+        }
+        return Set(paths.map { URL(fileURLWithPath: $0) })
+    }
+
+    private static func saveURLSet(_ set: Set<URL>, to url: URL) {
+        let paths = set.map { $0.path }
+        guard let data = try? JSONEncoder().encode(paths) else { return }
+        try? data.write(to: url)
+    }
+
+    private func saveOpenedFiles() {
+        Self.saveURLSet(openedFiles, to: Self.openedFilesURL)
+    }
+
+    private func saveCompletedFiles() {
+        Self.saveURLSet(completedFiles, to: Self.completedFilesURL)
     }
 
     private func loadFileSettings(for url: URL) -> FileSettings {
@@ -1031,6 +1063,7 @@ killall lsd >/dev/null 2>&1 || true
         currentFileURL = url
         openedFilePath = url.path
         openedFiles.insert(url)
+        saveOpenedFiles()
         addRecentFile(url)
         currentIndex = playlist.firstIndex(of: url) ?? -1
         currentTime = 0
@@ -1794,6 +1827,7 @@ killall lsd >/dev/null 2>&1 || true
         // Clear saved progress AFTER guard (we're truly at end), and reset currentTime
         if let url = currentFileURL {
             completedFiles.insert(url)
+            saveCompletedFiles()
             clearSavedProgress(for: url)
         }
         currentTime = 0
