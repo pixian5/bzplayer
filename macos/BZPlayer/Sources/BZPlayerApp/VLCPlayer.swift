@@ -20,7 +20,7 @@ final class VLCPlayer: NSObject {
 
     override init() {
         let library = VLCLibrary(options: [
-            "--freetype-font=Heiti SC",
+            "--freetype-font=/System/Library/Fonts/STHeiti Light.ttc",
             "--subsdec-encoding=GB18030"
         ])
         self.mediaPlayer = VLCMediaPlayer(library: library)
@@ -43,7 +43,7 @@ final class VLCPlayer: NSObject {
         didFireFileLoaded = false
         let media = VLCMedia(url: url)
         media.addOption(":subsdec-encoding=GB18030")
-        media.addOption(":freetype-font=Heiti SC")
+        media.addOption(":freetype-font=/System/Library/Fonts/STHeiti Light.ttc")
         currentMedia = media
         mediaPlayer.media = media
     }
