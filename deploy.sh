@@ -14,6 +14,10 @@ echo "✅ 构建成功"
 echo "📦 复制编译产物到 .app 包..."
 cp .build/arm64-apple-macosx/debug/BZPlayer dist/BZPlayer.app/Contents/MacOS/BZPlayer
 
+echo "📦 复制应用图标到 .app 包..."
+mkdir -p dist/BZPlayer.app/Contents/Resources
+cp Resources/AppIcon.icns dist/BZPlayer.app/Contents/Resources/AppIcon.icns
+
 echo "📦 复制 VLCKit.framework 到 .app 包..."
 VLCKIT_SRC=".build/artifacts/vlckit-spm/VLCKit-all/VLCKit-all.xcframework/macos-arm64_x86_64/VLCKit.framework"
 mkdir -p dist/BZPlayer.app/Contents/Frameworks
