@@ -21,6 +21,7 @@ final class VLCPlayer: NSObject {
 
     override init() {
         let library = VLCLibrary(options: [
+            "--avcodec-hw=none",
             "--freetype-font=/System/Library/Fonts/STHeiti Light.ttc",
             "--subsdec-encoding=GB18030"
         ])
