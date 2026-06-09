@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import VLCKitSPM
+import CoreText
 
 @MainActor
 final class VLCPlayer: NSObject {
@@ -27,6 +28,7 @@ final class VLCPlayer: NSObject {
         super.init()
         mediaPlayer.delegate = self
         bindNotifications()
+        registerCustomFonts()
     }
 
     deinit {
@@ -133,6 +135,25 @@ final class VLCPlayer: NSObject {
 
     func cancelPendingRender() {
         // VLC handles rendering natively, no pending renders to cancel
+    }
+    
+    private func registerCustomFonts() {
+        let fontURL = Bundle.module.url(forResource: "simhei", withExtension: "ttf") ??
+                      Bundle.module.url(forResource: "simhei", withExtension: "ttf", subdirectory: "Resources") ??
+                      Bundle.main.url(forResource: "simhei", withExtension: "ttf")
+        
+        guard let url = fontURL else {
+            print("[BZPlayer] Bundled simhei.ttf not found in module or main bundle")
+            return
+        }
+        
+        var error: Unmanaged<CFError>?
+        if CTFontManagerRegisterFontsForURL(url as CFURL, .process, &error) {
+            print("[BZPlayer] Successfully registered bundled simhei.ttf: \(url.path)")
+        } else {
+            let errorDesc = error?.takeRetainedValue().localizedDescription ?? "unknown error"
+            print("[BZPlayer] Failed to register bundled simhei.ttf: \(errorDesc)")
+        }
     }
 
     func requestRender() {
