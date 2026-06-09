@@ -31,6 +31,12 @@ final class PlayerViewModel: NSObject, ObservableObject {
         let isSelected: Bool
     }
 
+    struct TrackMenuEntry {
+        let id: Int32
+        let name: String
+        let isSelected: Bool
+    }
+
     enum PlaybackBackend: String {
         case native
         case vlc
@@ -171,6 +177,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
     private var attemptedBackendSwitch = false
     private var playbackFailureTimer: Timer?
     private var selectedSubtitlePath: String?
+    private let subtitleCleanupTracker = SubtitleCleanupTracker()
     private static var hasCompletedNativeVP9Warmup = false
     private var vp9WarmupPlayer: AVPlayer?
 
@@ -482,6 +489,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         attemptedBackendSwitch = false
         playbackFailureTimer?.invalidate()
         playbackFailureTimer = nil
+        subtitleCleanupTracker.clean()
         if showToast {
             showToastMessage("已关闭当前文件")
         }
@@ -675,8 +683,19 @@ final class PlayerViewModel: NSObject, ObservableObject {
     func selectSubtitle(path: String?) {
         selectedSubtitlePath = path
         if path == nil {
+            if playbackBackend == .vlc {
+                vlcPlayer.disableSubtitle()
+            }
             showToastMessage("字幕：已关闭")
         } else if let path {
+            if playbackBackend == .vlc {
+                let subtitleURL = URL(fileURLWithPath: path)
+                if let utf8SubtitleURL = convertSubtitleToUTF8(at: subtitleURL) {
+                    vlcPlayer.setExternalSubtitle(url: utf8SubtitleURL)
+                } else {
+                    vlcPlayer.setExternalSubtitle(url: subtitleURL)
+                }
+            }
             showToastMessage("字幕：\((path as NSString).lastPathComponent)")
         }
     }
@@ -951,6 +970,9 @@ killall lsd >/dev/null 2>&1 || true
             guard let self, self.playbackBackend == .vlc else { return }
             self.syncText = "播放链路：VLC/libvlc"
             self.playbackEngineStatus = "VLC/libvlc"
+            if let selectedSubtitlePath = self.selectedSubtitlePath {
+                self.selectSubtitle(path: selectedSubtitlePath)
+            }
         }
         vlcPlayer.onStatusChanged = { [weak self] status in
             guard let self, self.playbackBackend == .vlc else { return }
@@ -1945,6 +1967,108 @@ private extension PlayerViewModel {
             }
             return leftOrder < rightOrder
         }.first
+    }
+}
+
+extension PlayerViewModel {
+    // Track selection methods
+    func audioTrackMenuEntries() -> [TrackMenuEntry] {
+        guard playbackBackend == .vlc else { return [] }
+        let tracks = vlcPlayer.audioTracks
+        let currentIndex = vlcPlayer.currentAudioIndex
+        return tracks.map { index, name in
+            TrackMenuEntry(id: index, name: name, isSelected: index == currentIndex)
+        }
+    }
+
+    func selectAudioTrack(id: Int32) {
+        guard playbackBackend == .vlc else { return }
+        vlcPlayer.currentAudioIndex = id
+        showToastMessage("音频轨道已切换")
+    }
+
+    func embeddedSubtitleMenuEntries() -> [TrackMenuEntry] {
+        guard playbackBackend == .vlc else { return [] }
+        let tracks = vlcPlayer.subtitleTracks
+        let currentIndex = vlcPlayer.currentSubtitleIndex
+        return tracks.map { index, name in
+            TrackMenuEntry(id: index, name: name, isSelected: index == currentIndex)
+        }
+    }
+
+    func selectEmbeddedSubtitle(id: Int32) {
+        guard playbackBackend == .vlc else { return }
+        vlcPlayer.currentSubtitleIndex = id
+        showToastMessage("内置字幕已切换")
+    }
+
+    // Track temporary subtitle files to clean up later
+    private func convertSubtitleToUTF8(at originalURL: URL) -> URL? {
+        guard let data = try? Data(contentsOf: originalURL) else { return nil }
+        
+        // 1. Try UTF-8 first
+        if let _ = String(data: data, encoding: .utf8) {
+            return originalURL
+        }
+        
+        // 2. Try GB18030 / GBK
+        let gbEncodingRaw = CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.GB_18030_2000.rawValue))
+        var decodedString: String? = nil
+        if gbEncodingRaw != kCFStringEncodingInvalidId {
+            let gbEncoding = String.Encoding(rawValue: gbEncodingRaw)
+            if let str = String(data: data, encoding: gbEncoding) {
+                decodedString = str
+            }
+        }
+        
+        // 3. Fallbacks
+        if decodedString == nil {
+            let fallbacks: [String.Encoding] = [.utf16, .utf16BigEndian, .utf16LittleEndian, .ascii]
+            for encoding in fallbacks {
+                if let str = String(data: data, encoding: encoding) {
+                    decodedString = str
+                    break
+                }
+            }
+        }
+        
+        guard let content = decodedString else {
+            return nil
+        }
+        
+        // Write decoded content to a UTF-8 temp file
+        let tempDir = FileManager.default.temporaryDirectory
+        let tempFilename = UUID().uuidString + "." + originalURL.pathExtension
+        let tempFileURL = tempDir.appendingPathComponent(tempFilename)
+        
+        do {
+            try content.write(to: tempFileURL, atomically: true, encoding: .utf8)
+            subtitleCleanupTracker.add(tempFileURL)
+            debugLog("[BZPlayer] Converted non-UTF8 subtitle to UTF8 at: \(tempFileURL.path)")
+            return tempFileURL
+        } catch {
+            debugLog("[BZPlayer] Failed to write UTF-8 subtitle: \(error)")
+            return nil
+        }
+    }
+}
+
+private final class SubtitleCleanupTracker: @unchecked Sendable {
+    private var temporarySubtitleURLs: [URL] = []
+    
+    func add(_ url: URL) {
+        temporarySubtitleURLs.append(url)
+    }
+    
+    func clean() {
+        for url in temporarySubtitleURLs {
+            try? FileManager.default.removeItem(at: url)
+        }
+        temporarySubtitleURLs.removeAll()
+    }
+    
+    deinit {
+        clean()
     }
 }
 

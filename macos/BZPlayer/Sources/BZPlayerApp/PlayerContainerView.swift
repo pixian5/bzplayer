@@ -35,6 +35,18 @@ struct PlayerContainerView: NSViewRepresentable {
         view.clickView.onCurrentSubtitleFontSize = {
             viewModel.subtitleFontSize
         }
+        view.clickView.onBuildAudioTrackMenuEntries = {
+            viewModel.audioTrackMenuEntries()
+        }
+        view.clickView.onSelectAudioTrack = { id in
+            viewModel.selectAudioTrack(id: id)
+        }
+        view.clickView.onBuildEmbeddedSubtitleMenuEntries = {
+            viewModel.embeddedSubtitleMenuEntries()
+        }
+        view.clickView.onSelectEmbeddedSubtitle = { id in
+            viewModel.selectEmbeddedSubtitle(id: id)
+        }
         view.clickView.onKeyEvent = { [weak view, weak viewModel] event in
             guard let viewModel = viewModel else { return false }
             return InputDispatcher(viewModel: viewModel).handleKeyEvent(event, in: view?.window)
@@ -138,6 +150,10 @@ final class ClickCaptureView: NSView {
     var onCurrentSubtitleBackgroundOpacity: (() -> Int)?
     var onSetSubtitleFontSize: ((Int) -> Void)?
     var onCurrentSubtitleFontSize: (() -> Int)?
+    var onBuildAudioTrackMenuEntries: (() -> [PlayerViewModel.TrackMenuEntry])?
+    var onSelectAudioTrack: ((Int32) -> Void)?
+    var onBuildEmbeddedSubtitleMenuEntries: (() -> [PlayerViewModel.TrackMenuEntry])?
+    var onSelectEmbeddedSubtitle: ((Int32) -> Void)?
     var onKeyEvent: ((NSEvent) -> Bool)?
     var onSpeedKeyDown: ((Double) -> Void)?
     var onSpeedKeyUp: (() -> Void)?
@@ -258,23 +274,73 @@ final class ClickCaptureView: NSView {
     override func menu(for event: NSEvent) -> NSMenu? {
         let menu = NSMenu(title: "菜单")
 
+        // 1. 音频轨道
+        let audioMenuItem = NSMenuItem(title: "音频轨道", action: nil, keyEquivalent: "")
+        let audioMenu = NSMenu(title: "音频轨道")
+        let audioEntries = onBuildAudioTrackMenuEntries?() ?? []
+        if audioEntries.isEmpty {
+            let emptyItem = NSMenuItem(title: "无可用音轨", action: nil, keyEquivalent: "")
+            emptyItem.isEnabled = false
+            audioMenu.addItem(emptyItem)
+        } else {
+            for entry in audioEntries {
+                let item = NSMenuItem(title: entry.name, action: #selector(handleAudioTrackSelection(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = entry.id
+                item.state = entry.isSelected ? .on : .off
+                audioMenu.addItem(item)
+            }
+        }
+        audioMenuItem.submenu = audioMenu
+        menu.addItem(audioMenuItem)
+
+        // 2. 字幕
         let subtitleMenuItem = NSMenuItem(title: "字幕", action: nil, keyEquivalent: "")
         let subtitleMenu = NSMenu(title: "字幕")
-        let subtitleEntries = onBuildSubtitleMenuEntries?() ?? []
-        if subtitleEntries.isEmpty {
-            let emptyItem = NSMenuItem(title: "无匹配字幕", action: nil, keyEquivalent: "")
+
+        // 2.1 内置字幕
+        let embeddedSubtitleMenuItem = NSMenuItem(title: "内置字幕", action: nil, keyEquivalent: "")
+        let embeddedSubtitleMenu = NSMenu(title: "内置字幕")
+        let embeddedEntries = onBuildEmbeddedSubtitleMenuEntries?() ?? []
+        if embeddedEntries.isEmpty {
+            let emptyItem = NSMenuItem(title: "无内置字幕", action: nil, keyEquivalent: "")
             emptyItem.isEnabled = false
-            subtitleMenu.addItem(emptyItem)
+            embeddedSubtitleMenu.addItem(emptyItem)
         } else {
-            for entry in subtitleEntries {
+            for entry in embeddedEntries {
+                let item = NSMenuItem(title: entry.name, action: #selector(handleEmbeddedSubtitleSelection(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = entry.id
+                item.state = entry.isSelected ? .on : .off
+                embeddedSubtitleMenu.addItem(item)
+            }
+        }
+        embeddedSubtitleMenuItem.submenu = embeddedSubtitleMenu
+        subtitleMenu.addItem(embeddedSubtitleMenuItem)
+
+        // 2.2 外挂字幕
+        let externalSubtitleMenuItem = NSMenuItem(title: "外挂字幕", action: nil, keyEquivalent: "")
+        let externalSubtitleMenu = NSMenu(title: "外挂字幕")
+        let externalEntries = onBuildSubtitleMenuEntries?() ?? []
+        if externalEntries.isEmpty {
+            let emptyItem = NSMenuItem(title: "无匹配外挂字幕", action: nil, keyEquivalent: "")
+            emptyItem.isEnabled = false
+            externalSubtitleMenu.addItem(emptyItem)
+        } else {
+            for entry in externalEntries {
                 let item = NSMenuItem(title: entry.title, action: #selector(handleSubtitleSelection(_:)), keyEquivalent: "")
                 item.target = self
                 item.representedObject = entry.path ?? NSNull()
                 item.state = entry.isSelected ? .on : .off
-                subtitleMenu.addItem(item)
+                externalSubtitleMenu.addItem(item)
             }
         }
+        externalSubtitleMenuItem.submenu = externalSubtitleMenu
+        subtitleMenu.addItem(externalSubtitleMenuItem)
 
+        subtitleMenu.addItem(NSMenuItem.separator())
+
+        // 2.3 字幕背景透明度
         let opacityMenuItem = NSMenuItem(title: "字幕背景透明度", action: nil, keyEquivalent: "")
         let opacityMenu = NSMenu(title: "字幕背景透明度")
         let opacityLevels = [0, 25, 50, 75, 100]
@@ -287,7 +353,9 @@ final class ClickCaptureView: NSView {
             opacityMenu.addItem(item)
         }
         opacityMenuItem.submenu = opacityMenu
+        subtitleMenu.addItem(opacityMenuItem)
 
+        // 2.4 字幕字体大小
         let fontSizeMenuItem = NSMenuItem(title: "字幕字体大小", action: nil, keyEquivalent: "")
         let fontSizeMenu = NSMenu(title: "字幕字体大小")
         let fontSizes = [28, 36, 44, 55, 66, 80, 100]
@@ -300,22 +368,34 @@ final class ClickCaptureView: NSView {
             fontSizeMenu.addItem(item)
         }
         fontSizeMenuItem.submenu = fontSizeMenu
-
-        subtitleMenu.addItem(NSMenuItem.separator())
-        subtitleMenu.addItem(opacityMenuItem)
         subtitleMenu.addItem(fontSizeMenuItem)
+
         subtitleMenuItem.submenu = subtitleMenu
         menu.addItem(subtitleMenuItem)
 
+        // 3. 文件信息
         let fileInfoItem = NSMenuItem(title: "文件信息", action: #selector(handleFileInfo), keyEquivalent: "")
         fileInfoItem.target = self
         menu.addItem(fileInfoItem)
+
         return menu
     }
 
     @objc
     private func handleFileInfo() {
         onRequestFileInfo?()
+    }
+
+    @objc
+    private func handleAudioTrackSelection(_ sender: NSMenuItem) {
+        guard let value = sender.representedObject as? Int32 else { return }
+        onSelectAudioTrack?(value)
+    }
+
+    @objc
+    private func handleEmbeddedSubtitleSelection(_ sender: NSMenuItem) {
+        guard let value = sender.representedObject as? Int32 else { return }
+        onSelectEmbeddedSubtitle?(value)
     }
 
     @objc

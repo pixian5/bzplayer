@@ -37,6 +37,7 @@ final class VLCPlayer: NSObject {
         pendingResumeAt = resumeAt
         didFireFileLoaded = false
         let media = VLCMedia(url: url)
+        media.addOption(":subsdec-encoding=GB18030")
         currentMedia = media
         mediaPlayer.media = media
     }
@@ -86,6 +87,42 @@ final class VLCPlayer: NSObject {
 
     func disableSubtitle() {
         mediaPlayer.currentVideoSubTitleIndex = -1
+    }
+
+    var subtitleTracks: [(Int32, String)] {
+        guard let names = mediaPlayer.videoSubTitlesNames as? [String],
+              let indexes = mediaPlayer.videoSubTitlesIndexes as? [NSNumber],
+              names.count == indexes.count else {
+            return []
+        }
+        return zip(indexes.map { $0.intValue }, names).map { (Int32($0), $1) }
+    }
+
+    var currentSubtitleIndex: Int32 {
+        get {
+            return mediaPlayer.currentVideoSubTitleIndex
+        }
+        set {
+            mediaPlayer.currentVideoSubTitleIndex = newValue
+        }
+    }
+
+    var audioTracks: [(Int32, String)] {
+        guard let names = mediaPlayer.audioTrackNames as? [String],
+              let indexes = mediaPlayer.audioTrackIndexes as? [NSNumber],
+              names.count == indexes.count else {
+            return []
+        }
+        return zip(indexes.map { $0.intValue }, names).map { (Int32($0), $1) }
+    }
+
+    var currentAudioIndex: Int32 {
+        get {
+            return mediaPlayer.currentAudioTrackIndex
+        }
+        set {
+            mediaPlayer.currentAudioTrackIndex = newValue
+        }
     }
 
     func cancelPendingRender() {
