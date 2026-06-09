@@ -22,7 +22,6 @@ final class VLCPlayer: NSObject {
     override init() {
         let library = VLCLibrary(options: [
             "--avcodec-hw=none",
-            "--no-videotoolbox",
             "--freetype-font=/System/Library/Fonts/STHeiti Light.ttc",
             "--subsdec-encoding=GB18030"
         ])
@@ -49,7 +48,6 @@ final class VLCPlayer: NSObject {
         media.addOption(":subsdec-encoding=GB18030")
         media.addOption(":freetype-font=/System/Library/Fonts/STHeiti Light.ttc")
         media.addOption(":avcodec-hw=none")
-        media.addOption(":no-videotoolbox")
         currentMedia = media
         mediaPlayer.media = media
     }
@@ -70,7 +68,14 @@ final class VLCPlayer: NSObject {
     func seek(seconds: Double) {
         guard seconds >= 0 else { return }
         let ms = Int32(clamping: Int(seconds * 1000))
+        let wasPlaying = mediaPlayer.isPlaying
+        if wasPlaying {
+            mediaPlayer.pause()
+        }
         mediaPlayer.time = VLCTime(int: ms)
+        if wasPlaying {
+            mediaPlayer.play()
+        }
     }
 
     func setSpeed(_ speed: Double) {
