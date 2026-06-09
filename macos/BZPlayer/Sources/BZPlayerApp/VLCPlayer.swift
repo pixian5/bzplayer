@@ -11,7 +11,7 @@ final class VLCPlayer: NSObject {
     var onStatusChanged: ((String) -> Void)?
     var onEndReached: (() -> Void)?
 
-    private let mediaPlayer = VLCMediaPlayer()
+    private let mediaPlayer: VLCMediaPlayer
     private var currentMedia: VLCMedia?
     private var timeObserverToken: NSObjectProtocol?
     private var stateObserverToken: NSObjectProtocol?
@@ -19,6 +19,11 @@ final class VLCPlayer: NSObject {
     private var didFireFileLoaded = false
 
     override init() {
+        let library = VLCLibrary(options: [
+            "--freetype-font=Heiti SC",
+            "--subsdec-encoding=GB18030"
+        ])
+        self.mediaPlayer = VLCMediaPlayer(library: library)
         super.init()
         mediaPlayer.delegate = self
         bindNotifications()
@@ -38,7 +43,7 @@ final class VLCPlayer: NSObject {
         didFireFileLoaded = false
         let media = VLCMedia(url: url)
         media.addOption(":subsdec-encoding=GB18030")
-        media.addOption(":freetype-font=PingFang SC")
+        media.addOption(":freetype-font=Heiti SC")
         currentMedia = media
         mediaPlayer.media = media
     }
