@@ -38,6 +38,7 @@ final class VLCPlayer: NSObject {
         didFireFileLoaded = false
         let media = VLCMedia(url: url)
         media.addOption(":subsdec-encoding=GB18030")
+        media.addOption(":freetype-font=PingFang SC")
         currentMedia = media
         mediaPlayer.media = media
     }

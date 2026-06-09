@@ -970,6 +970,7 @@ killall lsd >/dev/null 2>&1 || true
             guard let self, self.playbackBackend == .vlc else { return }
             self.syncText = "播放链路：VLC/libvlc"
             self.playbackEngineStatus = "VLC/libvlc"
+            self.selectDefaultTracksBySystemLanguage()
             if let selectedSubtitlePath = self.selectedSubtitlePath {
                 self.selectSubtitle(path: selectedSubtitlePath)
             }
@@ -1972,6 +1973,56 @@ private extension PlayerViewModel {
 
 extension PlayerViewModel {
     // Track selection methods
+    private func selectDefaultTracksBySystemLanguage() {
+        guard playbackBackend == .vlc else { return }
+        
+        let preferredLang = Locale.preferredLanguages.first?.lowercased() ?? "zh"
+        let isChineseSystem = preferredLang.hasPrefix("zh")
+        
+        // 1. Select Audio Track
+        let audioTracks = vlcPlayer.audioTracks
+        if !audioTracks.isEmpty {
+            let matchedTrack = audioTracks.first(where: { track in
+                let name = track.1.lowercased()
+                if isChineseSystem {
+                    return name.contains("zh") || name.contains("chi") || name.contains("zho") || 
+                           name.contains("chinese") || name.contains("mandarin") || name.contains("cantonese") ||
+                           name.contains("国") || name.contains("汉") || name.contains("中") || name.contains("粤") || 
+                           name.contains("双")
+                } else {
+                    return name.contains("eng") || name.contains("english") || name == "en" || name.hasPrefix("en ") || name.hasSuffix(" en") || name.contains(" en ")
+                }
+            })
+            if let matchedTrack {
+                vlcPlayer.currentAudioIndex = matchedTrack.0
+                print("[BZPlayer] Auto-selected audio track based on system language: \(matchedTrack.1)")
+            }
+        }
+        
+        // 2. Select Embedded Subtitle Track (only if no external subtitle was loaded/preferred)
+        if selectedSubtitlePath == nil {
+            let subtitleTracks = vlcPlayer.subtitleTracks
+            if !subtitleTracks.isEmpty {
+                let activeTracks = subtitleTracks.filter { $0.0 != -1 }
+                let matchedTrack = activeTracks.first(where: { track in
+                    let name = track.1.lowercased()
+                    if isChineseSystem {
+                        return name.contains("zh") || name.contains("chi") || name.contains("zho") || 
+                               name.contains("chinese") || name.contains("简") || name.contains("繁") || 
+                               name.contains("中") || name.contains("sc") || name.contains("tc") || 
+                               name.contains("gb") || name.contains("big5")
+                    } else {
+                        return name.contains("eng") || name.contains("english") || name == "en" || name.hasPrefix("en ") || name.hasSuffix(" en") || name.contains(" en ")
+                    }
+                })
+                if let matchedTrack {
+                    vlcPlayer.currentSubtitleIndex = matchedTrack.0
+                    print("[BZPlayer] Auto-selected embedded subtitle track based on system language: \(matchedTrack.1)")
+                }
+            }
+        }
+    }
+
     func audioTrackMenuEntries() -> [TrackMenuEntry] {
         guard playbackBackend == .vlc else { return [] }
         let tracks = vlcPlayer.audioTracks
