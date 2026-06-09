@@ -18,6 +18,8 @@ final class VLCPlayer: NSObject {
     private var stateObserverToken: NSObjectProtocol?
     private var pendingResumeAt: Double?
     private var didFireFileLoaded = false
+    private var wasPlayingBeforeSeek: Bool?
+    private var pendingPlayTask: Task<Void, Never>?
 
     override init() {
         let library = VLCLibrary(options: [
@@ -68,13 +70,30 @@ final class VLCPlayer: NSObject {
     func seek(seconds: Double) {
         guard seconds >= 0 else { return }
         let ms = Int32(clamping: Int(seconds * 1000))
-        let wasPlaying = mediaPlayer.isPlaying
-        if wasPlaying {
-            mediaPlayer.pause()
+        
+        pendingPlayTask?.cancel()
+        
+        if wasPlayingBeforeSeek == nil {
+            wasPlayingBeforeSeek = mediaPlayer.isPlaying
         }
-        mediaPlayer.time = VLCTime(int: ms)
-        if wasPlaying {
-            mediaPlayer.play()
+        
+        if wasPlayingBeforeSeek == true {
+            mediaPlayer.pause()
+            mediaPlayer.time = VLCTime(int: ms)
+            pendingPlayTask = Task { @MainActor [weak self] in
+                do {
+                    try await Task.sleep(nanoseconds: 150_000_000) // 150ms delay
+                    guard !Task.isCancelled else { return }
+                    guard let self else { return }
+                    self.mediaPlayer.play()
+                    self.wasPlayingBeforeSeek = nil
+                } catch {
+                    // Task cancelled
+                }
+            }
+        } else {
+            mediaPlayer.time = VLCTime(int: ms)
+            wasPlayingBeforeSeek = nil
         }
     }
 
