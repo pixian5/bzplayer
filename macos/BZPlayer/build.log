@@ -1,0 +1,142 @@
+[0/1] Planning build
+Building for debugging...
+[0/3] Write swift-version--58304C5D6DBC2206.txt
+[2/5] Emitting module BZPlayerApp
+[3/5] Compiling BZPlayerApp PlayerViewModel.swift
+/Users/x/code/bzplayer-main/macos/BZPlayer/Sources/BZPlayerApp/PlayerViewModel.swift:377:9: error: call to main actor-isolated instance method 'cleanUpTemporarySubtitles()' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 375 |             NotificationCenter.default.removeObserver(nativeEndObserver)
+ 376 |         }
+ 377 |         cleanUpTemporarySubtitles()
+     |         `- error: call to main actor-isolated instance method 'cleanUpTemporarySubtitles()' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 378 |     }
+ 379 | 
+     :
+1971 | 
+1972 |     // Track temporary subtitle files to clean up later
+1973 |     private func cleanUpTemporarySubtitles() {
+     |                  `- note: calls to instance method 'cleanUpTemporarySubtitles()' from outside of its actor context are implicitly asynchronous
+1974 |         for url in temporarySubtitleURLs {
+1975 |             try? FileManager.default.removeItem(at: url)
+
+/Users/x/code/bzplayer-main/macos/BZPlayer/Sources/BZPlayerApp/PlayerViewModel.swift:1251:37: warning: 'tracks(withMediaType:)' was deprecated in macOS 13.0: Use loadTracks(withMediaType:) instead [#DeprecatedDeclaration]
+1249 | 
+1250 |         if let ffprobeInfo, !ffprobeInfo.audioStreams.isEmpty {
+1251 |             let audioTracks = asset.tracks(withMediaType: .audio)
+     |                                     `- warning: 'tracks(withMediaType:)' was deprecated in macOS 13.0: Use loadTracks(withMediaType:) instead [#DeprecatedDeclaration]
+1252 |             if audioTracks.isEmpty {
+1253 |                 return .vlc
+
+/Users/x/code/bzplayer-main/macos/BZPlayer/Sources/BZPlayerApp/PlayerViewModel.swift:1301:28: warning: 'tracks(withMediaType:)' was deprecated in macOS 13.0: Use loadTracks(withMediaType:) instead [#DeprecatedDeclaration]
+1299 |         ]
+1300 | 
+1301 |         for track in asset.tracks(withMediaType: .video) {
+     |                            `- warning: 'tracks(withMediaType:)' was deprecated in macOS 13.0: Use loadTracks(withMediaType:) instead [#DeprecatedDeclaration]
+1302 |             for formatDescription in track.formatDescriptions {
+1303 |                 let subtype = codecSubtypeString(from: formatDescription)
+
+/Users/x/code/bzplayer-main/macos/BZPlayer/Sources/BZPlayerApp/PlayerViewModel.swift:1302:44: warning: 'formatDescriptions' was deprecated in macOS 13.0: Use load(.formatDescriptions) instead [#DeprecatedDeclaration]
+1300 | 
+1301 |         for track in asset.tracks(withMediaType: .video) {
+1302 |             for formatDescription in track.formatDescriptions {
+     |                                            `- warning: 'formatDescriptions' was deprecated in macOS 13.0: Use load(.formatDescriptions) instead [#DeprecatedDeclaration]
+1303 |                 let subtype = codecSubtypeString(from: formatDescription)
+1304 |                 if !subtype.isEmpty && !nativeSafeVideoSubtypes.contains(subtype) { return true }
+
+/Users/x/code/bzplayer-main/macos/BZPlayer/Sources/BZPlayerApp/PlayerViewModel.swift:1308:28: warning: 'tracks(withMediaType:)' was deprecated in macOS 13.0: Use loadTracks(withMediaType:) instead [#DeprecatedDeclaration]
+1306 |         }
+1307 | 
+1308 |         for track in asset.tracks(withMediaType: .audio) {
+     |                            `- warning: 'tracks(withMediaType:)' was deprecated in macOS 13.0: Use loadTracks(withMediaType:) instead [#DeprecatedDeclaration]
+1309 |             for formatDescription in track.formatDescriptions {
+1310 |                 let subtype = codecSubtypeString(from: formatDescription)
+
+/Users/x/code/bzplayer-main/macos/BZPlayer/Sources/BZPlayerApp/PlayerViewModel.swift:1309:44: warning: 'formatDescriptions' was deprecated in macOS 13.0: Use load(.formatDescriptions) instead [#DeprecatedDeclaration]
+1307 | 
+1308 |         for track in asset.tracks(withMediaType: .audio) {
+1309 |             for formatDescription in track.formatDescriptions {
+     |                                            `- warning: 'formatDescriptions' was deprecated in macOS 13.0: Use load(.formatDescriptions) instead [#DeprecatedDeclaration]
+1310 |                 let subtype = codecSubtypeString(from: formatDescription)
+1311 |                 if !subtype.isEmpty && !nativeSafeAudioSubtypes.contains(subtype) { return true }
+
+/Users/x/code/bzplayer-main/macos/BZPlayer/Sources/BZPlayerApp/PlayerViewModel.swift:1330:22: warning: 'tracks(withMediaType:)' was deprecated in macOS 13.0: Use loadTracks(withMediaType:) instead [#DeprecatedDeclaration]
+1328 |         let asset = AVURLAsset(url: url)
+1329 |         let vp9Subtypes: Set<String> = ["vp09", "vp9 ", "90pv"]
+1330 |         return asset.tracks(withMediaType: .video).contains { track in
+     |                      `- warning: 'tracks(withMediaType:)' was deprecated in macOS 13.0: Use loadTracks(withMediaType:) instead [#DeprecatedDeclaration]
+1331 |             track.formatDescriptions.contains { formatDescription in
+1332 |                 vp9Subtypes.contains(codecSubtypeString(from: formatDescription))
+
+/Users/x/code/bzplayer-main/macos/BZPlayer/Sources/BZPlayerApp/PlayerViewModel.swift:1331:19: warning: 'formatDescriptions' was deprecated in macOS 13.0: Use load(.formatDescriptions) instead [#DeprecatedDeclaration]
+1329 |         let vp9Subtypes: Set<String> = ["vp09", "vp9 ", "90pv"]
+1330 |         return asset.tracks(withMediaType: .video).contains { track in
+1331 |             track.formatDescriptions.contains { formatDescription in
+     |                   `- warning: 'formatDescriptions' was deprecated in macOS 13.0: Use load(.formatDescriptions) instead [#DeprecatedDeclaration]
+1332 |                 vp9Subtypes.contains(codecSubtypeString(from: formatDescription))
+1333 |             }
+
+/Users/x/code/bzplayer-main/macos/BZPlayer/Sources/BZPlayerApp/PlayerViewModel.swift:1426:30: warning: 'tracks(withMediaType:)' was deprecated in macOS 13.0: Use loadTracks(withMediaType:) instead [#DeprecatedDeclaration]
+1424 |     private func estimateFPS(for url: URL) -> Double {
+1425 |         let asset = AVURLAsset(url: url)
+1426 |         if let track = asset.tracks(withMediaType: .video).first {
+     |                              `- warning: 'tracks(withMediaType:)' was deprecated in macOS 13.0: Use loadTracks(withMediaType:) instead [#DeprecatedDeclaration]
+1427 |             let fps = Double(track.nominalFrameRate)
+1428 |             if fps.isFinite, fps > 0 {
+
+/Users/x/code/bzplayer-main/macos/BZPlayer/Sources/BZPlayerApp/PlayerViewModel.swift:1427:36: warning: 'nominalFrameRate' was deprecated in macOS 13.0: Use load(.nominalFrameRate) instead [#DeprecatedDeclaration]
+1425 |         let asset = AVURLAsset(url: url)
+1426 |         if let track = asset.tracks(withMediaType: .video).first {
+1427 |             let fps = Double(track.nominalFrameRate)
+     |                                    `- warning: 'nominalFrameRate' was deprecated in macOS 13.0: Use load(.nominalFrameRate) instead [#DeprecatedDeclaration]
+1428 |             if fps.isFinite, fps > 0 {
+1429 |                 return fps
+
+/Users/x/code/bzplayer-main/macos/BZPlayer/Sources/BZPlayerApp/PlayerViewModel.swift:1442:30: warning: 'tracks(withMediaType:)' was deprecated in macOS 13.0: Use loadTracks(withMediaType:) instead [#DeprecatedDeclaration]
+1440 |     private func estimateVideoSize(for url: URL) -> CGSize? {
+1441 |         let asset = AVURLAsset(url: url)
+1442 |         if let track = asset.tracks(withMediaType: .video).first {
+     |                              `- warning: 'tracks(withMediaType:)' was deprecated in macOS 13.0: Use loadTracks(withMediaType:) instead [#DeprecatedDeclaration]
+1443 |             let transformed = track.naturalSize.applying(track.preferredTransform)
+1444 |             let width = abs(transformed.width.rounded())
+
+/Users/x/code/bzplayer-main/macos/BZPlayer/Sources/BZPlayerApp/PlayerViewModel.swift:1443:37: warning: 'naturalSize' was deprecated in macOS 13.0: Use load(.naturalSize) instead [#DeprecatedDeclaration]
+1441 |         let asset = AVURLAsset(url: url)
+1442 |         if let track = asset.tracks(withMediaType: .video).first {
+1443 |             let transformed = track.naturalSize.applying(track.preferredTransform)
+     |                                     `- warning: 'naturalSize' was deprecated in macOS 13.0: Use load(.naturalSize) instead [#DeprecatedDeclaration]
+1444 |             let width = abs(transformed.width.rounded())
+1445 |             let height = abs(transformed.height.rounded())
+
+/Users/x/code/bzplayer-main/macos/BZPlayer/Sources/BZPlayerApp/PlayerViewModel.swift:1443:64: warning: 'preferredTransform' was deprecated in macOS 13.0: Use load(.preferredTransform) instead [#DeprecatedDeclaration]
+1441 |         let asset = AVURLAsset(url: url)
+1442 |         if let track = asset.tracks(withMediaType: .video).first {
+1443 |             let transformed = track.naturalSize.applying(track.preferredTransform)
+     |                                                                `- warning: 'preferredTransform' was deprecated in macOS 13.0: Use load(.preferredTransform) instead [#DeprecatedDeclaration]
+1444 |             let width = abs(transformed.width.rounded())
+1445 |             let height = abs(transformed.height.rounded())
+
+/Users/x/code/bzplayer-main/macos/BZPlayer/Sources/BZPlayerApp/PlayerViewModel.swift:1757:76: warning: 'formatDescriptions' was deprecated in macOS 13.0: Use load(.formatDescriptions) instead [#DeprecatedDeclaration]
+1755 |                 lines.append("帧率：\(String(format: "%.3f", fps)) fps")
+1756 |                 lines.append("码率：\(formatBitrate(estimatedBitRate))")
+1757 |                 lines.append("编码：\(codecDescription(from: videoTrack.formatDescriptions.first, mediaType: "视频"))")
+     |                                                                      `- warning: 'formatDescriptions' was deprecated in macOS 13.0: Use load(.formatDescriptions) instead [#DeprecatedDeclaration]
+1758 |             }
+1759 | 
+
+/Users/x/code/bzplayer-main/macos/BZPlayer/Sources/BZPlayerApp/PlayerViewModel.swift:1780:48: warning: 'formatDescriptions' was deprecated in macOS 13.0: Use load(.formatDescriptions) instead [#DeprecatedDeclaration]
+1778 |                 lines.append("【音频 #\(index + 1)】")
+1779 |                 lines.append("码率：\(formatBitrate(estimatedBitRate))")
+1780 |                 if let formatDesc = audioTrack.formatDescriptions.first.map({ $0 as! CMFormatDescription }),
+     |                                                `- warning: 'formatDescriptions' was deprecated in macOS 13.0: Use load(.formatDescriptions) instead [#DeprecatedDeclaration]
+1781 |                    let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(formatDesc)?.pointee {
+1782 |                     lines.append("采样率：\(Int(asbd.mSampleRate)) Hz")
+
+/Users/x/code/bzplayer-main/macos/BZPlayer/Sources/BZPlayerApp/PlayerViewModel.swift:1786:76: warning: 'formatDescriptions' was deprecated in macOS 13.0: Use load(.formatDescriptions) instead [#DeprecatedDeclaration]
+1784 |                     lines.append("位深：\(asbd.mBitsPerChannel) bit")
+1785 |                 }
+1786 |                 lines.append("编码：\(codecDescription(from: audioTrack.formatDescriptions.first, mediaType: "音频"))")
+     |                                                                      `- warning: 'formatDescriptions' was deprecated in macOS 13.0: Use load(.formatDescriptions) instead [#DeprecatedDeclaration]
+1787 |             }
+1788 | 
+
+[#ActorIsolatedCall]: <https://docs.swift.org/compiler/documentation/diagnostics/actor-isolated-call>
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
