@@ -132,6 +132,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
     @Published var recentFiles: [String] = []
     @Published var subtitleBackgroundOpacity: Int
     @Published var subtitleFontSize: Int
+    @Published var appLanguage: String = "auto"
     /// 已打开过但未播完的文件（持久化保存）
     @Published var openedFiles: Set<URL> = []
     /// 已完整播放过的文件（持久化保存）
@@ -246,6 +247,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         var subtitleFontSize: Int = 55
         var lastWindowFrame: String? = nil
         var lastUsedSpeed: Double = 1.0
+        var appLanguage: String? = "auto"
     }
 
     // MARK: - 单文件设置数据结构（进度/速度/音频延迟）
@@ -275,10 +277,13 @@ final class PlayerViewModel: NSObject, ObservableObject {
         showRecentFiles = settings.showRecentFiles
         subtitleBackgroundOpacity = Self.clampSubtitleOpacity(settings.subtitleBackgroundOpacity)
         subtitleFontSize = max(1, settings.subtitleFontSize)
+        appLanguage = settings.appLanguage ?? "auto"
         recentFiles = Self.loadRecentFilesFromDisk() ?? []
         openedFiles = Self.loadURLSet(from: Self.openedFilesURL)
         completedFiles = Self.loadURLSet(from: Self.completedFilesURL)
         super.init()
+
+        fileAssociationStatus = t("未执行格式关联")
 
         vlcPlayer.setVolume(volume)
         vlcPlayer.setMuted(isMuted)
@@ -320,6 +325,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         settings.subtitleBackgroundOpacity = subtitleBackgroundOpacity
         settings.subtitleFontSize = subtitleFontSize
         settings.lastUsedSpeed = speed
+        settings.appLanguage = appLanguage
         if let frame = attachedWindow {
             settings.lastWindowFrame = NSStringFromRect(frame.frame)
         }
@@ -491,7 +497,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         playbackFailureTimer = nil
         subtitleCleanupTracker.clean()
         if showToast {
-            showToastMessage("已关闭当前文件")
+            showToastMessage(t("已关闭当前文件"))
         }
     }
 
@@ -578,12 +584,12 @@ final class PlayerViewModel: NSObject, ObservableObject {
 
     func setSpeedWithToast(_ value: Double) {
         setSpeed(value)
-        showToastMessage(String(format: "速度: %.2fx", speed))
+        showToastMessage(String(format: t("速度: %.2fx"), speed))
     }
 
     func adjustSpeed(by delta: Double) {
         setSpeed((speed + delta).rounded(toPlaces: 2))
-        showToastMessage(String(format: "速度: %.2fx", speed))
+        showToastMessage(String(format: t("速度: %.2fx"), speed))
     }
 
     func toggleSpeed() {
@@ -591,7 +597,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         setSpeed(memorySpeed)
         memorySpeed = currentSpeed
         // 显示 Toast 提示
-        showToastMessage(String(format: "速度: %.2fx", speed))
+        showToastMessage(String(format: t("速度: %.2fx"), speed))
     }
 
     func setShortcutSeekSeconds(_ value: Double) {
@@ -664,13 +670,110 @@ final class PlayerViewModel: NSObject, ObservableObject {
         saveSettings()
     }
 
+    func setAppLanguage(_ lang: String) {
+        appLanguage = lang
+        saveSettings()
+        updateWindowTitle(currentFileURL?.lastPathComponent ?? "")
+    }
+
+    func t(_ key: String) -> String {
+        return Localization.translate(key, for: getActiveLanguage())
+    }
+
+    func getActiveLanguage() -> String {
+        let lang = appLanguage
+        if lang == "auto" {
+            let preferred = Locale.preferredLanguages.first?.lowercased() ?? "zh"
+            if preferred.hasPrefix("zh") { return "zh" }
+            if preferred.hasPrefix("ja") { return "ja" }
+            if preferred.hasPrefix("de") { return "de" }
+            if preferred.hasPrefix("fr") { return "fr" }
+            if preferred.hasPrefix("es") { return "es" }
+            if preferred.hasPrefix("ru") { return "ru" }
+            return "en"
+        }
+        return lang
+    }
+
+    func languageKeywords(for langCode: String) -> [String] {
+        switch langCode {
+        case "zh":
+            return ["中文", "cn", "zh", "chi", "simplified", "traditional", "简", "繁"]
+        case "en":
+            return ["en", "eng", "english"]
+        case "ja":
+            return ["ja", "jp", "japanese", "日", "日文"]
+        case "de":
+            return ["de", "ger", "deutsch", "german", "德", "德文"]
+        case "fr":
+            return ["fr", "fre", "fra", "french", "法", "法文"]
+        case "es":
+            return ["es", "spa", "spanish", "西班牙", "西班牙文", "西"]
+        case "ru":
+            return ["ru", "rus", "russian", "俄", "俄文"]
+        default:
+            return []
+        }
+    }
+
+    func subtitlePriority(for url: URL, mediaURL: URL, activeLanguage: String) -> Int {
+        let mediaBase = mediaURL.deletingPathExtension().lastPathComponent.lowercased()
+        let stem = url.deletingPathExtension().lastPathComponent.lowercased()
+        
+        if stem == mediaBase {
+            return 2 // Exact match
+        }
+        
+        if stem.hasPrefix(mediaBase) {
+            let extra = String(stem.dropFirst(mediaBase.count))
+            let keywords = languageKeywords(for: activeLanguage)
+            for keyword in keywords {
+                if extra.contains(keyword.lowercased()) {
+                    return 1 // Language match (highest priority)
+                }
+            }
+        }
+        
+        return 3 // Other match
+    }
+
+    func sortSubtitles(_ candidates: [URL], for mediaURL: URL, activeLanguage: String) -> [URL] {
+        let extPriority: [String: Int] = [
+            "srt": 0,
+            "ass": 1,
+            "ssa": 2,
+            "vtt": 3,
+            "sub": 4,
+            "idx": 5
+        ]
+        
+        return candidates.sorted { left, right in
+            let leftPrio = subtitlePriority(for: left, mediaURL: mediaURL, activeLanguage: activeLanguage)
+            let rightPrio = subtitlePriority(for: right, mediaURL: mediaURL, activeLanguage: activeLanguage)
+            if leftPrio != rightPrio {
+                return leftPrio < rightPrio // 1 < 2 < 3
+            }
+            
+            let leftExt = left.pathExtension.lowercased()
+            let rightExt = right.pathExtension.lowercased()
+            let leftExtOrder = extPriority[leftExt] ?? Int.max
+            let rightExtOrder = extPriority[rightExt] ?? Int.max
+            if leftExtOrder != rightExtOrder {
+                return leftExtOrder < rightExtOrder
+            }
+            
+            return left.lastPathComponent.localizedStandardCompare(right.lastPathComponent) == .orderedAscending
+        }
+    }
+
     func subtitleMenuEntries() -> [SubtitleMenuEntry] {
         let available = discoverSubtitleFilesForCurrentMedia()
+        let sorted = sortSubtitles(available, for: currentFileURL ?? URL(fileURLWithPath: ""), activeLanguage: getActiveLanguage())
         var entries: [SubtitleMenuEntry] = [
-            SubtitleMenuEntry(title: "关闭字幕", path: nil, isSelected: selectedSubtitlePath == nil)
+            SubtitleMenuEntry(title: t("关闭字幕"), path: nil, isSelected: selectedSubtitlePath == nil)
         ]
 
-        entries.append(contentsOf: available.map { url in
+        entries.append(contentsOf: sorted.map { url in
             SubtitleMenuEntry(
                 title: url.lastPathComponent,
                 path: url.path,
@@ -686,7 +789,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
             if playbackBackend == .vlc {
                 vlcPlayer.disableSubtitle()
             }
-            showToastMessage("字幕：已关闭")
+            showToastMessage(t("字幕：已关闭"))
         } else if let path {
             if playbackBackend == .vlc {
                 let subtitleURL = URL(fileURLWithPath: path)
@@ -696,7 +799,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
                     vlcPlayer.setExternalSubtitle(url: subtitleURL)
                 }
             }
-            showToastMessage("字幕：\((path as NSString).lastPathComponent)")
+            showToastMessage(t("字幕：") + (path as NSString).lastPathComponent)
         }
     }
 
@@ -737,7 +840,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
             fileSettings.audioDelayMs = audioDelayMs
             saveFileSettings(for: url, fileSettings)
         }
-        showToastMessage(String(format: "音频延迟: %.0f ms", audioDelayMs))
+        showToastMessage(String(format: t("音频延迟: %.0f ms"), audioDelayMs))
     }
 
     func resetAudioDelay() {
@@ -748,7 +851,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
             fileSettings.audioDelayMs = 0
             saveFileSettings(for: url, fileSettings)
         }
-        showToastMessage("音频延迟: 已重置")
+        showToastMessage(t("音频延迟: 已重置"))
     }
 
     func applyAudioDelay() {}
@@ -764,6 +867,10 @@ final class PlayerViewModel: NSObject, ObservableObject {
         audioDelayStepMs = max(settings.audioDelayStepMs, 1)
         showRecentFiles = settings.showRecentFiles
         subtitleBackgroundOpacity = Self.clampSubtitleOpacity(settings.subtitleBackgroundOpacity)
+        appLanguage = settings.appLanguage ?? "auto"
+        if fileAssociationStatus == "未执行格式关联" || fileAssociationStatus == "Formats not associated" || fileAssociationStatus == Localization.translate("未执行格式关联", for: "en") {
+            fileAssociationStatus = t("未执行格式关联")
+        }
     }
 
     func togglePlaylistOrder() {
@@ -872,14 +979,14 @@ final class PlayerViewModel: NSObject, ObservableObject {
         for (_, type) in typeMappings {
             let status = LSSetDefaultRoleHandlerForContentType(type.identifier as CFString, .all, bundleID)
             if status != noErr {
-                fileAssociationStatus = "关联失败：系统拒绝更新 LaunchServices。"
+                fileAssociationStatus = t("关联失败：系统拒绝更新 LaunchServices。")
                 return
             }
         }
 
         let initialVerification = verifyAssociations(typeMappings: typeMappings, bundleID: bundleID as String)
         if initialVerification.failed.isEmpty {
-            fileAssociationStatus = "已注册并关联：\(initialVerification.associated.joined(separator: ", "))"
+            fileAssociationStatus = String(format: t("已注册并关联：%@"), initialVerification.associated.joined(separator: ", "))
             return
         }
 
@@ -887,11 +994,11 @@ final class PlayerViewModel: NSObject, ObservableObject {
         let finalVerification = verifyAssociations(typeMappings: typeMappings, bundleID: bundleID as String)
 
         if finalVerification.failed.isEmpty {
-            fileAssociationStatus = "已强制刷新并关联：\(finalVerification.associated.joined(separator: ", "))"
+            fileAssociationStatus = String(format: t("已强制刷新并关联：%@"), finalVerification.associated.joined(separator: ", "))
         } else if finalVerification.associated.isEmpty {
-            fileAssociationStatus = "关联失败：\(finalVerification.failed.joined(separator: ", "))；请确认程序位于 /Applications/BZPlayer.app"
+            fileAssociationStatus = String(format: t("关联失败：%@；请确认程序位于 /Applications/BZPlayer.app"), finalVerification.failed.joined(separator: ", "))
         } else {
-            fileAssociationStatus = "部分成功，已关联：\(finalVerification.associated.joined(separator: ", "))；失败：\(finalVerification.failed.joined(separator: ", "))；请确认程序位于 /Applications/BZPlayer.app"
+            fileAssociationStatus = String(format: t("部分成功，已关联：%@；失败：%@；请确认程序位于 /Applications/BZPlayer.app"), finalVerification.associated.joined(separator: ", "), finalVerification.failed.joined(separator: ", "))
         }
     }
 
@@ -1930,30 +2037,14 @@ private extension PlayerViewModel {
     }
 
     func pickDefaultSubtitle(for mediaURL: URL, from candidates: [URL]) -> URL? {
-        let mediaBase = mediaURL.deletingPathExtension().lastPathComponent.lowercased()
-        let exactMatches = candidates.filter {
-            $0.deletingPathExtension().lastPathComponent.lowercased() == mediaBase
+        let sorted = sortSubtitles(candidates, for: mediaURL, activeLanguage: getActiveLanguage())
+        guard let first = sorted.first else { return nil }
+        
+        let prio = subtitlePriority(for: first, mediaURL: mediaURL, activeLanguage: getActiveLanguage())
+        if prio == 1 || prio == 2 {
+            return first
         }
-        if exactMatches.isEmpty { return nil }
-
-        let extPriority: [String: Int] = [
-            "srt": 0,
-            "ass": 1,
-            "ssa": 2,
-            "vtt": 3,
-            "sub": 4,
-            "idx": 5
-        ]
-        return exactMatches.sorted {
-            let leftExt = $0.pathExtension.lowercased()
-            let rightExt = $1.pathExtension.lowercased()
-            let leftOrder = extPriority[leftExt] ?? Int.max
-            let rightOrder = extPriority[rightExt] ?? Int.max
-            if leftOrder == rightOrder {
-                return $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending
-            }
-            return leftOrder < rightOrder
-        }.first
+        return nil
     }
 }
 
@@ -1962,26 +2053,45 @@ extension PlayerViewModel {
     private func selectDefaultTracksBySystemLanguage() {
         guard playbackBackend == .vlc else { return }
         
-        let preferredLang = Locale.preferredLanguages.first?.lowercased() ?? "zh"
-        let isChineseSystem = preferredLang.hasPrefix("zh")
+        let activeLang = getActiveLanguage()
         
         // 1. Select Audio Track
         let audioTracks = vlcPlayer.audioTracks
         if !audioTracks.isEmpty {
             let matchedTrack = audioTracks.first(where: { track in
                 let name = track.1.lowercased()
-                if isChineseSystem {
-                    return name.contains("zh") || name.contains("chi") || name.contains("zho") || 
-                           name.contains("chinese") || name.contains("mandarin") || name.contains("cantonese") ||
-                           name.contains("国") || name.contains("汉") || name.contains("中") || name.contains("粤") || 
-                           name.contains("双")
-                } else {
-                    return name.contains("eng") || name.contains("english") || name == "en" || name.hasPrefix("en ") || name.hasSuffix(" en") || name.contains(" en ")
+                let keywords = languageKeywords(for: activeLang)
+                var extraKeywords: [String] = []
+                if activeLang == "zh" {
+                    extraKeywords = ["mandarin", "cantonese", "国", "汉", "中", "粤", "双"]
+                } else if activeLang == "en" {
+                    extraKeywords = ["english"]
+                } else if activeLang == "ja" {
+                    extraKeywords = ["japanese", "日"]
+                } else if activeLang == "de" {
+                    extraKeywords = ["deutsch", "german", "德"]
+                } else if activeLang == "fr" {
+                    extraKeywords = ["french", "法"]
+                } else if activeLang == "es" {
+                    extraKeywords = ["spanish", "西班牙", "西"]
+                } else if activeLang == "ru" {
+                    extraKeywords = ["russian", "俄"]
                 }
+                
+                let allKeywords = keywords + extraKeywords
+                for kw in allKeywords {
+                    if name.contains(kw.lowercased()) {
+                        return true
+                    }
+                }
+                if activeLang == "en" {
+                    return name == "en" || name.hasPrefix("en ") || name.hasSuffix(" en") || name.contains(" en ")
+                }
+                return false
             })
             if let matchedTrack {
                 vlcPlayer.currentAudioIndex = matchedTrack.0
-                print("[BZPlayer] Auto-selected audio track based on system language: \(matchedTrack.1)")
+                print("[BZPlayer] Auto-selected audio track based on active language (\(activeLang)): \(matchedTrack.1)")
             }
         }
         
@@ -1992,18 +2102,38 @@ extension PlayerViewModel {
                 let activeTracks = subtitleTracks.filter { $0.0 != -1 }
                 let matchedTrack = activeTracks.first(where: { track in
                     let name = track.1.lowercased()
-                    if isChineseSystem {
-                        return name.contains("zh") || name.contains("chi") || name.contains("zho") || 
-                               name.contains("chinese") || name.contains("简") || name.contains("繁") || 
-                               name.contains("中") || name.contains("sc") || name.contains("tc") || 
-                               name.contains("gb") || name.contains("big5")
-                    } else {
-                        return name.contains("eng") || name.contains("english") || name == "en" || name.hasPrefix("en ") || name.hasSuffix(" en") || name.contains(" en ")
+                    let keywords = languageKeywords(for: activeLang)
+                    var extraKeywords: [String] = []
+                    if activeLang == "zh" {
+                        extraKeywords = ["简", "繁", "中", "sc", "tc", "gb", "big5"]
+                    } else if activeLang == "en" {
+                        extraKeywords = ["english"]
+                    } else if activeLang == "ja" {
+                        extraKeywords = ["japanese", "日"]
+                    } else if activeLang == "de" {
+                        extraKeywords = ["deutsch", "german", "德"]
+                    } else if activeLang == "fr" {
+                        extraKeywords = ["french", "法"]
+                    } else if activeLang == "es" {
+                        extraKeywords = ["spanish", "西班牙", "西"]
+                    } else if activeLang == "ru" {
+                        extraKeywords = ["russian", "俄"]
                     }
+                    
+                    let allKeywords = keywords + extraKeywords
+                    for kw in allKeywords {
+                        if name.contains(kw.lowercased()) {
+                            return true
+                        }
+                    }
+                    if activeLang == "en" {
+                        return name == "en" || name.hasPrefix("en ") || name.hasSuffix(" en") || name.contains(" en ")
+                    }
+                    return false
                 })
                 if let matchedTrack {
                     vlcPlayer.currentSubtitleIndex = matchedTrack.0
-                    print("[BZPlayer] Auto-selected embedded subtitle track based on system language: \(matchedTrack.1)")
+                    print("[BZPlayer] Auto-selected embedded subtitle track based on active language (\(activeLang)): \(matchedTrack.1)")
                 }
             }
         }
@@ -2021,7 +2151,7 @@ extension PlayerViewModel {
     func selectAudioTrack(id: Int32) {
         guard playbackBackend == .vlc else { return }
         vlcPlayer.currentAudioIndex = id
-        showToastMessage("音频轨道已切换")
+        showToastMessage(t("音频轨道已切换"))
     }
 
     func embeddedSubtitleMenuEntries() -> [TrackMenuEntry] {
@@ -2036,7 +2166,7 @@ extension PlayerViewModel {
     func selectEmbeddedSubtitle(id: Int32) {
         guard playbackBackend == .vlc else { return }
         vlcPlayer.currentSubtitleIndex = id
-        showToastMessage("内置字幕已切换")
+        showToastMessage(t("内置字幕已切换"))
     }
 
     // Track temporary subtitle files to clean up later

@@ -16,14 +16,14 @@ struct PlaylistPanelView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
-                Text("播放列表")
+                Text(viewModel.t("播放列表"))
                     .font(.headline)
                     .foregroundStyle(.white)
                 Spacer()
                 Button {
                     viewModel.togglePlaylistOrder()
                 } label: {
-                    Text(viewModel.playlistOrder.buttonTitle)
+                    Text(viewModel.t(viewModel.playlistOrder.buttonTitle))
                         .font(.system(size: 12))
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
@@ -37,7 +37,7 @@ struct PlaylistPanelView: View {
                 Button {
                     viewModel.cycleLoopMode()
                 } label: {
-                    Text(viewModel.loopMode.buttonTitle)
+                    Text(viewModel.t(viewModel.loopMode.buttonTitle))
                         .font(.system(size: 12))
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
@@ -115,16 +115,16 @@ struct PlaylistPanelView: View {
                                 }
                             }
                             .contextMenu {
-                                Button("打开文件位置") {
+                                Button(viewModel.t("打开文件位置")) {
                                     viewModel.revealInFinder(url: url)
                                 }
-                                Button("显示文件时长") {
+                                Button(viewModel.t("显示文件时长")) {
                                     visibleDurations.insert(url)
                                     Task {
                                         await viewModel.fetchPlaylistDuration(for: url)
                                     }
                                 }
-                                Button("显示全部视频时长") {
+                                Button(viewModel.t("显示全部视频时长")) {
                                     showAllDurationsToast()
                                 }
                             }
@@ -201,7 +201,7 @@ struct PlaylistPanelView: View {
                     totalDuration += d
                 }
             }
-            viewModel.toastMessage = "播放列表共 \(viewModel.playlist.count) 个文件，总时长: \(formatSeconds(totalDuration))"
+            viewModel.toastMessage = String(format: viewModel.t("播放列表共 %d 个文件，总时长: %@"), viewModel.playlist.count, formatSeconds(totalDuration))
             viewModel.showToast = true
             DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
                 viewModel.showToast = false
@@ -225,7 +225,7 @@ struct PlaylistPanelView: View {
                     totalDuration += d
                 }
             }
-            viewModel.toastMessage = "选中 \(selectedIndices.count) 个文件，总时长: \(formatSeconds(totalDuration))"
+            viewModel.toastMessage = String(format: viewModel.t("选中 %d 个文件，总时长: %@"), selectedIndices.count, formatSeconds(totalDuration))
             viewModel.showToast = true
         }
     }

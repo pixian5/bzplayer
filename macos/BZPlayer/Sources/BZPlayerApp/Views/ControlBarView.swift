@@ -36,15 +36,15 @@ struct ControlBarView: View {
             }
 
             HStack(spacing: 8) {
-                Button("打开文件") {
+                Button(viewModel.t("打开文件")) {
                     revealControlsAndScheduleHide()
                     viewModel.openFile()
                 }
                 .keyboardShortcut("o", modifiers: [.command])
 
-                Text(String(format: "当前：%.2fx", viewModel.speed))
+                Text(String(format: viewModel.t("当前：%.2fx"), viewModel.speed))
 
-                Text("速度：")
+                Text(viewModel.t("速度："))
 
                 ForEach(viewModel.speedCandidates, id: \.self) { speed in
                     Button("\(speed, specifier: "%g")x") {

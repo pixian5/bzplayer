@@ -63,7 +63,7 @@ private struct PlayerWindowRootView: View {
                 appDelegate.consumePendingURLsIfNeeded(using: viewModel)
                 viewModel.onShowFileInfo = { content in
                     fileInfoViewModel.content = content
-                    fileInfoViewModel.showPanel()
+                    fileInfoViewModel.showPanel(language: viewModel.getActiveLanguage())
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notification in

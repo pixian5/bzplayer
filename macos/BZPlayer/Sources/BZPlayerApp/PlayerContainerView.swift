@@ -8,6 +8,9 @@ struct PlayerContainerView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> PlayerHostView {
         let view = PlayerHostView()
+        view.clickView.translate = { [weak viewModel] key in
+            viewModel?.t(key) ?? key
+        }
         view.clickView.onSingleClick = {
             viewModel.togglePause()
         }
@@ -141,6 +144,7 @@ final class PlayerHostView: NSView {
 }
 
 final class ClickCaptureView: NSView {
+    var translate: ((String) -> String)?
     var onSingleClick: (() -> Void)?
     var onDoubleClick: (() -> Void)?
     var onRequestFileInfo: (() -> Void)?
@@ -271,15 +275,19 @@ final class ClickCaptureView: NSView {
         onSpeedKeyUp?()
     }
 
+    private func t(_ key: String) -> String {
+        return translate?(key) ?? key
+    }
+
     override func menu(for event: NSEvent) -> NSMenu? {
-        let menu = NSMenu(title: "菜单")
+        let menu = NSMenu(title: t("菜单"))
 
         // 1. 音频轨道
-        let audioMenuItem = NSMenuItem(title: "音频轨道", action: nil, keyEquivalent: "")
-        let audioMenu = NSMenu(title: "音频轨道")
+        let audioMenuItem = NSMenuItem(title: t("音频轨道"), action: nil, keyEquivalent: "")
+        let audioMenu = NSMenu(title: t("音频轨道"))
         let audioEntries = onBuildAudioTrackMenuEntries?() ?? []
         if audioEntries.isEmpty {
-            let emptyItem = NSMenuItem(title: "无可用音轨", action: nil, keyEquivalent: "")
+            let emptyItem = NSMenuItem(title: t("无可用音轨"), action: nil, keyEquivalent: "")
             emptyItem.isEnabled = false
             audioMenu.addItem(emptyItem)
         } else {
@@ -295,15 +303,15 @@ final class ClickCaptureView: NSView {
         menu.addItem(audioMenuItem)
 
         // 2. 字幕
-        let subtitleMenuItem = NSMenuItem(title: "字幕", action: nil, keyEquivalent: "")
-        let subtitleMenu = NSMenu(title: "字幕")
+        let subtitleMenuItem = NSMenuItem(title: t("字幕"), action: nil, keyEquivalent: "")
+        let subtitleMenu = NSMenu(title: t("字幕"))
 
         // 2.1 内置字幕
-        let embeddedSubtitleMenuItem = NSMenuItem(title: "内置字幕", action: nil, keyEquivalent: "")
-        let embeddedSubtitleMenu = NSMenu(title: "内置字幕")
+        let embeddedSubtitleMenuItem = NSMenuItem(title: t("内置字幕"), action: nil, keyEquivalent: "")
+        let embeddedSubtitleMenu = NSMenu(title: t("内置字幕"))
         let embeddedEntries = onBuildEmbeddedSubtitleMenuEntries?() ?? []
         if embeddedEntries.isEmpty {
-            let emptyItem = NSMenuItem(title: "无内置字幕", action: nil, keyEquivalent: "")
+            let emptyItem = NSMenuItem(title: t("无内置字幕"), action: nil, keyEquivalent: "")
             emptyItem.isEnabled = false
             embeddedSubtitleMenu.addItem(emptyItem)
         } else {
@@ -319,11 +327,11 @@ final class ClickCaptureView: NSView {
         subtitleMenu.addItem(embeddedSubtitleMenuItem)
 
         // 2.2 外挂字幕
-        let externalSubtitleMenuItem = NSMenuItem(title: "外挂字幕", action: nil, keyEquivalent: "")
-        let externalSubtitleMenu = NSMenu(title: "外挂字幕")
+        let externalSubtitleMenuItem = NSMenuItem(title: t("外挂字幕"), action: nil, keyEquivalent: "")
+        let externalSubtitleMenu = NSMenu(title: t("外挂字幕"))
         let externalEntries = onBuildSubtitleMenuEntries?() ?? []
         if externalEntries.isEmpty {
-            let emptyItem = NSMenuItem(title: "无匹配外挂字幕", action: nil, keyEquivalent: "")
+            let emptyItem = NSMenuItem(title: t("无匹配外挂字幕"), action: nil, keyEquivalent: "")
             emptyItem.isEnabled = false
             externalSubtitleMenu.addItem(emptyItem)
         } else {
@@ -341,8 +349,8 @@ final class ClickCaptureView: NSView {
         subtitleMenu.addItem(NSMenuItem.separator())
 
         // 2.3 字幕背景透明度
-        let opacityMenuItem = NSMenuItem(title: "字幕背景透明度", action: nil, keyEquivalent: "")
-        let opacityMenu = NSMenu(title: "字幕背景透明度")
+        let opacityMenuItem = NSMenuItem(title: t("字幕背景透明度"), action: nil, keyEquivalent: "")
+        let opacityMenu = NSMenu(title: t("字幕背景透明度"))
         let opacityLevels = [0, 25, 50, 75, 100]
         let currentOpacity = onCurrentSubtitleBackgroundOpacity?() ?? 0
         for level in opacityLevels {
@@ -356,8 +364,8 @@ final class ClickCaptureView: NSView {
         subtitleMenu.addItem(opacityMenuItem)
 
         // 2.4 字幕字体大小
-        let fontSizeMenuItem = NSMenuItem(title: "字幕字体大小", action: nil, keyEquivalent: "")
-        let fontSizeMenu = NSMenu(title: "字幕字体大小")
+        let fontSizeMenuItem = NSMenuItem(title: t("字幕字体大小"), action: nil, keyEquivalent: "")
+        let fontSizeMenu = NSMenu(title: t("字幕字体大小"))
         let fontSizes = [28, 36, 44, 55, 66, 80, 100]
         let currentFontSize = onCurrentSubtitleFontSize?() ?? 55
         for size in fontSizes {
@@ -374,7 +382,7 @@ final class ClickCaptureView: NSView {
         menu.addItem(subtitleMenuItem)
 
         // 3. 文件信息
-        let fileInfoItem = NSMenuItem(title: "文件信息", action: #selector(handleFileInfo), keyEquivalent: "")
+        let fileInfoItem = NSMenuItem(title: t("文件信息"), action: #selector(handleFileInfo), keyEquivalent: "")
         fileInfoItem.target = self
         menu.addItem(fileInfoItem)
 

@@ -5,27 +5,29 @@ import AppKit
 class FileInfoViewModel: ObservableObject {
     @Published var content: String = ""
     @Published var shouldShow: Bool = false
+    @Published var activeLanguage: String = "zh"
     private var panel: FileInfoPanel?
 
-    func showPanel() {
+    func showPanel(language: String) {
+        self.activeLanguage = language
         if panel == nil {
             let panel = FileInfoPanel(contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
                                        styleMask: [.titled, .closable, .resizable],
                                        backing: .buffered,
                                        defer: false)
-            panel.title = "文件信息"
             panel.center()
             panel.isReleasedWhenClosed = false
             self.panel = panel
         }
-        panel?.updateContent(content)
+        panel?.title = Localization.translate("文件信息", for: language)
+        panel?.updateContent(content, language: language)
         panel?.makeKeyAndOrderFront(nil)
     }
 }
 
 private final class FileInfoPanel: NSPanel {
-    func updateContent(_ content: String) {
-        contentView = NSHostingView(rootView: FileInfoPanelView(content: content))
+    func updateContent(_ content: String, language: String) {
+        contentView = NSHostingView(rootView: FileInfoPanelView(content: content, language: language))
     }
 
     override func keyDown(with event: NSEvent) {
@@ -39,6 +41,7 @@ private final class FileInfoPanel: NSPanel {
 
 private struct FileInfoPanelView: View {
     let content: String
+    let language: String
     var body: some View {
         VStack(spacing: 0) {
             HStack {
@@ -48,7 +51,7 @@ private struct FileInfoPanelView: View {
                     pasteboard.clearContents()
                     pasteboard.setString(content, forType: .string)
                 } label: {
-                    Label("复制全部", systemImage: "doc.on.doc")
+                    Label(Localization.translate("复制全部", for: language), systemImage: "doc.on.doc")
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 12)

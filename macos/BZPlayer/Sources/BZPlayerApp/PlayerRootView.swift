@@ -66,7 +66,7 @@ struct PlayerRootView: View {
                         .font(.system(size: 32))
                         .foregroundColor(.yellow)
 
-                    Text("播放失败")
+                    Text(viewModel.t("播放失败"))
                         .font(.headline)
                         .foregroundColor(.white)
 
@@ -76,7 +76,7 @@ struct PlayerRootView: View {
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 20)
 
-                    Button("确定") {
+                    Button(viewModel.t("确定")) {
                         viewModel.playbackError = nil
                     }
                     .buttonStyle(.borderedProminent)

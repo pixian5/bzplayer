@@ -6,7 +6,7 @@ struct RecentFilesView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("最近播放")
+            Text(viewModel.t("最近播放"))
                 .font(.system(size: 24, weight: .bold))
                 .foregroundStyle(.white)
                 .padding(.bottom, 4)
