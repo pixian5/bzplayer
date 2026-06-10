@@ -1221,6 +1221,11 @@ killall lsd >/dev/null 2>&1 || true
                     if reloadItemAfterReady {
                         self.reloadNativeItemAfterWarmup(url: url, resumeAt: resumeAt, startPaused: startPaused)
                     }
+                } else if item.status == .failed {
+                    print("[BZPlayer] AVPlayerItem failed: \(String(describing: item.error)), switching to VLC")
+                    self.playbackFailureTimer?.invalidate()
+                    self.playbackFailureTimer = nil
+                    self.checkAndHandlePlaybackFailure(for: url, originalBackend: .native, resumeAt: resumeAt)
                 }
             }
         }
@@ -1236,25 +1241,6 @@ killall lsd >/dev/null 2>&1 || true
         if nonNativeContainers.contains(url.pathExtension.lowercased()) {
             return .vlc
         }
-
-        let asset = AVURLAsset(url: url)
-        let ffprobeInfo = ffprobeInfo ?? probeMediaInfo(url: url)
-
-        if let ffprobeInfo, shouldPreferVLC(ffprobeInfo: ffprobeInfo) {
-            return .vlc
-        }
-
-        if shouldPreferVLC(asset: asset) {
-            return .vlc
-        }
-
-        if let ffprobeInfo, !ffprobeInfo.audioStreams.isEmpty {
-            let audioTracks = asset.tracks(withMediaType: .audio)
-            if audioTracks.isEmpty {
-                return .vlc
-            }
-        }
-
         return .native
     }
 
