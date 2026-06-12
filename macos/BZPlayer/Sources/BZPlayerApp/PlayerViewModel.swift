@@ -139,6 +139,8 @@ final class PlayerViewModel: NSObject, ObservableObject {
     @Published var completedFiles: Set<URL> = []
     @Published var playlistDurations: [URL: Double] = [:]
     @Published var nativePlayerSurfaceRefreshID: Int = 0
+    @Published var selectedPlaylistIndices = Set<Int>()
+    @Published var toastIsSuccess: Bool = false
 
     var onShowFileInfo: ((String) -> Void)?
 
@@ -162,7 +164,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         duration > 0 && isPaused && currentTime >= max(duration - 0.5, 0)
     }
 
-    private var currentFileURL: URL?
+    private(set) var currentFileURL: URL?
     private var currentVideoSize: CGSize?
     private var currentNominalFPS: Double = 30
     private var nativeTimeObserver: Any?
@@ -516,6 +518,35 @@ final class PlayerViewModel: NSObject, ObservableObject {
             openFromPlaylist(next)
         } else {
             attachedWindow?.close()
+        }
+    }
+
+    func copyFileToClipboard(url: URL) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.writeObjects([url as NSURL])
+        showToastMessage(t("已复制文件路径"), isSuccess: true)
+    }
+
+    func copyCurrentOrSelectedFilesToClipboard() {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        
+        if !selectedPlaylistIndices.isEmpty {
+            let urls = selectedPlaylistIndices.sorted().compactMap { idx -> NSURL? in
+                guard idx < playlist.count else { return nil }
+                return playlist[idx] as NSURL
+            }
+            if !urls.isEmpty {
+                pasteboard.writeObjects(urls)
+                showToastMessage(t("已复制文件路径"), isSuccess: true)
+                return
+            }
+        }
+        
+        if let currentURL = currentFileURL {
+            pasteboard.writeObjects([currentURL as NSURL])
+            showToastMessage(t("已复制文件路径"), isSuccess: true)
         }
     }
 
@@ -1653,9 +1684,10 @@ killall lsd >/dev/null 2>&1 || true
 
     private var toastHideWorkItem: DispatchWorkItem?
 
-    private func showToastMessage(_ message: String) {
+    func showToastMessage(_ message: String, isSuccess: Bool = false) {
         toastHideWorkItem?.cancel()
         toastMessage = message
+        toastIsSuccess = isSuccess
         showToast = true
         let work = DispatchWorkItem { [weak self] in
             self?.showToast = false

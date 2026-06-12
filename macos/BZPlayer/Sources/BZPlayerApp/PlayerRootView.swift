@@ -52,7 +52,7 @@ struct PlayerRootView: View {
                     .lineLimit(nil)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 10)
-                    .background(Color.black.opacity(0.75))
+                    .background(viewModel.toastIsSuccess ? Color(red: 0.12, green: 0.53, blue: 0.28) : Color.black.opacity(0.75))
                     .cornerRadius(8)
                     .transition(.opacity.animation(.easeInOut(duration: 0.2)))
                     .zIndex(20)

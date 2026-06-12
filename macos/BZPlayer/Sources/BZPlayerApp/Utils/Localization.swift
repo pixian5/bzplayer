@@ -587,6 +587,22 @@ struct Localization {
             "fr": "Échec du déplacement dans la corbeille",
             "es": "Error al mover el archivo a la papelera",
             "ru": "Не удалось переместить файл в корзину"
+        ],
+        "复制": [
+            "en": "Copy",
+            "ja": "コピー",
+            "de": "Kopieren",
+            "fr": "Copier",
+            "es": "Copiar",
+            "ru": "Копировать"
+        ],
+        "已复制文件路径": [
+            "en": "File path copied",
+            "ja": "ファイルパスをコピーしました",
+            "de": "Dateipfad kopiert",
+            "fr": "Chemin du fichier copié",
+            "es": "Ruta de archivo copiada",
+            "ru": "Путь к файлу скопирован"
         ]
     ]
 

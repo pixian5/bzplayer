@@ -18,6 +18,14 @@ struct InputDispatcher {
             viewModel.closeCurrentFile()
             return true
         }
+        // Cmd+C
+        if event.modifierFlags.contains(.command),
+           !event.modifierFlags.contains(.control),
+           !event.modifierFlags.contains(.option),
+           event.keyCode == 8 {
+            viewModel.copyCurrentOrSelectedFilesToClipboard()
+            return true
+        }
         // Cmd+O
         if event.modifierFlags.contains(.command),
            !event.modifierFlags.contains(.control),

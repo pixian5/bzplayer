@@ -8,7 +8,6 @@ struct PlaylistPanelView: View {
     @Binding var hoveredPlaylistIndex: Int?
 
     @State private var visibleDurations: Set<URL> = []
-    @State private var selectedIndices: Set<Int> = []
     @State private var lastClickedIndex: Int? = nil
     // 监听 Cmd 键松开
     @State private var flagsMonitor: Any? = nil
@@ -72,7 +71,7 @@ struct PlaylistPanelView: View {
                             .padding(.horizontal, 8)
                             .padding(.vertical, 6)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(index == viewModel.currentIndex ? Color.blue.opacity(0.35) : (selectedIndices.contains(index) ? Color.white.opacity(0.2) : Color.clear))
+                            .background(index == viewModel.currentIndex ? Color.blue.opacity(0.35) : (viewModel.selectedPlaylistIndices.contains(index) ? Color.white.opacity(0.2) : Color.clear))
                             .cornerRadius(6)
                             .contentShape(Rectangle())
                             .id(index)
@@ -83,10 +82,10 @@ struct PlaylistPanelView: View {
 
                                 if isCmd {
                                     // Cmd 点击：逐个选/取消，立即更新 toast
-                                    if selectedIndices.contains(index) {
-                                        selectedIndices.remove(index)
+                                    if viewModel.selectedPlaylistIndices.contains(index) {
+                                        viewModel.selectedPlaylistIndices.remove(index)
                                     } else {
-                                        selectedIndices.insert(index)
+                                        viewModel.selectedPlaylistIndices.insert(index)
                                     }
                                     lastClickedIndex = index
                                     showTotalDurationToast()
@@ -95,9 +94,9 @@ struct PlaylistPanelView: View {
                                     if let last = lastClickedIndex {
                                         let minIndex = min(last, index)
                                         let maxIndex = max(last, index)
-                                        selectedIndices.formUnion(minIndex...maxIndex)
+                                        viewModel.selectedPlaylistIndices.formUnion(minIndex...maxIndex)
                                     } else {
-                                        selectedIndices.insert(index)
+                                        viewModel.selectedPlaylistIndices.insert(index)
                                     }
                                     lastClickedIndex = index
                                     showTotalDurationToast()
@@ -115,6 +114,9 @@ struct PlaylistPanelView: View {
                                 }
                             }
                             .contextMenu {
+                                Button(viewModel.t("复制")) {
+                                    viewModel.copyFileToClipboard(url: url)
+                                }
                                 Button(viewModel.t("打开文件位置")) {
                                     viewModel.revealInFinder(url: url)
                                 }
@@ -163,7 +165,7 @@ struct PlaylistPanelView: View {
     // MARK: - 选中状态管理
 
     private func clearSelection() {
-        selectedIndices.removeAll()
+        viewModel.selectedPlaylistIndices.removeAll()
         lastClickedIndex = nil
         viewModel.showToast = false
     }
@@ -173,7 +175,7 @@ struct PlaylistPanelView: View {
         guard flagsMonitor == nil else { return }
         flagsMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in
             // 如果 command 键不再按下，且当前有选中项，则清空
-            if !event.modifierFlags.contains(.command), !self.selectedIndices.isEmpty {
+            if !event.modifierFlags.contains(.command), !self.viewModel.selectedPlaylistIndices.isEmpty {
                 self.clearSelection()
             }
             return event
@@ -211,13 +213,13 @@ struct PlaylistPanelView: View {
 
     /// 异步计算选中文件总时长并更新 toast（立即显示，不自动隐藏）
     private func showTotalDurationToast() {
-        guard !selectedIndices.isEmpty else {
+        guard !viewModel.selectedPlaylistIndices.isEmpty else {
             viewModel.showToast = false
             return
         }
         Task {
             var totalDuration: Double = 0
-            for i in selectedIndices {
+            for i in viewModel.selectedPlaylistIndices {
                 guard i >= 0 && i < viewModel.playlist.count else { continue }
                 let u = viewModel.playlist[i]
                 await viewModel.fetchPlaylistDuration(for: u)
@@ -225,7 +227,7 @@ struct PlaylistPanelView: View {
                     totalDuration += d
                 }
             }
-            viewModel.toastMessage = String(format: viewModel.t("选中 %d 个文件，总时长: %@"), selectedIndices.count, formatSeconds(totalDuration))
+            viewModel.toastMessage = String(format: viewModel.t("选中 %d 个文件，总时长: %@"), viewModel.selectedPlaylistIndices.count, formatSeconds(totalDuration))
             viewModel.showToast = true
         }
     }

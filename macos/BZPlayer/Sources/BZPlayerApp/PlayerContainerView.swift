@@ -50,6 +50,10 @@ struct PlayerContainerView: NSViewRepresentable {
         view.clickView.onSelectEmbeddedSubtitle = { id in
             viewModel.selectEmbeddedSubtitle(id: id)
         }
+        view.clickView.onCopyFile = { [weak viewModel] in
+            guard let viewModel = viewModel, let url = viewModel.currentFileURL else { return }
+            viewModel.copyFileToClipboard(url: url)
+        }
         view.clickView.onKeyEvent = { [weak view, weak viewModel] event in
             guard let viewModel = viewModel else { return false }
             return InputDispatcher(viewModel: viewModel).handleKeyEvent(event, in: view?.window)
@@ -158,6 +162,7 @@ final class ClickCaptureView: NSView {
     var onSelectAudioTrack: ((Int32) -> Void)?
     var onBuildEmbeddedSubtitleMenuEntries: (() -> [PlayerViewModel.TrackMenuEntry])?
     var onSelectEmbeddedSubtitle: ((Int32) -> Void)?
+    var onCopyFile: (() -> Void)?
     var onKeyEvent: ((NSEvent) -> Bool)?
     var onSpeedKeyDown: ((Double) -> Void)?
     var onSpeedKeyUp: (() -> Void)?
@@ -390,6 +395,11 @@ final class ClickCaptureView: NSView {
         fileInfoItem.target = self
         menu.addItem(fileInfoItem)
 
+        // 4. 复制
+        let copyItem = NSMenuItem(title: t("复制"), action: #selector(handleCopyFile), keyEquivalent: "")
+        copyItem.target = self
+        menu.addItem(copyItem)
+
         return menu
     }
 
@@ -429,5 +439,10 @@ final class ClickCaptureView: NSView {
     private func handleSubtitleFontSizeSelection(_ sender: NSMenuItem) {
         guard let value = sender.representedObject as? Int else { return }
         onSetSubtitleFontSize?(value)
+    }
+
+    @objc
+    private func handleCopyFile() {
+        onCopyFile?()
     }
 }
