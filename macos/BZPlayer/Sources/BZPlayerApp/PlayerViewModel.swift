@@ -514,6 +514,8 @@ final class PlayerViewModel: NSObject, ObservableObject {
         // 4. Play the next file if available
         if let next = nextURL {
             openFromPlaylist(next)
+        } else {
+            attachedWindow?.close()
         }
     }
 

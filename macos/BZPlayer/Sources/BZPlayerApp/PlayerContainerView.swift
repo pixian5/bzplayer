@@ -223,6 +223,10 @@ final class ClickCaptureView: NSView {
     private func setupKeyMonitors() {
         keyDownMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, event.window == self.window else { return event }
+            if let firstResponder = self.window?.firstResponder,
+               firstResponder is NSText || firstResponder is NSTextView {
+                return event
+            }
             if event.keyCode == 41 { // Semicolon ;
                 if !event.isARepeat {
                     self.startSpeedRepeat(delta: -0.25)
