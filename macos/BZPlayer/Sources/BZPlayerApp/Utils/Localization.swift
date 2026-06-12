@@ -571,6 +571,22 @@ struct Localization {
             "fr": "%d fichiers sélectionnés, durée totale : %@",
             "es": "%d archivos seleccionados, duración total: %@",
             "ru": "Выбрано %d файлов, общая длительность: %@"
+        ],
+        "已将文件移入废纸篓": [
+            "en": "Moved file to Trash",
+            "ja": "ファイルをゴミ箱に移動しました",
+            "de": "Datei in den Papierkorb verschoben",
+            "fr": "Fichier déplacé dans la corbeille",
+            "es": "Archivo movido a la papelera",
+            "ru": "Файл перемещен в корзину"
+        ],
+        "无法将文件移入废纸篓": [
+            "en": "Failed to move file to Trash",
+            "ja": "ファイルをゴミ箱に移動できませんでした",
+            "de": "Datei konnte nicht in den Papierkorb verschoben werden",
+            "fr": "Échec du déplacement dans la corbeille",
+            "es": "Error al mover el archivo a la papelera",
+            "ru": "Не удалось переместить файл в корзину"
         ]
     ]
 

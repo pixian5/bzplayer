@@ -64,6 +64,7 @@ final class VLCPlayer: NSObject {
 
     func stop() {
         mediaPlayer.stop()
+        mediaPlayer.media = nil
         currentMedia = nil
     }
 

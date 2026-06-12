@@ -473,6 +473,50 @@ final class PlayerViewModel: NSObject, ObservableObject {
         closeCurrentPlaybackFile(showToast: true)
     }
 
+    func deleteCurrentFileAndTrash() {
+        guard let url = currentFileURL else { return }
+        
+        // 1. Determine the next file to play in the playlist
+        var nextURL: URL? = nil
+        if playlist.count > 1 {
+            if let idx = playlist.firstIndex(of: url) {
+                if idx + 1 < playlist.count {
+                    nextURL = playlist[idx + 1]
+                } else if idx - 1 >= 0 {
+                    nextURL = playlist[idx - 1]
+                }
+            }
+        }
+        
+        // 2. Stop playback and close the current file to release file locks
+        closeCurrentPlaybackFile(showToast: false)
+        
+        // Remove the file from the playlist array
+        if let idx = playlist.firstIndex(of: url) {
+            playlist.remove(at: idx)
+            if let next = nextURL, let newIdx = playlist.firstIndex(of: next) {
+                currentIndex = newIdx
+            } else {
+                currentIndex = -1
+            }
+        }
+        
+        // 3. Move the file to trash
+        do {
+            try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+            print("[BZPlayer] Successfully moved file to trash: \(url.path)")
+            showToastMessage(t("已将文件移入废纸篓"))
+        } catch {
+            print("[BZPlayer] Failed to move file to trash: \(error)")
+            showToastMessage(t("无法将文件移入废纸篓"))
+        }
+        
+        // 4. Play the next file if available
+        if let next = nextURL {
+            openFromPlaylist(next)
+        }
+    }
+
     private func closeCurrentPlaybackFile(showToast: Bool) {
         saveCurrentProgress()
         switch playbackBackend {

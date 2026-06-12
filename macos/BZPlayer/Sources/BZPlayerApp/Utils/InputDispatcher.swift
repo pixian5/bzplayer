@@ -47,6 +47,9 @@ struct InputDispatcher {
             return true
         }
         switch event.keyCode {
+        case 51: // Backspace / Delete
+            viewModel.deleteCurrentFileAndTrash()
+            return true
         case 123:
             viewModel.seekBy(seconds: -viewModel.shortcutSeekSeconds)
             return true
