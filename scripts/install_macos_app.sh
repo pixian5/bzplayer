@@ -122,7 +122,7 @@ if [[ -n "${COMMIT_MSG}" ]]; then
     echo "[deploy] Committing and pushing..."
     cd /Users/x/code/bzplayer-main
     git add -A
-    git commit -m "$(printf '%s\n\nCo-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>' "$COMMIT_MSG")"
+    git commit -m "${COMMIT_MSG}"
     git push origin main
 fi
 
