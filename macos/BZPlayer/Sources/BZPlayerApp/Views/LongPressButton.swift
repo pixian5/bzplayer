@@ -28,8 +28,7 @@ final class LongPressButton: NSButton {
         self.onAdjust = onAdjust
         super.init(frame: .zero)
         self.title = title
-        self.bezelStyle = .rounded
-        self.isBordered = true
+        applySpeedButtonStyle()
     }
 
     required init?(coder: NSCoder) {
@@ -46,6 +45,15 @@ final class LongPressButton: NSButton {
 
     func updateCallback(_ callback: @escaping (Double) -> Void) {
         self.onAdjust = callback
+    }
+
+    private func applySpeedButtonStyle() {
+        bezelStyle = .rounded
+        isBordered = true
+        controlSize = .regular
+        font = .systemFont(ofSize: NSFont.systemFontSize)
+        bezelColor = .systemGray
+        contentTintColor = .white
     }
 
     override func mouseDown(with event: NSEvent) {
