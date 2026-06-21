@@ -6,6 +6,7 @@ struct SettingsView: View {
     @State private var seekSecondsText = ""
     @State private var frameStepText = ""
     @State private var audioDelayStepMsText = ""
+    @State private var numericKeySpeedTexts: [Int: String] = [:]
 
     var body: some View {
         ScrollView {
@@ -158,6 +159,41 @@ struct SettingsView: View {
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
 
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(viewModel.t("数字键倍速"))
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+
+                        LazyVGrid(columns: [
+                            GridItem(.fixed(120), alignment: .leading),
+                            GridItem(.fixed(120), alignment: .leading),
+                            GridItem(.fixed(120), alignment: .leading)
+                        ], alignment: .leading, spacing: 8) {
+                            ForEach(PlayerViewModel.numericSpeedDigits, id: \.self) { digit in
+                                HStack(spacing: 6) {
+                                    Text("\(digit)")
+                                        .frame(width: 18, alignment: .trailing)
+                                    TextField("1.00", text: Binding(
+                                        get: {
+                                            numericKeySpeedTexts[digit] ?? String(format: "%.2f", viewModel.numericKeySpeed(for: digit))
+                                        },
+                                        set: { numericKeySpeedTexts[digit] = $0 }
+                                    ))
+                                    .textFieldStyle(.roundedBorder)
+                                    .frame(width: 64)
+                                    .onSubmit {
+                                        applyNumericKeySpeed(for: digit)
+                                    }
+                                    Text("x")
+                                }
+                            }
+                        }
+
+                        Text(viewModel.t("按数字键切换到对应倍速，支持 0.01x 精度。"))
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                    }
+
                     HStack {
                         Text(viewModel.t("打开文件时窗口"))
                             .frame(width: 150, alignment: .leading)
@@ -224,6 +260,7 @@ struct SettingsView: View {
         .onAppear {
             syncShortcutFields()
             syncAudioDelayStepField()
+            syncNumericKeySpeedFields()
         }
         .onChange(of: viewModel.shortcutSeekSeconds) { _ in
             syncShortcutFields()
@@ -233,6 +270,9 @@ struct SettingsView: View {
         }
         .onChange(of: viewModel.audioDelayStepMs) { _ in
             syncAudioDelayStepField()
+        }
+        .onChange(of: viewModel.numericKeySpeeds) { _ in
+            syncNumericKeySpeedFields()
         }
         .onExitCommand {
             NSApp.keyWindow?.close()
@@ -246,6 +286,19 @@ struct SettingsView: View {
 
     private func syncAudioDelayStepField() {
         audioDelayStepMsText = String(format: "%.0f", viewModel.audioDelayStepMs)
+    }
+
+    private func syncNumericKeySpeedFields() {
+        for digit in PlayerViewModel.numericSpeedDigits {
+            numericKeySpeedTexts[digit] = String(format: "%.2f", viewModel.numericKeySpeed(for: digit))
+        }
+    }
+
+    private func applyNumericKeySpeed(for digit: Int) {
+        if let value = Double(numericKeySpeedTexts[digit] ?? "") {
+            viewModel.setNumericKeySpeed(value, for: digit)
+        }
+        numericKeySpeedTexts[digit] = String(format: "%.2f", viewModel.numericKeySpeed(for: digit))
     }
 
     private func applyAudioDelayStepMs() {

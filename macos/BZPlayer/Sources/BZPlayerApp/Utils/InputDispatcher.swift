@@ -86,15 +86,15 @@ struct InputDispatcher {
             break
         }
         switch event.charactersIgnoringModifiers {
-        case "1": viewModel.setSpeedWithToast(1.0); return true
-        case "2": viewModel.setSpeedWithToast(2.0); return true
-        case "3": viewModel.setSpeedWithToast(3.0); return true
-        case "4": viewModel.setSpeedWithToast(4.0); return true
-        case "5": viewModel.setSpeedWithToast(5.0); return true
-        case "6": viewModel.setSpeedWithToast(6.0); return true
-        case "7": viewModel.setSpeedWithToast(7.0); return true
-        case "8": viewModel.setSpeedWithToast(8.0); return true
-        case "9": viewModel.setSpeedWithToast(9.0); return true
+        case "1": viewModel.setSpeedForNumericKey(1); return true
+        case "2": viewModel.setSpeedForNumericKey(2); return true
+        case "3": viewModel.setSpeedForNumericKey(3); return true
+        case "4": viewModel.setSpeedForNumericKey(4); return true
+        case "5": viewModel.setSpeedForNumericKey(5); return true
+        case "6": viewModel.setSpeedForNumericKey(6); return true
+        case "7": viewModel.setSpeedForNumericKey(7); return true
+        case "8": viewModel.setSpeedForNumericKey(8); return true
+        case "9": viewModel.setSpeedForNumericKey(9); return true
         default: break
         }
         switch event.charactersIgnoringModifiers?.lowercased() {

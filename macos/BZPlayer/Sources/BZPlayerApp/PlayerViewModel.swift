@@ -119,6 +119,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
     @Published var audioStepDownKeyCode: UInt16
     @Published var audioStepUpKeyCode: UInt16
     @Published var speedToggleKeyCode: UInt16
+    @Published var numericKeySpeeds: [Double]
     @Published var playlistOrder: PlaylistOrder
     @Published var loopMode: LoopMode
     @Published var windowOpenBehavior: WindowOpenBehavior
@@ -147,6 +148,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
     let vlcPlayer = VLCPlayer()
     let nativePlayer = AVPlayer()
     let speedCandidates: [Double] = [0.25, 0.5, 1, 1.25, 1.5, 1.75, 2, 3, 4, 8, 16]
+    static let numericSpeedDigits = Array(1...9)
 
     var hasOpenedFile: Bool {
         currentFileURL != nil
@@ -203,6 +205,19 @@ final class PlayerViewModel: NSObject, ObservableObject {
     private static let subtitleBackgroundOpacityKey = "subtitleBackgroundOpacity"
     private static let subtitleFontSizeKey = "subtitleFontSize"
 
+    private static func normalizeNumericKeySpeeds(_ values: [Double]) -> [Double] {
+        numericSpeedDigits.enumerated().map { index, digit in
+            let value = index < values.count ? values[index] : Double(digit)
+            return normalizeSpeed(value)
+        }
+    }
+
+    private static func normalizeSpeed(_ value: Double) -> Double {
+        guard value.isFinite else { return 1.0 }
+        let clamped = min(max(value, 0.25), 16)
+        return (clamped * 100).rounded() / 100
+    }
+
     // MARK: - 文件存储路径
     private static var settingsDir: URL {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
@@ -250,6 +265,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         var lastWindowFrame: String? = nil
         var lastUsedSpeed: Double = 1.0
         var appLanguage: String? = "auto"
+        var numericKeySpeeds: [Double]?
     }
 
     // MARK: - 单文件设置数据结构（进度/速度/音频延迟）
@@ -268,6 +284,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         audioStepDownKeyCode = UInt16(settings.audioStepDownKeyCode)
         audioStepUpKeyCode = UInt16(settings.audioStepUpKeyCode)
         speedToggleKeyCode = UInt16(settings.speedToggleKeyCode)
+        numericKeySpeeds = Self.normalizeNumericKeySpeeds(settings.numericKeySpeeds ?? [])
         playlistOrder = PlaylistOrder(rawValue: settings.playlistOrder) ?? .ascending
         loopMode = LoopMode(rawValue: settings.loopMode) ?? .playlist
         windowOpenBehavior = WindowOpenBehavior(rawValue: settings.windowOpenBehavior) ?? .maximized
@@ -328,6 +345,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         settings.subtitleFontSize = subtitleFontSize
         settings.lastUsedSpeed = speed
         settings.appLanguage = appLanguage
+        settings.numericKeySpeeds = Self.normalizeNumericKeySpeeds(numericKeySpeeds)
         if let frame = attachedWindow {
             settings.lastWindowFrame = NSStringFromRect(frame.frame)
         }
@@ -662,6 +680,26 @@ final class PlayerViewModel: NSObject, ObservableObject {
     func setSpeedWithToast(_ value: Double) {
         setSpeed(value)
         showToastMessage(String(format: t("速度: %.2fx"), speed))
+    }
+
+    func numericKeySpeed(for digit: Int) -> Double {
+        guard let index = Self.numericSpeedDigits.firstIndex(of: digit),
+              numericKeySpeeds.indices.contains(index) else {
+            return Double(digit)
+        }
+        return numericKeySpeeds[index]
+    }
+
+    func setNumericKeySpeed(_ value: Double, for digit: Int) {
+        guard let index = Self.numericSpeedDigits.firstIndex(of: digit) else { return }
+        var speeds = Self.normalizeNumericKeySpeeds(numericKeySpeeds)
+        speeds[index] = Self.normalizeSpeed(value)
+        numericKeySpeeds = speeds
+        saveSettings()
+    }
+
+    func setSpeedForNumericKey(_ digit: Int) {
+        setSpeedWithToast(numericKeySpeed(for: digit))
     }
 
     func adjustSpeed(by delta: Double) {
