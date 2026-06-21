@@ -185,6 +185,9 @@ final class PlayerViewModel: NSObject, ObservableObject {
     private let subtitleCleanupTracker = SubtitleCleanupTracker()
     private static var hasCompletedNativeVP9Warmup = false
     private var vp9WarmupPlayer: AVPlayer?
+    private var lastProgressSaveTime: TimeInterval = 0
+    private var lastProgressSavePosition: Double = 0
+    private let progressSaveInterval: TimeInterval = 5
 
     private static let shortcutSeekSecondsKey = "shortcutSeekSeconds"
     private static let shortcutFrameStepCountKey = "shortcutFrameStepCount"
@@ -482,7 +485,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
             vlcPlayer.pause()
         }
         isPaused = true
-        saveCurrentProgress()
+        saveCurrentProgress(force: true)
     }
 
     func prepareForWindowClose() {
@@ -569,7 +572,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
     }
 
     private func closeCurrentPlaybackFile(showToast: Bool) {
-        saveCurrentProgress()
+        saveCurrentProgress(force: true)
         switch playbackBackend {
         case .native:
             nativePlayer.pause()
@@ -1176,9 +1179,7 @@ killall lsd >/dev/null 2>&1 || true
         vlcPlayer.onTimeChanged = { [weak self] time in
             guard let self, self.playbackBackend == .vlc else { return }
             self.currentTime = time.isFinite ? time : 0
-            if Int(self.currentTime) % 1 == 0 {
-                self.saveCurrentProgress()
-            }
+            self.saveCurrentProgressIfNeeded()
         }
         vlcPlayer.onDurationChanged = { [weak self] duration in
             guard let self, self.playbackBackend == .vlc else { return }
@@ -1235,9 +1236,7 @@ killall lsd >/dev/null 2>&1 || true
                 }
 
                 self.currentTime = seconds.isFinite ? max(0, seconds) : 0
-                if Int(self.currentTime) % 1 == 0 {
-                    self.saveCurrentProgress()
-                }
+                self.saveCurrentProgressIfNeeded()
             }
         }
 
@@ -1303,7 +1302,7 @@ killall lsd >/dev/null 2>&1 || true
         }
 
         isPaused = false
-        saveCurrentProgress()
+        saveCurrentProgress(force: true)
         let isFirstOpen = currentFileURL == nil
         currentFileURL = url
         openedFilePath = url.path
@@ -1692,14 +1691,29 @@ killall lsd >/dev/null 2>&1 || true
         return settings.progress > 0 ? settings.progress : nil
     }
 
-    private func saveCurrentProgress() {
+    private func saveCurrentProgressIfNeeded() {
+        let now = Date().timeIntervalSince1970
+        guard now - lastProgressSaveTime >= progressSaveInterval ||
+              abs(currentTime - lastProgressSavePosition) >= progressSaveInterval else {
+            return
+        }
+        saveCurrentProgress(force: true)
+    }
+
+    private func saveCurrentProgress(force: Bool = false) {
         guard let url = currentFileURL, currentTime.isFinite, currentTime > 0 else { return }
         if duration > 0 && currentTime >= max(duration - 0.5, 0) {
+            return
+        }
+        if !force {
+            saveCurrentProgressIfNeeded()
             return
         }
         var fileSettings = loadFileSettings(for: url)
         fileSettings.progress = currentTime
         saveFileSettings(for: url, fileSettings)
+        lastProgressSaveTime = Date().timeIntervalSince1970
+        lastProgressSavePosition = currentTime
     }
 
     private func clearSavedProgress(for url: URL) {

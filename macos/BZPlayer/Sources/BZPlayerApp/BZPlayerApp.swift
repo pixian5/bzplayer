@@ -191,6 +191,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor
     func register(window: NSWindow, viewModel: PlayerViewModel) {
         let key = ObjectIdentifier(window)
+        if let binding = registeredWindows[key], binding.viewModel === viewModel {
+            cleanupDeadWindowBindings()
+            return
+        }
         registeredWindows[key] = WeakWindowBinding(window: window, viewModel: viewModel)
         cleanupDeadWindowBindings()
         debugLog("[AppDelegate] Window registered, windowNumber: \(window.windowNumber), total registered: \(registeredWindows.count)")
