@@ -1463,6 +1463,16 @@ killall lsd >/dev/null 2>&1 || true
         if nonNativeContainers.contains(url.pathExtension.lowercased()) {
             return .vlc
         }
+        if let ffprobeInfo {
+            if shouldPreferVLC(ffprobeInfo: ffprobeInfo) {
+                return .vlc
+            }
+            if ffprobeInfo.videoStreams.contains(where: { $0.codecName == "h264" }),
+               hasVideoDecodeErrors(url: url, scanSeconds: 20) {
+                debugLog("[BZPlayer] Detected video decode errors, using VLC/libvlc: \(url.lastPathComponent)")
+                return .vlc
+            }
+        }
         return .native
     }
 
@@ -2048,10 +2058,8 @@ killall lsd >/dev/null 2>&1 || true
         debugLog("[BZPlayer] isNearEnd check - duration: \(effectiveDuration), snapshotTime: \(snapshotTime), timeDiff: \(timeDiff), progressPercent: \(progressPercent), result: \(isNearEnd)")
         guard isNearEnd else {
             debugLog("[BZPlayer] Ignoring playback-finished notification (not near end or invalid duration)")
-            // If duration is 0, this might be a playback failure - don't auto-advance
             if effectiveDuration == 0 {
-                debugLog("[BZPlayer] Duration is 0, treating as playback failure - stopping auto-advance")
-                isPaused = true
+                debugLog("[BZPlayer] Duration is 0, treating playback-finished notification as a transient VLC signal")
             }
             return
         }

@@ -65,6 +65,54 @@ func probeMediaInfo(url: URL) -> FFprobeInfo? {
     }
 }
 
+func hasVideoDecodeErrors(url: URL, scanSeconds: Int) -> Bool {
+    guard url.isFileURL, scanSeconds > 0 else { return false }
+    let ffmpegPath: String = {
+        let candidates = ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/usr/bin/ffmpeg"]
+        for p in candidates {
+            if FileManager.default.fileExists(atPath: p) { return p }
+        }
+        return "ffmpeg"
+    }()
+
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+    process.arguments = [
+        ffmpegPath,
+        "-hide_banner",
+        "-v", "warning",
+        "-i", url.path,
+        "-map", "0:v:0",
+        "-t", "\(scanSeconds)",
+        "-f", "null",
+        "-"
+    ]
+
+    let stderr = Pipe()
+    process.standardOutput = Pipe()
+    process.standardError = stderr
+
+    do {
+        try process.run()
+        process.waitUntilExit()
+        let data = stderr.fileHandleForReading.readDataToEndOfFile()
+        guard let output = String(data: data, encoding: .utf8)?.lowercased(), !output.isEmpty else {
+            return false
+        }
+        let errorMarkers = [
+            "invalid nal",
+            "error splitting the input into nal units",
+            "invalid data found when processing input",
+            "error submitting packet to decoder",
+            "failed to parse header of nalu",
+            "slice type"
+        ]
+        return errorMarkers.contains { output.contains($0) }
+    } catch {
+        return false
+    }
+}
+
 func ffprobeStreamSummary(from json: [String: Any]) -> (type: String, codecName: String, codecTag: String, profile: String, summary: String)? {
     guard let type = json["codec_type"] as? String else { return nil }
     let codecName = (json["codec_name"] as? String)?.lowercased() ?? ""
