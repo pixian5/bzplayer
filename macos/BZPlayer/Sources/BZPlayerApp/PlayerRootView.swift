@@ -22,7 +22,7 @@ struct PlayerRootView: View {
     }
 
     var body: some View {
-        ZStack(alignment: .bottom) {
+        ZStack {
             playerArea
             ControlBarView(
                 seekValue: $seekValue,
@@ -42,6 +42,7 @@ struct PlayerRootView: View {
                         Color.clear.preference(key: ControlBarHeightKey.self, value: geo.size.height + 12)
                     }
                 )
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
 
             // Toast 提示
             if viewModel.showToast {
@@ -56,7 +57,6 @@ struct PlayerRootView: View {
                     .cornerRadius(8)
                     .transition(.opacity.animation(.easeInOut(duration: 0.2)))
                     .zIndex(20)
-                    .padding(.bottom, 100)
             }
 
             // Playback error overlay
