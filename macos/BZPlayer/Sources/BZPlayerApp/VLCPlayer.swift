@@ -20,11 +20,13 @@ final class VLCPlayer: NSObject {
     private var didFireFileLoaded = false
     private var wasPlayingBeforeSeek: Bool?
     private var pendingPlayTask: Task<Void, Never>?
+    private weak var currentAttachedView: VLCVideoView?
 
     override init() {
         let library = VLCLibrary(options: [
             "--freetype-font=/System/Library/Fonts/STHeiti Light.ttc",
-            "--subsdec-encoding=GB18030"
+            "--subsdec-encoding=GB18030",
+            "--avcodec-hw=any"
         ])
         self.mediaPlayer = VLCMediaPlayer(library: library)
         super.init()
@@ -39,6 +41,8 @@ final class VLCPlayer: NSObject {
     }
 
     func attach(to view: VLCVideoView) {
+        guard currentAttachedView !== view else { return }
+        currentAttachedView = view
         mediaPlayer.drawable = view
     }
 
@@ -48,6 +52,8 @@ final class VLCPlayer: NSObject {
         let media = VLCMedia(url: url)
         media.addOption(":subsdec-encoding=GB18030")
         media.addOption(":freetype-font=/System/Library/Fonts/STHeiti Light.ttc")
+        media.addOption(":avcodec-hw=any")
+        media.addOption(":codec=videotoolbox")
         currentMedia = media
         mediaPlayer.media = media
     }

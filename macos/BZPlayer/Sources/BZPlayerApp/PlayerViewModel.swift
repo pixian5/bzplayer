@@ -356,15 +356,24 @@ final class PlayerViewModel: NSObject, ObservableObject {
         try? data.write(to: Self.settingsURL)
     }
 
+    private static var fileSettingsCache: [String: FileSettings]?
+
     private static func loadFileSettings() -> [String: FileSettings] {
+        if let cached = fileSettingsCache {
+            return cached
+        }
         guard let data = try? Data(contentsOf: fileSettingsURL),
               let dict = try? JSONDecoder().decode([String: FileSettings].self, from: data) else {
-            return [:]
+            let empty: [String: FileSettings] = [:]
+            fileSettingsCache = empty
+            return empty
         }
+        fileSettingsCache = dict
         return dict
     }
 
     private static func saveFileSettings(_ dict: [String: FileSettings]) {
+        fileSettingsCache = dict
         guard let data = try? JSONEncoder().encode(dict) else { return }
         try? data.write(to: fileSettingsURL)
     }

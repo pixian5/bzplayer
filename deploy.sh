@@ -8,11 +8,11 @@ COMMIT_MSG="${1:-$(date '+%Y%m%d%H%M')}"
 
 echo "🔨 构建项目..."
 cd macos/BZPlayer
-swift build
+swift build -c release
 echo "✅ 构建成功"
 
 echo "📦 复制编译产物到 .app 包..."
-cp .build/arm64-apple-macosx/debug/BZPlayer dist/BZPlayer.app/Contents/MacOS/BZPlayer
+cp .build/arm64-apple-macosx/release/BZPlayer dist/BZPlayer.app/Contents/MacOS/BZPlayer
 
 echo "📦 复制应用图标到 .app 包..."
 mkdir -p dist/BZPlayer.app/Contents/Resources
