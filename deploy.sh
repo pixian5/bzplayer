@@ -11,6 +11,21 @@ cd macos/BZPlayer
 swift build -c release
 echo "✅ 构建成功"
 
+# 获取最新的 Git tag 并提取数字作为版本号
+LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0")
+VERSION_NUM=${LATEST_TAG#v}
+if [[ -z "$VERSION_NUM" ]]; then
+    VERSION_NUM="0"
+fi
+echo "🏷️  当前 Git 线上最新版本号: ${VERSION_NUM}"
+
+INFO_PLIST="dist/BZPlayer.app/Contents/Info.plist"
+if [[ -f "$INFO_PLIST" ]]; then
+    plutil -replace CFBundleShortVersionString -string "${VERSION_NUM}" "$INFO_PLIST"
+    plutil -replace CFBundleVersion -string "${VERSION_NUM}" "$INFO_PLIST"
+    echo "📝 已将 Info.plist 版本号更新为: ${VERSION_NUM}"
+fi
+
 echo "📦 复制编译产物到 .app 包..."
 cp .build/arm64-apple-macosx/release/BZPlayer dist/BZPlayer.app/Contents/MacOS/BZPlayer
 

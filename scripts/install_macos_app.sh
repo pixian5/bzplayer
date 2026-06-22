@@ -11,21 +11,14 @@ APP_DIR="/Applications/${APP_NAME}"
 BIN_SOURCE="/Users/x/code/bzplayer-main/macos/BZPlayer/.build/arm64-apple-macosx/release/BZPlayer"
 PROJECT_DIR="/Users/x/code/bzplayer-main/macos/BZPlayer"
 LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
-VERSION_FILE="/Users/x/code/bzplayer-main/macos/BZPlayer/.deploy_version"
-
-if [[ -f "${VERSION_FILE}" ]]; then
-    CURRENT_VERSION=$(tr -cd '0-9' < "${VERSION_FILE}")
-else
-    CURRENT_VERSION=""
+# 获取最新的 Git tag 并提取数字作为版本号
+LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0")
+VERSION_NUM=${LATEST_TAG#v}
+if [[ -z "$VERSION_NUM" ]]; then
+    VERSION_NUM="0"
 fi
-
-if [[ -z "${CURRENT_VERSION}" ]]; then
-    CURRENT_VERSION=0
-fi
-
-NEXT_VERSION=$((CURRENT_VERSION + 1))
-echo "${NEXT_VERSION}" > "${VERSION_FILE}"
-echo "[deploy] BZPlayer version: ${NEXT_VERSION}"
+NEXT_VERSION="${VERSION_NUM}"
+echo "[deploy] BZPlayer version from Git: ${NEXT_VERSION}"
 
 echo "[deploy] Removing old app..."
 rm -rf "${APP_DIR}"
