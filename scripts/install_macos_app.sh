@@ -8,7 +8,6 @@ COMMIT_MSG="${1:-}"
 
 APP_NAME="BZPlayer.app"
 APP_DIR="/Applications/${APP_NAME}"
-BIN_SOURCE="/Users/x/code/bzplayer-main/macos/BZPlayer/.build/arm64-apple-macosx/release/BZPlayer"
 PROJECT_DIR="/Users/x/code/bzplayer-main/macos/BZPlayer"
 LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 # 获取最新的 Git tag 并提取数字作为版本号
@@ -20,17 +19,18 @@ fi
 NEXT_VERSION="${VERSION_NUM}"
 echo "[deploy] BZPlayer version from Git: ${NEXT_VERSION}"
 
+echo "[deploy] Stopping old process..."
+pkill -x BZPlayer || true
+sleep 0.5
+pkill -9 -x BZPlayer || true
+
 echo "[deploy] Removing old app..."
 rm -rf "${APP_DIR}"
 
 echo "[deploy] Building release binary..."
 cd "${PROJECT_DIR}"
-swift build -c release
-
-echo "[deploy] Stopping old process..."
-pkill -x BZPlayer || true
-sleep 0.5
-pkill -9 -x BZPlayer || true
+BUILD_DIR=$(swift build -c release --show-bin-path)
+BIN_SOURCE="${BUILD_DIR}/BZPlayer"
 mkdir -p "${APP_DIR}/Contents/MacOS"
 
 /bin/cat > "${APP_DIR}/Contents/Info.plist" <<EOF
@@ -104,11 +104,11 @@ chmod +x "${APP_DIR}/Contents/MacOS/BZPlayer"
 
 echo "[deploy] Copying VLCKit.framework..."
 mkdir -p "${APP_DIR}/Contents/Frameworks"
-cp -R "${PROJECT_DIR}/.build/arm64-apple-macosx/release/VLCKit.framework" "${APP_DIR}/Contents/Frameworks/"
+cp -R "${BUILD_DIR}/VLCKit.framework" "${APP_DIR}/Contents/Frameworks/"
+# SwiftPM's generated Bundle.module accessor looks next to the app bundle.
+cp -R "${BUILD_DIR}/BZPlayer_BZPlayerApp.bundle" "${APP_DIR}/"
 
 "${LSREGISTER}" -f "${APP_DIR}" >/dev/null
-killall cfprefsd >/dev/null 2>&1 || true
-killall lsd >/dev/null 2>&1 || true
 open -a "${APP_DIR}"
 
 if [[ -n "${COMMIT_MSG}" ]]; then

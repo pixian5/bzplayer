@@ -30,10 +30,6 @@ jobs:
         with:
           xcode-version: latest-stable
 
-      - name: Install mpv
-        shell: bash
-        run: brew install mpv
-
       - name: Compute version
         id: version
         shell: bash
@@ -46,7 +42,8 @@ jobs:
         shell: bash
         run: |
           cd macos/BZPlayer
-          swift build -c release
+          BUILD_DIR=$(swift build -c release --show-bin-path)
+          echo "BZPLAYER_BUILD_DIR=${BUILD_DIR}" >> "$GITHUB_ENV"
 
       - name: Create .app bundle
         shell: bash
@@ -55,9 +52,16 @@ jobs:
           APP_DIR="dist/${APP_NAME}.app"
           mkdir -p "${APP_DIR}/Contents/MacOS"
           mkdir -p "${APP_DIR}/Contents/Resources"
+          mkdir -p "${APP_DIR}/Contents/Frameworks"
 
-          cp "macos/BZPlayer/.build/release/BZPlayer" "${APP_DIR}/Contents/MacOS/BZPlayer"
+          cp "${BZPLAYER_BUILD_DIR}/BZPlayer" "${APP_DIR}/Contents/MacOS/BZPlayer"
           chmod +x "${APP_DIR}/Contents/MacOS/BZPlayer"
+          cp -R "${BZPLAYER_BUILD_DIR}/VLCKit.framework" "${APP_DIR}/Contents/Frameworks/"
+          # SwiftPM's generated Bundle.module accessor looks next to the app bundle.
+          cp -R "${BZPLAYER_BUILD_DIR}/BZPlayer_BZPlayerApp.bundle" "${APP_DIR}/"
+          if [[ -f "macos/BZPlayer/Resources/AppIcon.icns" ]]; then
+            cp "macos/BZPlayer/Resources/AppIcon.icns" "${APP_DIR}/Contents/Resources/AppIcon.icns"
+          fi
 
           INFO_PLIST="${APP_DIR}/Contents/Info.plist"
           {
@@ -79,6 +83,24 @@ jobs:
             echo '  <string>BZPlayer</string>'
             echo '  <key>CFBundlePackageType</key>'
             echo '  <string>APPL</string>'
+            echo '  <key>CFBundleIconFile</key>'
+            echo '  <string>AppIcon.icns</string>'
+            echo '  <key>CFBundleDocumentTypes</key>'
+            echo '  <array>'
+            echo '    <dict>'
+            echo '      <key>CFBundleTypeName</key>'
+            echo '      <string>媒体文件</string>'
+            echo '      <key>CFBundleTypeRole</key>'
+            echo '      <string>Viewer</string>'
+            echo '      <key>LSHandlerRank</key>'
+            echo '      <string>Owner</string>'
+            echo '      <key>LSItemContentTypes</key>'
+            echo '      <array>'
+            echo '        <string>public.movie</string>'
+            echo '        <string>public.audio</string>'
+            echo '      </array>'
+            echo '    </dict>'
+            echo '  </array>'
             echo '  <key>LSMinimumSystemVersion</key>'
             echo '  <string>13.0</string>'
             echo '</dict>'

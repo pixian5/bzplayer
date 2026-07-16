@@ -5,6 +5,7 @@ import CoreServices
 import Foundation
 import UniformTypeIdentifiers
 import VLCKitSPM
+import BZPlayerCore
 
 // Debug logger
 private let debugLogURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Documents/BZPlayer.log")
@@ -181,6 +182,8 @@ final class PlayerViewModel: NSObject, ObservableObject {
     private var lastStallPosition: Double = 0
     private var attemptedBackendSwitch = false
     private var playbackFailureTimer: Timer?
+    private var mediaAnalysisTask: Task<Void, Never>?
+    private var mediaOpenGeneration = UUID()
     private var selectedSubtitlePath: String?
     private let subtitleCleanupTracker = SubtitleCleanupTracker()
     private static var hasCompletedNativeVP9Warmup = false
@@ -353,7 +356,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
             settings.lastWindowFrame = NSStringFromRect(frame.frame)
         }
         guard let data = try? JSONEncoder().encode(settings) else { return }
-        try? data.write(to: Self.settingsURL)
+        Self.writeJSONAtomically(data, to: Self.settingsURL)
     }
 
     private static var fileSettingsCache: [String: FileSettings]?
@@ -375,7 +378,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
     private static func saveFileSettings(_ dict: [String: FileSettings]) {
         fileSettingsCache = dict
         guard let data = try? JSONEncoder().encode(dict) else { return }
-        try? data.write(to: fileSettingsURL)
+        writeJSONAtomically(data, to: fileSettingsURL)
     }
 
     private static func loadURLSet(from url: URL) -> Set<URL> {
@@ -389,7 +392,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
     private static func saveURLSet(_ set: Set<URL>, to url: URL) {
         let paths = set.map { $0.path }
         guard let data = try? JSONEncoder().encode(paths) else { return }
-        try? data.write(to: url)
+        writeJSONAtomically(data, to: url)
     }
 
     private func saveOpenedFiles() {
@@ -412,6 +415,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
     }
 
     deinit {
+        mediaAnalysisTask?.cancel()
         if let nativeTimeObserver {
             nativePlayer.removeTimeObserver(nativeTimeObserver)
         }
@@ -446,24 +450,38 @@ final class PlayerViewModel: NSObject, ObservableObject {
     }
 
     func openExternalFiles(_ urls: [URL]) {
-        guard let url = urls.first else { return }
-        let normalizedURL = url.standardizedFileURL
-        guard FileManager.default.fileExists(atPath: normalizedURL.path) else { return }
-        loadPlaylist(with: normalizedURL)
+        let normalizedURLs = urls
+            .map(\.standardizedFileURL)
+            .filter { FileManager.default.fileExists(atPath: $0.path) }
+        guard let firstURL = normalizedURLs.first else { return }
 
-        // Check if selected URL is a directory (folder) or a file
         var isDirectory: ObjCBool = false
-        FileManager.default.fileExists(atPath: normalizedURL.path, isDirectory: &isDirectory)
+        FileManager.default.fileExists(atPath: firstURL.path, isDirectory: &isDirectory)
 
-        if isDirectory.boolValue {
-            // If folder, open the first file in playlist
+        if normalizedURLs.count == 1, isDirectory.boolValue {
+            loadPlaylist(with: firstURL)
             if let firstFile = playlist.first {
                 openFromPlaylist(firstFile)
             }
-        } else {
-            // If file, open the selected file
-            openFromPlaylist(normalizedURL)
+            return
         }
+
+        if normalizedURLs.count == 1 {
+            loadPlaylist(with: firstURL)
+            openFromPlaylist(firstURL)
+            return
+        }
+
+        let fileURLs = normalizedURLs.filter { url in
+            var directory: ObjCBool = false
+            FileManager.default.fileExists(atPath: url.path, isDirectory: &directory)
+            return !directory.boolValue
+        }
+        guard !fileURLs.isEmpty else { return }
+        var seen = Set<URL>()
+        playlist = fileURLs.filter { seen.insert($0).inserted }
+        currentIndex = 0
+        openFromPlaylist(playlist[0])
     }
 
     func play() {
@@ -581,6 +599,8 @@ final class PlayerViewModel: NSObject, ObservableObject {
     }
 
     private func closeCurrentPlaybackFile(showToast: Bool) {
+        mediaAnalysisTask?.cancel()
+        mediaOpenGeneration = UUID()
         saveCurrentProgress(force: true)
         switch playbackBackend {
         case .native:
@@ -784,11 +804,13 @@ final class PlayerViewModel: NSObject, ObservableObject {
         let normalized = Self.clampSubtitleOpacity(value)
         subtitleBackgroundOpacity = normalized
         saveSettings()
+        reloadVLCMediaIfNeeded()
     }
 
     func setSubtitleFontSize(_ size: Int) {
         subtitleFontSize = max(1, size)
         saveSettings()
+        reloadVLCMediaIfNeeded()
     }
 
     func setAudioDelayStepMs(_ value: Double) {
@@ -912,6 +934,13 @@ final class PlayerViewModel: NSObject, ObservableObject {
 
     func selectSubtitle(path: String?) {
         selectedSubtitlePath = path
+        if path != nil, playbackBackend == .native, let url = currentFileURL {
+            let resumeAt = currentTime > 0 && currentTime < duration ? currentTime : nil
+            let wasPaused = isPaused
+            selectBackend(.vlc)
+            loadVLC(url: url, resumeAt: resumeAt, startPaused: wasPaused)
+            return
+        }
         if path == nil {
             if playbackBackend == .vlc {
                 vlcPlayer.disableSubtitle()
@@ -956,7 +985,15 @@ final class PlayerViewModel: NSObject, ObservableObject {
 
     private static func saveRecentFilesToDisk(_ files: [String]) {
         guard let url = persistentRecentFilesURL, let data = try? JSONEncoder().encode(files) else { return }
-        try? data.write(to: url)
+        writeJSONAtomically(data, to: url)
+    }
+
+    private static func writeJSONAtomically(_ data: Data, to url: URL) {
+        do {
+            try data.write(to: url, options: [.atomic])
+        } catch {
+            debugLog("[BZPlayer] Failed to write JSON file \(url.path): \(error.localizedDescription)")
+        }
     }
 
     func adjustAudioDelay(by deltaMs: Double) {
@@ -967,6 +1004,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
             fileSettings.audioDelayMs = audioDelayMs
             saveFileSettings(for: url, fileSettings)
         }
+        applyAudioDelay()
         showToastMessage(String(format: t("音频延迟: %.0f ms"), audioDelayMs))
     }
 
@@ -978,10 +1016,22 @@ final class PlayerViewModel: NSObject, ObservableObject {
             fileSettings.audioDelayMs = 0
             saveFileSettings(for: url, fileSettings)
         }
+        applyAudioDelay()
         showToastMessage(t("音频延迟: 已重置"))
     }
 
-    func applyAudioDelay() {}
+    func applyAudioDelay() {
+        guard let url = currentFileURL else { return }
+        let resumeAt = currentTime > 0 && currentTime < duration ? currentTime : nil
+        let wasPaused = isPaused
+
+        if audioDelayMs != 0, playbackBackend == .native {
+            selectBackend(.vlc)
+            loadVLC(url: url, resumeAt: resumeAt, startPaused: wasPaused)
+        } else if playbackBackend == .vlc {
+            vlcPlayer.setAudioDelay(audioDelayMs)
+        }
+    }
 
     func refreshPreferences() {
         let settings = Self.loadSettings()
@@ -1023,6 +1073,10 @@ final class PlayerViewModel: NSObject, ObservableObject {
 
     func switchPlaybackBackend() {
         guard let url = currentFileURL else { return }
+        if playbackBackend == .vlc && (audioDelayMs != 0 || selectedSubtitlePath != nil) {
+            showToastMessage(t("当前字幕或音频延迟需要使用 VLC 播放后端"))
+            return
+        }
         let resumeAt = currentTime > 0 && currentTime < duration ? currentTime : nil
         let wasPaused = isPaused
         let newBackend: PlaybackBackend = playbackBackend == .native ? .vlc : .native
@@ -1032,13 +1086,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         case .native:
             openWithNative(url: url, resumeAt: resumeAt, startPaused: wasPaused)
         case .vlc:
-            vlcPlayer.setSpeed(speed)
-            vlcPlayer.load(url: url, resumeAt: resumeAt)
-            if wasPaused {
-                vlcPlayer.pause()
-            } else {
-                vlcPlayer.play()
-            }
+            loadVLC(url: url, resumeAt: resumeAt, startPaused: wasPaused)
         }
     }
 
@@ -1085,9 +1133,8 @@ final class PlayerViewModel: NSObject, ObservableObject {
 
         Task {
             let text = await buildFileInfoText(url: url)
-            await MainActor.run {
-                self.onShowFileInfo?(text)
-            }
+            guard self.currentFileURL == url else { return }
+            self.onShowFileInfo?(text)
         }
     }
 
@@ -1117,16 +1164,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
             return
         }
 
-        forceRefreshAssociationCache(typeMappings: typeMappings, bundleID: bundleID as String)
-        let finalVerification = verifyAssociations(typeMappings: typeMappings, bundleID: bundleID as String)
-
-        if finalVerification.failed.isEmpty {
-            fileAssociationStatus = String(format: t("已强制刷新并关联：%@"), finalVerification.associated.joined(separator: ", "))
-        } else if finalVerification.associated.isEmpty {
-            fileAssociationStatus = String(format: t("关联失败：%@；请确认程序位于 /Applications/BZPlayer.app"), finalVerification.failed.joined(separator: ", "))
-        } else {
-            fileAssociationStatus = String(format: t("部分成功，已关联：%@；失败：%@；请确认程序位于 /Applications/BZPlayer.app"), finalVerification.associated.joined(separator: ", "), finalVerification.failed.joined(separator: ", "))
-        }
+        fileAssociationStatus = String(format: t("关联失败：%@；请确认程序位于 /Applications/BZPlayer.app"), initialVerification.failed.joined(separator: ", "))
     }
 
     private func verifyAssociations(typeMappings: [(ext: String, type: UTType)], bundleID: String) -> (associated: [String], failed: [String]) {
@@ -1143,45 +1181,6 @@ final class PlayerViewModel: NSObject, ObservableObject {
             }
         }
         return (associated, failed)
-    }
-
-    private func forceRefreshAssociationCache(typeMappings: [(ext: String, type: UTType)], bundleID: String) {
-        let typeIDs = typeMappings.map(\.type.identifier)
-        let python = """
-import os, plistlib, time
-path = os.path.expanduser('~/Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.secure.plist')
-bundle_id = \(bundleID.debugDescription)
-targets = set(\(typeIDs.debugDescription))
-with open(path, 'rb') as f:
-    data = plistlib.load(f)
-handlers = data.get('LSHandlers', [])
-filtered = [h for h in handlers if h.get('LSHandlerContentType') not in targets]
-now = int(time.time())
-prefix = []
-for content_type in sorted(targets):
-    prefix.append({
-        'LSHandlerContentType': content_type,
-        'LSHandlerRoleAll': bundle_id,
-        'LSHandlerRoleViewer': bundle_id,
-        'LSHandlerModificationDate': now,
-        'LSHandlerPreferredVersions': {'LSHandlerRoleAll': '-', 'LSHandlerRoleViewer': '-'},
-    })
-data['LSHandlers'] = prefix + filtered
-with open(path, 'wb') as f:
-    plistlib.dump(data, f, fmt=plistlib.FMT_BINARY)
-"""
-        let shellScript = """
-/usr/bin/python3 - <<'PY'
-\(python)
-PY
-killall cfprefsd >/dev/null 2>&1 || true
-killall lsd >/dev/null 2>&1 || true
-"""
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = ["-lc", shellScript]
-        try? process.run()
-        process.waitUntilExit()
     }
 
     private func bindVLCCallbacks() {
@@ -1212,7 +1211,7 @@ killall lsd >/dev/null 2>&1 || true
             self.playbackEngineStatus = status
         }
         vlcPlayer.onEndReached = { [weak self] in
-            guard let self, self.playbackBackend == .vlc else { return }
+            guard let self, self.playbackBackend == .vlc, self.currentFileURL != nil else { return }
             self.handlePlaybackFinished()
         }
     }
@@ -1234,7 +1233,11 @@ killall lsd >/dev/null 2>&1 || true
                         if self.nativeStallCount > 30 { // ~3 seconds stall
                             self.nativeStallCount = 0
                             print("检测到原生播放器卡死 (Position: \(seconds))，切至 VLC 内核...")
-                            self.selectBackend(.vlc)
+                            if let url = self.currentFileURL {
+                                let resumeAt = seconds.isFinite ? seconds : nil
+                                self.selectBackend(.vlc)
+                                self.loadVLC(url: url, resumeAt: resumeAt)
+                            }
                         }
                     } else {
                         self.nativeStallCount = 0
@@ -1262,7 +1265,7 @@ killall lsd >/dev/null 2>&1 || true
                 guard let self, self.playbackBackend == .native else { return }
                 let notificationItem = notification.object as? AVPlayerItem
                 let currentItem = self.nativePlayer.currentItem
-                print("[BZPlayer] Native player did play to end time - notification item: \(String(describing: notificationItem)), current item: \(String(describing: currentItem)), match: \(notificationItem === currentItem)")
+                guard let notificationItem, notificationItem === currentItem else { return }
                 self.handlePlaybackFinished()
             }
         }
@@ -1294,6 +1297,7 @@ killall lsd >/dev/null 2>&1 || true
             syncText = "播放链路：VLC/libvlc"
             vlcPlayer.setVolume(volume)
             vlcPlayer.setMuted(isMuted)
+            vlcPlayer.setAudioDelay(audioDelayMs)
         }
     }
 
@@ -1352,27 +1356,68 @@ killall lsd >/dev/null 2>&1 || true
 
         let resumeTime = forceStartAtBeginning ? nil : loadSavedProgress(for: url)
         debugLog("[BZPlayer] resumeTime: \(resumeTime ?? -1)")
-        let ffprobeInfo = probeMediaInfo(url: url)
-        let backend = chooseBackend(for: url, ffprobeInfo: ffprobeInfo)
-        debugLog("[BZPlayer] Selected backend: \(backend)")
-        selectBackend(backend)
+        mediaAnalysisTask?.cancel()
+        let generation = UUID()
+        mediaOpenGeneration = generation
+        selectBackend(.native)
 
-        switch backend {
-        case .native:
-            let needsNativeWarmupReload = shouldRefreshNativeVideoSurface(url: url, ffprobeInfo: ffprobeInfo)
-            openWithNative(
-                url: url,
-                resumeAt: resumeTime,
-                refreshVideoSurfaceAfterReady: needsNativeWarmupReload,
-                reloadItemAfterReady: needsNativeWarmupReload
-            )
-        case .vlc:
-            vlcPlayer.setSpeed(speed)
-            vlcPlayer.load(url: url, resumeAt: resumeTime)
+        mediaAnalysisTask = Task { @MainActor [weak self] in
+            let ffprobeInfo = await probeMediaInfo(url: url)
+            guard !Task.isCancelled, let self else { return }
+            let backend = await self.chooseBackend(for: url, ffprobeInfo: ffprobeInfo)
+            guard !Task.isCancelled,
+                  self.mediaOpenGeneration == generation,
+                  self.currentFileURL == url else { return }
+
+            self.currentNominalFPS = self.estimateFPS(for: url, ffprobeInfo: ffprobeInfo)
+            debugLog("[BZPlayer] Selected backend: \(backend)")
+            self.selectBackend(backend)
+
+            switch backend {
+            case .native:
+                let needsNativeWarmupReload = self.shouldRefreshNativeVideoSurface(url: url, ffprobeInfo: ffprobeInfo)
+                self.openWithNative(
+                    url: url,
+                    resumeAt: resumeTime,
+                    refreshVideoSurfaceAfterReady: needsNativeWarmupReload,
+                    reloadItemAfterReady: needsNativeWarmupReload
+                )
+            case .vlc:
+                self.loadVLC(url: url, resumeAt: resumeTime)
+            }
+
+            self.schedulePlaybackFailureCheck(for: url, backend: backend, resumeAt: resumeTime)
+            self.mediaAnalysisTask = nil
+        }
+    }
+
+    private func loadVLC(url: URL, resumeAt: Double?, startPaused: Bool = false) {
+        vlcPlayer.setSpeed(speed)
+        vlcPlayer.load(
+            url: url,
+            resumeAt: resumeAt,
+            audioDelayMs: audioDelayMs,
+            subtitleFontSize: subtitleFontSize,
+            subtitleBackgroundOpacity: subtitleBackgroundOpacity
+        )
+        vlcPlayer.setAudioDelay(audioDelayMs)
+        if startPaused {
+            vlcPlayer.pause()
+        } else {
             vlcPlayer.play()
         }
+    }
 
-        schedulePlaybackFailureCheck(for: url, backend: backend, resumeAt: resumeTime)
+    private func reloadVLCMediaIfNeeded() {
+        guard playbackBackend == .vlc, currentFileURL != nil else { return }
+        let resumeAt = currentTime > 0 && currentTime < duration ? currentTime : nil
+        vlcPlayer.reloadCurrentMedia(
+            resumeAt: resumeAt,
+            startPaused: isPaused,
+            audioDelayMs: audioDelayMs,
+            subtitleFontSize: subtitleFontSize,
+            subtitleBackgroundOpacity: subtitleBackgroundOpacity
+        )
     }
 
     private func schedulePlaybackFailureCheck(for url: URL, backend: PlaybackBackend, resumeAt: Double?) {
@@ -1399,9 +1444,7 @@ killall lsd >/dev/null 2>&1 || true
             case .native:
                 openWithNative(url: url, resumeAt: resumeAt, refreshVideoSurfaceAfterReady: shouldRefreshNativeVideoSurface(url: url))
             case .vlc:
-                vlcPlayer.setSpeed(speed)
-                vlcPlayer.load(url: url, resumeAt: resumeAt)
-                vlcPlayer.play()
+                loadVLC(url: url, resumeAt: resumeAt)
             }
 
             schedulePlaybackFailureCheck(for: url, backend: newBackend, resumeAt: resumeAt)
@@ -1428,7 +1471,9 @@ killall lsd >/dev/null 2>&1 || true
         nativeItemStatusObserver = item.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in
             guard let self else { return }
             Task { @MainActor [weak self] in
-                guard let self, self.playbackBackend == .native else { return }
+                guard let self,
+                      self.playbackBackend == .native,
+                      item === self.nativePlayer.currentItem else { return }
                 if item.status == .readyToPlay {
                     let seconds = item.duration.seconds
                     self.duration = seconds.isFinite ? max(0, seconds) : 0
@@ -1462,7 +1507,7 @@ killall lsd >/dev/null 2>&1 || true
         nativePlayer.replaceCurrentItem(with: item)
     }
 
-    private func chooseBackend(for url: URL, ffprobeInfo: FFprobeInfo? = nil) -> PlaybackBackend {
+    private func chooseBackend(for url: URL, ffprobeInfo: FFprobeInfo? = nil) async -> PlaybackBackend {
         // MKV, AVI and other containers are not natively supported by AVPlayer on macOS
         let nonNativeContainers: Set<String> = [
             "mkv", "avi", "flv", "wmv", "webm", "rmvb", "ts", "mpeg", "mpg",
@@ -1471,12 +1516,15 @@ killall lsd >/dev/null 2>&1 || true
         if nonNativeContainers.contains(url.pathExtension.lowercased()) {
             return .vlc
         }
+        if audioDelayMs != 0 || selectedSubtitlePath != nil {
+            return .vlc
+        }
         if let ffprobeInfo {
             if shouldPreferVLC(ffprobeInfo: ffprobeInfo) {
                 return .vlc
             }
             if ffprobeInfo.videoStreams.contains(where: { $0.codecName == "h264" }),
-               hasVideoDecodeErrors(url: url, scanSeconds: 20) {
+               await hasVideoDecodeErrors(url: url, scanSeconds: 20) {
                 debugLog("[BZPlayer] Detected video decode errors, using VLC/libvlc: \(url.lastPathComponent)")
                 return .vlc
             }
@@ -1489,7 +1537,7 @@ killall lsd >/dev/null 2>&1 || true
             "h264", "hevc", "mpeg4", "mjpeg", "prores", "jpeg2000", "dvvideo", "h263", "av1", "vp9"
         ]
         
-        // VP9 may be supported on modern macOS in MP4/WebM containers, but WebM is usually routed to mpv due to container check.
+        // VP9 may be supported on modern macOS in MP4/WebM containers, but WebM is usually routed to VLC due to container check.
         // AVC/HEVC tags like avc1, hvc1, hev1 are natively supported.
         let nativeUnsafeVideoTags: Set<String> = []
 
@@ -1648,7 +1696,7 @@ killall lsd >/dev/null 2>&1 || true
         openFromPlaylist(playlist[next])
     }
 
-    private func estimateFPS(for url: URL) -> Double {
+    private func estimateFPS(for url: URL, ffprobeInfo: FFprobeInfo? = nil) -> Double {
         let asset = AVURLAsset(url: url)
         if let track = asset.tracks(withMediaType: .video).first {
             let fps = Double(track.nominalFrameRate)
@@ -1656,7 +1704,7 @@ killall lsd >/dev/null 2>&1 || true
                 return fps
             }
         }
-        if let ffprobeInfo = probeMediaInfo(url: url),
+        if let ffprobeInfo,
            let summary = ffprobeInfo.videoStreams.first?.summary,
            let fps = parseFPS(fromFFprobeSummary: summary) {
             return fps
@@ -1954,8 +2002,8 @@ killall lsd >/dev/null 2>&1 || true
             let durationTime = try await asset.load(.duration)
             let tracks = try await asset.load(.tracks)
             let fileSizeBytes = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize
-            let ffprobeInfo = probeMediaInfo(url: url)
-            let recommendedBackend = chooseBackend(for: url, ffprobeInfo: ffprobeInfo)
+            let ffprobeInfo = await probeMediaInfo(url: url)
+            let recommendedBackend = await chooseBackend(for: url, ffprobeInfo: ffprobeInfo)
 
             var lines: [String] = []
             lines.append("文件：\(url.lastPathComponent)")

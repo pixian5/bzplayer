@@ -20,6 +20,10 @@ final class VLCPlayer: NSObject {
     private var didFireFileLoaded = false
     private var wasPlayingBeforeSeek: Bool?
     private var pendingPlayTask: Task<Void, Never>?
+    private var currentURL: URL?
+    private var configuredAudioDelayMs: Double = 0
+    private var configuredSubtitleFontSize = 55
+    private var configuredSubtitleBackgroundOpacity = 0
     private weak var currentAttachedView: VLCVideoView?
 
     override init() {
@@ -36,6 +40,7 @@ final class VLCPlayer: NSObject {
     }
 
     deinit {
+        pendingPlayTask?.cancel()
         if let t = timeObserverToken { NotificationCenter.default.removeObserver(t) }
         if let t = stateObserverToken { NotificationCenter.default.removeObserver(t) }
     }
@@ -46,12 +51,25 @@ final class VLCPlayer: NSObject {
         mediaPlayer.drawable = view
     }
 
-    func load(url: URL, resumeAt: Double?) {
+    func load(
+        url: URL,
+        resumeAt: Double?,
+        audioDelayMs: Double = 0,
+        subtitleFontSize: Int = 55,
+        subtitleBackgroundOpacity: Int = 0
+    ) {
+        cancelPendingPlay()
         pendingResumeAt = resumeAt
         didFireFileLoaded = false
+        currentURL = url
+        configuredAudioDelayMs = audioDelayMs
+        configuredSubtitleFontSize = max(1, subtitleFontSize)
+        configuredSubtitleBackgroundOpacity = min(max(subtitleBackgroundOpacity, 0), 100)
         let media = VLCMedia(url: url)
         media.addOption(":subsdec-encoding=GB18030")
         media.addOption(":freetype-font=/System/Library/Fonts/STHeiti Light.ttc")
+        media.addOption(":freetype-rel-fontsize=\(configuredSubtitleFontSize)")
+        media.addOption(":freetype-background-opacity=\(configuredSubtitleBackgroundOpacity * 255 / 100)")
         media.addOption(":avcodec-hw=any")
         media.addOption(":codec=videotoolbox")
         currentMedia = media
@@ -59,24 +77,29 @@ final class VLCPlayer: NSObject {
     }
 
     func play() {
+        cancelPendingPlay()
         mediaPlayer.play()
     }
 
     func pause() {
+        cancelPendingPlay()
         mediaPlayer.pause()
     }
 
     func stop() {
+        cancelPendingPlay()
         mediaPlayer.stop()
         mediaPlayer.media = nil
         currentMedia = nil
+        currentURL = nil
+        pendingResumeAt = nil
     }
 
     func seek(seconds: Double) {
         guard seconds >= 0 else { return }
         let ms = Int32(clamping: Int(seconds * 1000))
         
-        pendingPlayTask?.cancel()
+        cancelPendingPlay(resetSeekState: false)
         
         if wasPlayingBeforeSeek == nil {
             wasPlayingBeforeSeek = mediaPlayer.isPlaying
@@ -92,6 +115,7 @@ final class VLCPlayer: NSObject {
                     guard let self else { return }
                     self.mediaPlayer.play()
                     self.wasPlayingBeforeSeek = nil
+                    self.pendingPlayTask = nil
                 } catch {
                     // Task cancelled
                 }
@@ -114,12 +138,35 @@ final class VLCPlayer: NSObject {
         mediaPlayer.audio?.isMuted = muted
     }
 
-    func setHardwareDecodingEnabled(_ enabled: Bool) {
-        // VLC manages hardware decoding internally
+    func setAudioDelay(_ delayMs: Double) {
+        configuredAudioDelayMs = delayMs
+        mediaPlayer.currentAudioPlaybackDelay = Int((delayMs * 1_000).rounded())
     }
 
-    func setSubtitleBackgroundOpacity(_ percent: Int) {
-        // VLC subtitle styling not directly settable via this API
+    func reloadCurrentMedia(
+        resumeAt: Double?,
+        startPaused: Bool,
+        audioDelayMs: Double,
+        subtitleFontSize: Int,
+        subtitleBackgroundOpacity: Int
+    ) {
+        guard let currentURL else { return }
+        load(
+            url: currentURL,
+            resumeAt: resumeAt,
+            audioDelayMs: audioDelayMs,
+            subtitleFontSize: subtitleFontSize,
+            subtitleBackgroundOpacity: subtitleBackgroundOpacity
+        )
+        if startPaused {
+            mediaPlayer.pause()
+        } else {
+            mediaPlayer.play()
+        }
+    }
+
+    func setHardwareDecodingEnabled(_ enabled: Bool) {
+        // VLC manages hardware decoding internally
     }
 
     func setExternalSubtitle(url: URL) {
@@ -231,6 +278,7 @@ final class VLCPlayer: NSObject {
     }
 
     private func handleTimeChanged() {
+        mediaPlayer.currentAudioPlaybackDelay = Int((configuredAudioDelayMs * 1_000).rounded())
         let ms = mediaPlayer.time.value?.doubleValue ?? 0
         let seconds = ms / 1000.0
         onTimeChanged?(seconds)
@@ -254,6 +302,14 @@ final class VLCPlayer: NSObject {
             pendingResumeAt = nil
             let ms = Int32(clamping: Int(resumeAt * 1000))
             mediaPlayer.time = VLCTime(int: ms)
+        }
+    }
+
+    private func cancelPendingPlay(resetSeekState: Bool = true) {
+        pendingPlayTask?.cancel()
+        pendingPlayTask = nil
+        if resetSeekState {
+            wasPlayingBeforeSeek = nil
         }
     }
 
