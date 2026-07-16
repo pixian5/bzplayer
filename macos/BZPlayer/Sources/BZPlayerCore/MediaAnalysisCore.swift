@@ -109,7 +109,7 @@ public func parseFPS(fromFFprobeSummary summary: String) -> Double? {
 }
 
 public func formatBitrate(_ bitsPerSecond: Float) -> String {
-    guard bitsPerSecond > 0 else { return "未知" }
+    guard bitsPerSecond.isFinite, bitsPerSecond > 0 else { return "未知" }
     let mbps = Double(bitsPerSecond) / 1_000_000
     if mbps >= 1 {
         return String(format: "%.2f Mbps", mbps)

@@ -274,6 +274,9 @@ struct SettingsView: View {
         .onChange(of: viewModel.numericKeySpeeds) { _ in
             syncNumericKeySpeedFields()
         }
+        .onReceive(NotificationCenter.default.publisher(for: PlayerViewModel.preferencesDidChangeNotification)) { _ in
+            viewModel.refreshPreferences()
+        }
         .onExitCommand {
             NSApp.keyWindow?.close()
         }

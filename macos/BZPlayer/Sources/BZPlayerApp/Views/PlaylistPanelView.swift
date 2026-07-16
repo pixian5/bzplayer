@@ -160,6 +160,10 @@ struct PlaylistPanelView: View {
                 stopFlagsMonitor()
             }
         }
+        .onDisappear {
+            stopFlagsMonitor()
+            hoveredPlaylistIndex = nil
+        }
     }
 
     // MARK: - 选中状态管理

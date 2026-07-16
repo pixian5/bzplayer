@@ -217,6 +217,8 @@ final class ClickCaptureView: NSView {
     }
 
     deinit {
+        pendingSingleClick?.cancel()
+        speedRepeatTimer?.invalidate()
         if let monitor = keyDownMonitor {
             NSEvent.removeMonitor(monitor)
         }

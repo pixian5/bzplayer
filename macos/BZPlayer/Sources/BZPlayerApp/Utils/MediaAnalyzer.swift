@@ -94,14 +94,29 @@ private func hasVideoDecodeErrorsSynchronously(url: URL, scanSeconds: Int) -> Bo
         "-"
     ]
 
-    let stderr = Pipe()
+    let stderrURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent("BZPlayer-ffmpeg-\(UUID().uuidString).log")
+    guard FileManager.default.createFile(atPath: stderrURL.path, contents: nil) else {
+        return false
+    }
+    defer { try? FileManager.default.removeItem(at: stderrURL) }
+
+    let stderrHandle: FileHandle
+    do {
+        stderrHandle = try FileHandle(forWritingTo: stderrURL)
+    } catch {
+        return false
+    }
+    defer { try? stderrHandle.close() }
+
     process.standardOutput = FileHandle.nullDevice
-    process.standardError = stderr
+    process.standardError = stderrHandle
 
     do {
         try process.run()
-        let data = stderr.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
+        try? stderrHandle.close()
+        let data = try Data(contentsOf: stderrURL)
         guard let output = String(data: data, encoding: .utf8)?.lowercased(), !output.isEmpty else {
             return false
         }
@@ -123,10 +138,15 @@ func codecDescription(from formatDescription: Any?, mediaType: String) -> String
     guard let formatDescription else {
         return "未知（\(mediaType)格式描述不可用）"
     }
-    let subtype = CMFormatDescriptionGetMediaSubType(formatDescription as! CMFormatDescription)
+    let cfDescription = formatDescription as CFTypeRef
+    guard CFGetTypeID(cfDescription) == CMFormatDescriptionGetTypeID() else {
+        return "未知（\(mediaType)格式描述不可用）"
+    }
+    let subtype = CMFormatDescriptionGetMediaSubType(cfDescription as! CMFormatDescription)
     return "\(fourCCString(subtype)) (\(subtype))"
 }
 func formatSeconds(_ time: Double) -> String {
+    guard time.isFinite, time >= 0 else { return "00:00" }
     let total = Int(time)
     let s = total % 60
     let m = (total / 60) % 60

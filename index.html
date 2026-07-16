@@ -183,6 +183,10 @@
     }
 
     function syncCheck() {
+      if (isSeeking || video.seeking) {
+        resetSyncClock();
+        return;
+      }
       if (video.paused || !Number.isFinite(video.currentTime)) {
         syncLabel.textContent = "音画同步：稳定";
         syncLabel.classList.add("sync-ok");
@@ -226,6 +230,23 @@
       lastWallClock = now;
     }
 
+    function resetSyncClock() {
+      lastMediaTime = Number.isFinite(video.currentTime) ? video.currentTime : 0;
+      lastWallClock = performance.now();
+    }
+
+    function handleMediaError() {
+      const errorMessages = {
+        1: "加载已取消",
+        2: "媒体网络读取失败",
+        3: "媒体解码失败",
+        4: "浏览器不支持此媒体格式"
+      };
+      const code = video.error?.code;
+      showHint(errorMessages[code] || "媒体加载失败，请选择其他文件");
+      updatePlayPauseText();
+    }
+
     function togglePlayPause() {
       if (!video.src) return;
       if (video.paused) {
@@ -260,9 +281,15 @@
     fileInput.addEventListener("change", () => {
       const file = fileInput.files?.[0];
       if (!file) return;
+      fileInput.value = "";
+      video.pause();
+      video.removeAttribute("src");
+      video.load();
       if (objectUrl) URL.revokeObjectURL(objectUrl);
       objectUrl = URL.createObjectURL(file);
       video.src = objectUrl;
+      seekBar.value = "0";
+      resetSyncClock();
       video.load();
       video.play().catch(() => showHint("浏览器拦截了自动播放，请手动点击播放"));
     });
@@ -272,16 +299,30 @@
     video.addEventListener("dblclick", () => toggleFullscreen());
     video.addEventListener("play", updatePlayPauseText);
     video.addEventListener("pause", updatePlayPauseText);
-    video.addEventListener("ratechange", syncCheck);
-    video.addEventListener("seeking", syncCheck);
+    video.addEventListener("ratechange", resetSyncClock);
+    video.addEventListener("seeking", resetSyncClock);
+    video.addEventListener("seeked", resetSyncClock);
+    video.addEventListener("error", handleMediaError);
     video.addEventListener("loadedmetadata", () => {
       updatePlayPauseText();
       if (!progressUpdateFrameId) updateProgress();
-      syncCheck();
+      resetSyncClock();
     });
 
-    seekBar.addEventListener("pointerdown", () => { isSeeking = true; });
-    seekBar.addEventListener("pointerup", () => { isSeeking = false; });
+    seekBar.addEventListener("pointerdown", (event) => {
+      isSeeking = true;
+      seekBar.setPointerCapture?.(event.pointerId);
+    });
+    const stopSeeking = (event) => {
+      isSeeking = false;
+      if (seekBar.hasPointerCapture?.(event.pointerId)) {
+        seekBar.releasePointerCapture(event.pointerId);
+      }
+      resetSyncClock();
+    };
+    seekBar.addEventListener("pointerup", stopSeeking);
+    seekBar.addEventListener("pointercancel", stopSeeking);
+    seekBar.addEventListener("lostpointercapture", stopSeeking);
     seekBar.addEventListener("input", () => {
       if (!Number.isFinite(video.duration) || video.duration <= 0) return;
       const ratio = Number(seekBar.value) / 1000;
@@ -290,7 +331,7 @@
     });
 
     speedControls.addEventListener("click", (event) => {
-      const target = event.target.closest("[data-speed]");
+      const target = event.target instanceof Element ? event.target.closest("[data-speed]") : null;
       if (!target) return;
       setSpeed(Number(target.dataset.speed));
       syncCheck();
@@ -329,6 +370,9 @@
     });
 
     function releaseResources() {
+      video.pause();
+      video.removeAttribute("src");
+      video.load();
       if (objectUrl) URL.revokeObjectURL(objectUrl);
       if (progressUpdateFrameId) cancelAnimationFrame(progressUpdateFrameId);
       if (frameCallbackId && typeof video.cancelVideoFrameCallback === "function") {
@@ -342,7 +386,9 @@
     }
 
     window.addEventListener("beforeunload", releaseResources);
-    window.addEventListener("pagehide", releaseResources);
+    window.addEventListener("pagehide", (event) => {
+      if (!event.persisted) releaseResources();
+    });
 
     setSpeed(1);
     updatePlayPauseText();

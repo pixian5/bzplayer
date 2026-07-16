@@ -76,12 +76,6 @@ struct InputDispatcher {
         case 39: // Quote '
             // 在 ClickCaptureView 中处理长按
             return true
-        case 27: // Left bracket [
-            viewModel.adjustAudioDelay(by: -50)
-            return true
-        case 29: // Right bracket ]
-            viewModel.adjustAudioDelay(by: 50)
-            return true
         default:
             break
         }

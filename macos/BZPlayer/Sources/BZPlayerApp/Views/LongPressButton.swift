@@ -35,6 +35,10 @@ final class LongPressButton: NSButton {
         fatalError("init(coder:) has not been implemented")
     }
 
+    deinit {
+        timer?.invalidate()
+    }
+
     func updateLabel(_ label: String) {
         self.title = label
     }
@@ -57,6 +61,7 @@ final class LongPressButton: NSButton {
     }
 
     override func mouseDown(with event: NSEvent) {
+        timer?.invalidate()
         // 立即执行一次
         onAdjust?(delta)
 

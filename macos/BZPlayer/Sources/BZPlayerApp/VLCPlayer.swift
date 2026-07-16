@@ -97,7 +97,7 @@ final class VLCPlayer: NSObject {
 
     func seek(seconds: Double) {
         guard seconds >= 0 else { return }
-        let ms = Int32(clamping: Int(seconds * 1000))
+        let ms = milliseconds(for: seconds)
         
         cancelPendingPlay(resetSeekState: false)
         
@@ -127,11 +127,14 @@ final class VLCPlayer: NSObject {
     }
 
     func setSpeed(_ speed: Double) {
+        guard speed.isFinite else { return }
         mediaPlayer.rate = Float(speed)
     }
 
     func setVolume(_ volume: Double) {
-        mediaPlayer.audio?.volume = Int32(clamping: Int(volume.rounded()))
+        guard volume.isFinite else { return }
+        let normalized = min(max(volume, 0), 100)
+        mediaPlayer.audio?.volume = Int32(clamping: Int(normalized.rounded()))
     }
 
     func setMuted(_ muted: Bool) {
@@ -139,8 +142,16 @@ final class VLCPlayer: NSObject {
     }
 
     func setAudioDelay(_ delayMs: Double) {
+        guard delayMs.isFinite else { return }
         configuredAudioDelayMs = delayMs
-        mediaPlayer.currentAudioPlaybackDelay = Int((delayMs * 1_000).rounded())
+        let microseconds = (delayMs * 1_000).rounded()
+        if microseconds >= Double(Int.max) {
+            mediaPlayer.currentAudioPlaybackDelay = Int.max
+        } else if microseconds <= Double(Int.min) {
+            mediaPlayer.currentAudioPlaybackDelay = Int.min
+        } else {
+            mediaPlayer.currentAudioPlaybackDelay = Int(microseconds)
+        }
     }
 
     func reloadCurrentMedia(
@@ -278,7 +289,7 @@ final class VLCPlayer: NSObject {
     }
 
     private func handleTimeChanged() {
-        mediaPlayer.currentAudioPlaybackDelay = Int((configuredAudioDelayMs * 1_000).rounded())
+        setAudioDelay(configuredAudioDelayMs)
         let ms = mediaPlayer.time.value?.doubleValue ?? 0
         let seconds = ms / 1000.0
         onTimeChanged?(seconds)
@@ -291,18 +302,24 @@ final class VLCPlayer: NSObject {
             }
         }
 
-        // Fire onFileLoaded once when playback has started and time is advancing
-        if !didFireFileLoaded && seconds > 0 {
-            didFireFileLoaded = true
-            onFileLoaded?()
-        }
+        fireFileLoadedIfReady()
 
         // Seek to resume position after first time tick
         if let resumeAt = pendingResumeAt, resumeAt > 0, seconds >= 0 {
             pendingResumeAt = nil
-            let ms = Int32(clamping: Int(resumeAt * 1000))
+            let ms = milliseconds(for: resumeAt)
             mediaPlayer.time = VLCTime(int: ms)
         }
+    }
+
+    private func milliseconds(for seconds: Double) -> Int32 {
+        let milliseconds = seconds * 1_000
+        guard milliseconds.isFinite else {
+            return seconds.sign == .minus ? Int32.min : Int32.max
+        }
+        if milliseconds >= Double(Int32.max) { return Int32.max }
+        if milliseconds <= Double(Int32.min) { return Int32.min }
+        return Int32(milliseconds.rounded())
     }
 
     private func cancelPendingPlay(resetSeekState: Bool = true) {
@@ -313,13 +330,23 @@ final class VLCPlayer: NSObject {
         }
     }
 
+    private func fireFileLoadedIfReady() {
+        guard !didFireFileLoaded, currentMedia != nil else { return }
+        let durationMs = currentMedia?.length.value?.doubleValue ?? 0
+        guard durationMs > 0 || mediaPlayer.state == .playing else { return }
+        didFireFileLoaded = true
+        onFileLoaded?()
+    }
+
     private func handleStateChanged() {
         switch mediaPlayer.state {
         case .playing:
+            fireFileLoadedIfReady()
             onPauseChanged?(false)
         case .paused:
+            fireFileLoadedIfReady()
             onPauseChanged?(true)
-        case .ended, .stopped:
+        case .ended:
             onEndReached?()
         case .error:
             onEndReached?()

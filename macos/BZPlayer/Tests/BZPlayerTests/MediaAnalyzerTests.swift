@@ -38,4 +38,10 @@ final class MediaAnalyzerTests: XCTestCase {
         XCTAssertTrue(result?.summary.contains("48000 Hz") == true)
         XCTAssertTrue(result?.summary.contains("语言 zh") == true)
     }
+
+    func testFormatBitrateRejectsNonFiniteValues() {
+        XCTAssertEqual(formatBitrate(.nan), "未知")
+        XCTAssertEqual(formatBitrate(.infinity), "未知")
+        XCTAssertEqual(formatBitrate(1_500_000), "1.50 Mbps")
+    }
 }

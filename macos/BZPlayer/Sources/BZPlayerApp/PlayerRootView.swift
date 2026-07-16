@@ -94,6 +94,15 @@ struct PlayerRootView: View {
         .animation(nil, value: viewModel.showToast)
         .onAppear {
             syncControlsVisibilityWithPlaybackState()
+            if !viewModel.isPaused {
+                acquireSleepAssertion()
+            }
+        }
+        .onDisappear {
+            cancelHide()
+            cancelMouseIdleTimer()
+            restoreCursorIfNeeded()
+            releaseSleepAssertion()
         }
         .onReceive(viewModel.$currentTime) { current in
             guard viewModel.duration > 0 else {

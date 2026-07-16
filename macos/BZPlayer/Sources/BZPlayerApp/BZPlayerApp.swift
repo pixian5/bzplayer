@@ -78,7 +78,7 @@ private struct PlayerWindowRootView: View {
                 viewModel.prepareForWindowClose()
                 appDelegate.unregister(window: window)
             }
-            .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in
+            .onReceive(NotificationCenter.default.publisher(for: PlayerViewModel.preferencesDidChangeNotification)) { _ in
                 viewModel.refreshPreferences()
             }
             .onReceive(viewModel.$openedFilePath) { _ in
@@ -209,7 +209,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor
     func rerouteIfMultipleWindowsDisabled(source: PlayerViewModel) {
         guard !isReroutingOpen else { return }
-        guard shouldAllowMultipleWindows() == false else { return }
+        source.refreshPreferences()
+        guard source.allowMultipleWindows == false else { return }
         cleanupDeadWindowBindings()
 
         guard registeredWindows.count > 1 else { return }
@@ -234,11 +235,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    @MainActor
-    private func shouldAllowMultipleWindows() -> Bool {
-        UserDefaults.standard.object(forKey: "settings.allowMultipleWindows") as? Bool ?? true
-    }
-
     private func createAdditionalPlayerWindow() {
         debugLog("[AppDelegate] Creating additional player window")
         let fileInfoViewModel = FileInfoViewModel()
@@ -258,14 +254,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             object: window,
             queue: .main
         ) { [weak self, weak controller, weak window] _ in
-            guard let self else { return }
-            if let window {
-                self.extraWindowCloseObservers.removeValue(forKey: ObjectIdentifier(window)).map {
-                    NotificationCenter.default.removeObserver($0)
+            Task { @MainActor [weak self, weak controller, weak window] in
+                guard let self else { return }
+                if let window {
+                    self.extraWindowCloseObservers.removeValue(forKey: ObjectIdentifier(window)).map {
+                        NotificationCenter.default.removeObserver($0)
+                    }
                 }
-            }
-            if let controller {
-                self.extraWindowControllers.removeAll { $0 === controller }
+                if let controller {
+                    self.extraWindowControllers.removeAll { $0 === controller }
+                }
             }
         }
         extraWindowCloseObservers[windowID] = observer
