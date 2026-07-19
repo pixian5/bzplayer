@@ -44,6 +44,7 @@ private struct PlayerWindowRootView: View {
                 viewModel.refreshPreferences()
                 appDelegate.setActiveViewModel(viewModel)
                 appDelegate.consumePendingURLsIfNeeded(using: viewModel)
+                appDelegate.startBenchmarkIfNeeded(using: viewModel)
                 viewModel.onShowFileInfo = { content in
                     fileInfoViewModel.content = content
                     fileInfoViewModel.showPanel(language: viewModel.getActiveLanguage())
@@ -90,14 +91,90 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var registeredWindows: [ObjectIdentifier: WeakWindowBinding] = [:]
     private var fallbackCreateWindowTask: DispatchWorkItem?
     private var isReroutingOpen = false
+    private let benchmarkConfiguration = BenchmarkConfiguration.parse(arguments: ProcessInfo.processInfo.arguments)
+    private var benchmarkStarted = false
+    private var benchmarkTask: Task<Void, Never>?
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        benchmarkTask?.cancel()
         JSONWriteQueue.shared.flush()
         return .terminateNow
+    }
+
+    @MainActor
+    func startBenchmarkIfNeeded(using viewModel: PlayerViewModel) {
+        guard let configuration = benchmarkConfiguration, !benchmarkStarted else { return }
+        benchmarkStarted = true
+        benchmarkTask = Task { @MainActor [weak self, viewModel] in
+            guard let self else { return }
+            guard FileManager.default.fileExists(atPath: configuration.mediaURL.path) else {
+                self.writeBenchmarkSignal("error: media file does not exist")
+                NSApp.terminate(nil)
+                return
+            }
+
+            viewModel.openBenchmarkMedia(configuration.mediaURL)
+            viewModel.setBenchmarkSpeed(configuration.speed)
+
+            let readyDeadline = Date().addingTimeInterval(45)
+            while Date() < readyDeadline {
+                guard !Task.isCancelled else { return }
+                if viewModel.currentMediaURL == configuration.mediaURL,
+                   viewModel.duration > 0,
+                   viewModel.playbackError == nil {
+                    break
+                }
+                do {
+                    try await Task.sleep(nanoseconds: 200_000_000)
+                } catch {
+                    return
+                }
+            }
+
+            guard viewModel.currentMediaURL == configuration.mediaURL,
+                  viewModel.duration > 0,
+                  viewModel.playbackError == nil else {
+                self.writeBenchmarkSignal("error: playback did not become ready")
+                NSApp.terminate(nil)
+                return
+            }
+
+            do {
+                try await Task.sleep(nanoseconds: UInt64(configuration.warmup * 1_000_000_000))
+            } catch {
+                return
+            }
+
+            if configuration.mode == .audioOnly {
+                viewModel.enterAudioOnlyModeForBenchmark()
+                do {
+                    try await Task.sleep(nanoseconds: 2_000_000_000)
+                } catch {
+                    return
+                }
+            }
+
+            self.writeBenchmarkSignal("ready mode=\(configuration.mode.rawValue) speed=\(configuration.speed)")
+
+            do {
+                try await Task.sleep(nanoseconds: UInt64(configuration.duration * 1_000_000_000))
+            } catch {
+                return
+            }
+
+            viewModel.prepareForWindowClose()
+            NSApp.terminate(nil)
+        }
+    }
+
+    private func writeBenchmarkSignal(_ message: String) {
+        guard let url = benchmarkConfiguration?.startFileURL else { return }
+        let data = Data("\(Date().timeIntervalSince1970) \(message)\n".utf8)
+        try? data.write(to: url, options: .atomic)
     }
 
     func application(_ sender: NSApplication, openFile filename: String) -> Bool {

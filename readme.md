@@ -30,6 +30,16 @@ zsh scripts/install_macos_app.sh
 
 安装脚本会结束旧的 BZPlayer 进程、重建 `/Applications/BZPlayer.app` 并启动新版本。它默认不会提交 Git；只有明确执行 `zsh scripts/install_macos_app.sh --commit "中文提交说明"` 或 `./deploy.sh --commit "中文提交说明"` 才会提交并推送。
 
+音频模式 A/B 测量：
+
+```bash
+# 建议使用至少 1080p、时长足够长的本地媒体；每种模式运行 3 次。
+bash scripts/measure_audio_only.sh "/path/to/media.mp4" \
+  --runs 3 --warmup 120 --duration 600
+```
+
+脚本会自动运行 normal 和 audio-only 两组，应用在媒体从头播放、倍速固定为 `1x` 且状态稳定后写入测量开始标记，再自动退出。每个 run 会保存 BZPlayer 进程 CPU、`top`、`pmset`、`ioreg` 和可用时的 `powermetrics` 原始数据。两组测试必须保持相同的电源、屏幕亮度、外接显示器、网络和后台负载；短媒体或短时长只能验证流程，不能据此宣称节能。
+
 ## 重大说明
 
 - 该播放器使用 `SwiftUI + AppKit + VLCKit`，**无法在 Ubuntu 直接运行**。

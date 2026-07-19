@@ -622,6 +622,23 @@ final class PlayerViewModel: NSObject, ObservableObject {
         openFromPlaylist(playlist[0])
     }
 
+    func openBenchmarkMedia(_ url: URL) {
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        loadPlaylist(with: url)
+        loopMode = .singleFile
+        openFromPlaylist(url, forceStartAtBeginning: true)
+    }
+
+    func setBenchmarkSpeed(_ value: Double) {
+        speed = Self.normalizeSpeed(value)
+        switch playbackBackend {
+        case .native:
+            nativePlayer.rate = isPaused ? 0 : Float(speed)
+        case .vlc:
+            vlcPlayer.setSpeed(speed)
+        }
+    }
+
     func play() {
         // If playback has reached the very end, restart from beginning
         let isAtVeryEnd = duration > 0 && currentTime >= duration - 0.5
@@ -961,7 +978,15 @@ final class PlayerViewModel: NSObject, ObservableObject {
     }
 
     func enterAudioOnlyModeIfNeeded() {
-        guard audioOnlyWhenMinimized,
+        enterAudioOnlyMode(force: false)
+    }
+
+    func enterAudioOnlyModeForBenchmark() {
+        enterAudioOnlyMode(force: true)
+    }
+
+    private func enterAudioOnlyMode(force: Bool) {
+        guard (force || audioOnlyWhenMinimized),
               !isAudioOnlyMode,
               let url = currentFileURL else { return }
 
@@ -1802,8 +1827,8 @@ final class PlayerViewModel: NSObject, ObservableObject {
         currentIndex = playlist.firstIndex(of: url) ?? -1
         currentTime = 0
         duration = 0
-        currentVideoSize = estimateVideoSize(for: url)
-        currentNominalFPS = estimateFPS(for: url)
+        currentVideoSize = nil
+        currentNominalFPS = 30
         let discoveredSubtitles = discoverSubtitleFiles(for: url)
         selectedSubtitlePath = pickDefaultSubtitle(for: url, from: discoveredSubtitles)?.path
         updateWindowTitle(url.lastPathComponent)
@@ -1846,14 +1871,23 @@ final class PlayerViewModel: NSObject, ObservableObject {
                   self.mediaOpenGeneration == generation,
                   self.currentFileURL == url else { return }
 
-            self.currentMediaHasAV1Video = self.hasAV1Video(url: url, ffprobeInfo: ffprobeInfo)
-            self.currentNominalFPS = self.estimateFPS(for: url, ffprobeInfo: ffprobeInfo)
+            let hasAV1Video = await self.hasAV1Video(url: url, ffprobeInfo: ffprobeInfo)
+            let nominalFPS = await self.estimateFPS(for: url, ffprobeInfo: ffprobeInfo)
+            let videoSize = await self.estimateVideoSize(for: url)
+            guard !Task.isCancelled,
+                  self.mediaOpenGeneration == generation,
+                  self.currentFileURL == url else { return }
+
+            self.currentMediaHasAV1Video = hasAV1Video
+            self.currentNominalFPS = nominalFPS
+            self.currentVideoSize = videoSize
+            self.applyLoadedVideoSizeForCurrentMedia(isFirstOpen: isFirstOpen)
             BZLogger.debug("[BZPlayer] Selected backend: \(backend)")
             self.selectBackend(backend)
 
             switch backend {
             case .native:
-                let needsNativeWarmupReload = self.shouldRefreshNativeVideoSurface(url: url, ffprobeInfo: ffprobeInfo)
+                let needsNativeWarmupReload = await self.shouldRefreshNativeVideoSurface(url: url, ffprobeInfo: ffprobeInfo)
                 self.openWithNative(
                     url: url,
                     resumeAt: resumeTime,
@@ -1915,7 +1949,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         playbackFailureTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: false) { [weak self] _ in
             guard let self else { return }
             Task { @MainActor in
-                self.checkAndHandlePlaybackFailure(
+                await self.checkAndHandlePlaybackFailure(
                     for: url,
                     originalBackend: backend,
                     resumeAt: resumeAt,
@@ -1930,7 +1964,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         originalBackend: PlaybackBackend,
         resumeAt: Double?,
         generation: UUID
-    ) {
+    ) async {
         guard currentFileURL == url,
               playbackBackend == originalBackend,
               mediaOpenGeneration == generation else { return }
@@ -1951,10 +1985,14 @@ final class PlayerViewModel: NSObject, ObservableObject {
 
             switch newBackend {
             case .native:
+                let shouldRefresh = await shouldRefreshNativeVideoSurface(url: url)
+                guard currentFileURL == url,
+                      playbackBackend == newBackend,
+                      mediaOpenGeneration == newGeneration else { return }
                 openWithNative(
                     url: url,
                     resumeAt: resumeAt,
-                    refreshVideoSurfaceAfterReady: shouldRefreshNativeVideoSurface(url: url),
+                    refreshVideoSurfaceAfterReady: shouldRefresh,
                     generation: newGeneration
                 )
             case .vlc:
@@ -2010,7 +2048,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
                     self.syncText = "播放链路：系统原生"
                     self.playbackEngineStatus = "AVPlayer"
                     if let resumeAt, resumeAt > 0 {
-                        self.nativePlayer.seek(to: CMTime(seconds: resumeAt, preferredTimescale: 600))
+                        await self.nativePlayer.seek(to: CMTime(seconds: resumeAt, preferredTimescale: 600))
                     }
                     if startPaused {
                         self.nativePlayer.pause()
@@ -2035,7 +2073,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
                     BZLogger.error("AVPlayerItem failed: \(String(describing: item.error)); switching to VLC")
                     self.playbackFailureTimer?.invalidate()
                     self.playbackFailureTimer = nil
-                    self.checkAndHandlePlaybackFailure(
+                    await self.checkAndHandlePlaybackFailure(
                         for: url,
                         originalBackend: .native,
                         resumeAt: resumeAt,
@@ -2048,7 +2086,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
     }
 
     private func chooseBackend(for url: URL, ffprobeInfo: FFprobeInfo? = nil) async -> PlaybackBackend {
-        if hasAV1Video(url: url, ffprobeInfo: ffprobeInfo) {
+        if await hasAV1Video(url: url, ffprobeInfo: ffprobeInfo) {
             // VLCKit 3.6's bundled dav1d decoder can crash on macOS 26 while AV1 is playing.
             // Prefer AVPlayer and never route this known codec to VLC.
             return .native
@@ -2073,22 +2111,29 @@ final class PlayerViewModel: NSObject, ObservableObject {
                 BZLogger.debug("[BZPlayer] Detected video decode errors, using VLC/libvlc: \(url.lastPathComponent)")
                 return .vlc
             }
+        } else if await shouldPreferVLC(asset: AVURLAsset(url: url)) {
+            return .vlc
         }
         return .native
     }
 
-    private func hasAV1Video(url: URL, ffprobeInfo: FFprobeInfo? = nil) -> Bool {
+    private func hasAV1Video(url: URL, ffprobeInfo: FFprobeInfo? = nil) async -> Bool {
         if ffprobeInfo?.videoStreams.contains(where: { $0.codecName.lowercased() == "av1" }) == true {
             return true
         }
 
         let asset = AVURLAsset(url: url)
         let av1Subtypes: Set<String> = ["av01", "av1 ", "1va "]
-        return asset.tracks(withMediaType: .video).contains { track in
-            track.formatDescriptions.contains { formatDescription in
+        guard let tracks = try? await asset.loadTracks(withMediaType: .video) else { return false }
+        for track in tracks {
+            guard let formatDescriptions = try? await track.load(.formatDescriptions) else { continue }
+            if formatDescriptions.contains(where: { formatDescription in
                 av1Subtypes.contains(codecSubtypeString(from: formatDescription))
+            }) {
+                return true
             }
         }
+        return false
     }
 
     private func reportAV1PlaybackFailure(for url: URL) {
@@ -2132,7 +2177,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         return false
     }
 
-    private func shouldPreferVLC(asset: AVURLAsset) -> Bool {
+    private func shouldPreferVLC(asset: AVURLAsset) async -> Bool {
         let nativeSafeVideoSubtypes: Set<String> = [
             "avc1", "hvc1", "hev1", "mp4v", "jpeg", "mjp2", "apcn", "apcs", "apco", "apch", "ap4h", "dvc ",
             "vp09", "vp9 ", "90pv"
@@ -2143,15 +2188,22 @@ final class PlayerViewModel: NSObject, ObservableObject {
             "opus", "supo"
         ]
 
-        for track in asset.tracks(withMediaType: .video) {
-            for formatDescription in track.formatDescriptions {
+        guard let videoTracks = try? await asset.loadTracks(withMediaType: .video),
+              let audioTracks = try? await asset.loadTracks(withMediaType: .audio) else {
+            return false
+        }
+
+        for track in videoTracks {
+            guard let formatDescriptions = try? await track.load(.formatDescriptions) else { continue }
+            for formatDescription in formatDescriptions {
                 let subtype = codecSubtypeString(from: formatDescription)
                 if !subtype.isEmpty && !nativeSafeVideoSubtypes.contains(subtype) { return true }
             }
         }
 
-        for track in asset.tracks(withMediaType: .audio) {
-            for formatDescription in track.formatDescriptions {
+        for track in audioTracks {
+            guard let formatDescriptions = try? await track.load(.formatDescriptions) else { continue }
+            for formatDescription in formatDescriptions {
                 let subtype = codecSubtypeString(from: formatDescription)
                 if !subtype.isEmpty && !nativeSafeAudioSubtypes.contains(subtype) { return true }
             }
@@ -2167,18 +2219,23 @@ final class PlayerViewModel: NSObject, ObservableObject {
         return fourCCString(subtype).lowercased()
     }
 
-    private func shouldRefreshNativeVideoSurface(url: URL, ffprobeInfo: FFprobeInfo? = nil) -> Bool {
+    private func shouldRefreshNativeVideoSurface(url: URL, ffprobeInfo: FFprobeInfo? = nil) async -> Bool {
         if let ffprobeInfo, ffprobeInfo.videoStreams.contains(where: { $0.codecName == "vp9" }) {
             return true
         }
 
         let asset = AVURLAsset(url: url)
         let vp9Subtypes: Set<String> = ["vp09", "vp9 ", "90pv"]
-        return asset.tracks(withMediaType: .video).contains { track in
-            track.formatDescriptions.contains { formatDescription in
+        guard let tracks = try? await asset.loadTracks(withMediaType: .video) else { return false }
+        for track in tracks {
+            guard let formatDescriptions = try? await track.load(.formatDescriptions) else { continue }
+            if formatDescriptions.contains(where: { formatDescription in
                 vp9Subtypes.contains(codecSubtypeString(from: formatDescription))
+            }) {
+                return true
             }
         }
+        return false
     }
 
     private func refreshNativeVideoSurface(generation: UUID) {
@@ -2290,10 +2347,11 @@ final class PlayerViewModel: NSObject, ObservableObject {
         openFromPlaylist(playlist[next])
     }
 
-    private func estimateFPS(for url: URL, ffprobeInfo: FFprobeInfo? = nil) -> Double {
+    private func estimateFPS(for url: URL, ffprobeInfo: FFprobeInfo? = nil) async -> Double {
         let asset = AVURLAsset(url: url)
-        if let track = asset.tracks(withMediaType: .video).first {
-            let fps = Double(track.nominalFrameRate)
+        if let track = try? await asset.loadTracks(withMediaType: .video).first,
+           let fps = try? await track.load(.nominalFrameRate) {
+            let fps = Double(fps)
             if fps.isFinite, fps > 0 {
                 return fps
             }
@@ -2306,10 +2364,12 @@ final class PlayerViewModel: NSObject, ObservableObject {
         return 30
     }
 
-    private func estimateVideoSize(for url: URL) -> CGSize? {
+    private func estimateVideoSize(for url: URL) async -> CGSize? {
         let asset = AVURLAsset(url: url)
-        if let track = asset.tracks(withMediaType: .video).first {
-            let transformed = track.naturalSize.applying(track.preferredTransform)
+        if let track = try? await asset.loadTracks(withMediaType: .video).first,
+           let size = try? await track.load(.naturalSize),
+           let transform = try? await track.load(.preferredTransform) {
+            let transformed = size.applying(transform)
             let width = abs(transformed.width.rounded())
             let height = abs(transformed.height.rounded())
             if width > 0, height > 0 {
@@ -2467,6 +2527,22 @@ final class PlayerViewModel: NSObject, ObservableObject {
         case .fitLargest:
             // Always resize to fit video
             resizeWindowToLargestFit(attachedWindow)
+        }
+    }
+
+    private func applyLoadedVideoSizeForCurrentMedia(isFirstOpen: Bool) {
+        guard let attachedWindow, currentVideoSize != nil else { return }
+        switch windowOpenBehavior {
+        case .videoSize:
+            resizeWindowToVideoSize(attachedWindow)
+        case .fitLargest:
+            resizeWindowToLargestFit(attachedWindow)
+        case .rememberLast:
+            if isFirstOpen, Self.loadSettings().lastWindowFrame == nil {
+                resizeWindowToLargestFit(attachedWindow)
+            }
+        case .fullscreen, .maximized:
+            break
         }
     }
 
@@ -2629,6 +2705,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
                 let transform = try await videoTrack.load(.preferredTransform)
                 let fps = try await videoTrack.load(.nominalFrameRate)
                 let estimatedBitRate = try await videoTrack.load(.estimatedDataRate)
+                let formatDescriptions = try await videoTrack.load(.formatDescriptions)
 
                 let transformed = size.applying(transform)
                 let width = abs(Int(transformed.width.rounded()))
@@ -2639,7 +2716,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
                 lines.append("分辨率：\(width)x\(height)")
                 lines.append("帧率：\(String(format: "%.3f", fps)) fps")
                 lines.append("码率：\(formatBitrate(estimatedBitRate))")
-                lines.append("编码：\(codecDescription(from: videoTrack.formatDescriptions.first, mediaType: "视频"))")
+                lines.append("编码：\(codecDescription(from: formatDescriptions.first, mediaType: "视频"))")
             }
 
             let audioTracks = tracks.filter { $0.mediaType == .audio }
@@ -2659,10 +2736,11 @@ final class PlayerViewModel: NSObject, ObservableObject {
 
             for (index, audioTrack) in audioTracks.enumerated() {
                 let estimatedBitRate = try await audioTrack.load(.estimatedDataRate)
+                let formatDescriptions = try await audioTrack.load(.formatDescriptions)
                 lines.append("")
                 lines.append("【音频 #\(index + 1)】")
                 lines.append("码率：\(formatBitrate(estimatedBitRate))")
-                if let formatDesc = audioTrack.formatDescriptions.first {
+                if let formatDesc = formatDescriptions.first {
                     let cfDescription = formatDesc as CFTypeRef
                     if CFGetTypeID(cfDescription) == CMFormatDescriptionGetTypeID(),
                        CMFormatDescriptionGetMediaType(cfDescription as! CMFormatDescription) == kCMMediaType_Audio,
@@ -2672,7 +2750,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
                     lines.append("位深：\(asbd.mBitsPerChannel) bit")
                     }
                 }
-                lines.append("编码：\(codecDescription(from: audioTrack.formatDescriptions.first, mediaType: "音频"))")
+                lines.append("编码：\(codecDescription(from: formatDescriptions.first, mediaType: "音频"))")
             }
 
             if let ffprobeInfo {

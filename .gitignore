@@ -3,3 +3,4 @@ app_output.log
 macos/BZPlayer/.build/
 dist/
 release/
+artifacts/
