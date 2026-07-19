@@ -274,7 +274,8 @@ struct SettingsView: View {
         .onChange(of: viewModel.numericKeySpeeds) { _ in
             syncNumericKeySpeedFields()
         }
-        .onReceive(NotificationCenter.default.publisher(for: PlayerViewModel.preferencesDidChangeNotification)) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: PlayerViewModel.preferencesDidChangeNotification)) { notification in
+            guard let source = notification.object as? PlayerViewModel, source !== viewModel else { return }
             viewModel.refreshPreferences()
         }
         .onExitCommand {

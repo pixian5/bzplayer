@@ -184,6 +184,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
     private var attemptedBackendSwitch = false
     private var playbackFailureTimer: Timer?
     private var mediaAnalysisTask: Task<Void, Never>?
+    private var pendingVolumeSaveTask: Task<Void, Never>?
     private var mediaOpenGeneration = UUID()
     private var selectedSubtitlePath: String?
     private let subtitleCleanupTracker = SubtitleCleanupTracker()
@@ -409,11 +410,6 @@ final class PlayerViewModel: NSObject, ObservableObject {
 
         fileAssociationStatus = t("未执行格式关联")
 
-        vlcPlayer.setVolume(volume)
-        vlcPlayer.setMuted(isMuted)
-        nativePlayer.volume = Float(volume / 100.0)
-        nativePlayer.isMuted = isMuted
-
         bindVLCCallbacks()
         bindNativePlayer()
         selectBackend(.native)
@@ -456,7 +452,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         }
         guard let data = try? JSONEncoder().encode(settings) else { return }
         Self.writeJSONAtomically(data, to: Self.settingsURL)
-        NotificationCenter.default.post(name: Self.preferencesDidChangeNotification, object: nil)
+        NotificationCenter.default.post(name: Self.preferencesDidChangeNotification, object: self)
     }
 
     private static var fileSettingsCache: [String: FileSettings]?
@@ -522,6 +518,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
 
     deinit {
         mediaAnalysisTask?.cancel()
+        pendingVolumeSaveTask?.cancel()
         playbackFailureTimer?.invalidate()
         toastHideWorkItem?.cancel()
         for observer in windowFrameObservers {
@@ -627,6 +624,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
     }
 
     func prepareForWindowClose() {
+        flushPendingVolumeSave()
         closeCurrentPlaybackFile(showToast: false)
     }
 
@@ -756,21 +754,17 @@ final class PlayerViewModel: NSObject, ObservableObject {
     func setVolume(_ newVolume: Double) {
         guard newVolume.isFinite else { return }
         volume = Self.normalizeVolume(newVolume)
-        vlcPlayer.setVolume(volume)
-        nativePlayer.volume = Float(volume / 100.0)
-        print("[BZPlayer] setVolume: \(volume), nativePlayer.volume: \(nativePlayer.volume), isMuted: \(isMuted)")
-        if volume > 0 {
+        applyVolumeToActiveBackend()
+        if volume > 0, isMuted {
             isMuted = false
-            vlcPlayer.setMuted(false)
-            nativePlayer.isMuted = false
+            applyMuteToActiveBackend()
         }
-        saveSettings()
+        scheduleVolumeSave()
     }
 
     func toggleMute() {
         isMuted.toggle()
-        vlcPlayer.setMuted(isMuted)
-        nativePlayer.isMuted = isMuted
+        applyMuteToActiveBackend()
         saveSettings()
     }
 
@@ -1184,10 +1178,8 @@ final class PlayerViewModel: NSObject, ObservableObject {
             audioDelayMs = Self.normalizeAudioDelay(settings.audioDelayMs)
             speed = Self.normalizeSpeed(settings.lastUsedSpeed)
         }
-        vlcPlayer.setVolume(volume)
-        vlcPlayer.setMuted(isMuted)
-        nativePlayer.volume = Float(volume / 100.0)
-        nativePlayer.isMuted = isMuted
+        applyVolumeToActiveBackend()
+        applyMuteToActiveBackend()
         if fileAssociationStatus == "未执行格式关联" || fileAssociationStatus == "Formats not associated" || fileAssociationStatus == Localization.translate("未执行格式关联", for: "en") {
             fileAssociationStatus = t("未执行格式关联")
         }
@@ -1446,6 +1438,45 @@ final class PlayerViewModel: NSObject, ObservableObject {
             vlcPlayer.setMuted(isMuted)
             vlcPlayer.setAudioDelay(audioDelayMs)
         }
+    }
+
+    private func applyVolumeToActiveBackend() {
+        switch playbackBackend {
+        case .native:
+            nativePlayer.volume = Float(volume / 100.0)
+        case .vlc:
+            vlcPlayer.setVolume(volume)
+        }
+    }
+
+    private func applyMuteToActiveBackend() {
+        switch playbackBackend {
+        case .native:
+            nativePlayer.isMuted = isMuted
+        case .vlc:
+            vlcPlayer.setMuted(isMuted)
+        }
+    }
+
+    private func scheduleVolumeSave() {
+        pendingVolumeSaveTask?.cancel()
+        pendingVolumeSaveTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: 150_000_000)
+            } catch {
+                return
+            }
+            guard let self, !Task.isCancelled else { return }
+            self.pendingVolumeSaveTask = nil
+            self.saveSettings()
+        }
+    }
+
+    private func flushPendingVolumeSave() {
+        guard pendingVolumeSaveTask != nil else { return }
+        pendingVolumeSaveTask?.cancel()
+        pendingVolumeSaveTask = nil
+        saveSettings()
     }
 
     private func openFromPlaylist(_ url: URL, forceStartAtBeginning: Bool = false) {

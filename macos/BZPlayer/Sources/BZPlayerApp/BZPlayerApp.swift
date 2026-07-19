@@ -78,7 +78,8 @@ private struct PlayerWindowRootView: View {
                 viewModel.prepareForWindowClose()
                 appDelegate.unregister(window: window)
             }
-            .onReceive(NotificationCenter.default.publisher(for: PlayerViewModel.preferencesDidChangeNotification)) { _ in
+            .onReceive(NotificationCenter.default.publisher(for: PlayerViewModel.preferencesDidChangeNotification)) { notification in
+                guard let source = notification.object as? PlayerViewModel, source !== viewModel else { return }
                 viewModel.refreshPreferences()
             }
             .onReceive(viewModel.$openedFilePath) { _ in
