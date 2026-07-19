@@ -35,74 +35,9 @@ struct ControlBarView: View {
                     .font(.system(.body, design: .monospaced))
             }
 
-            HStack(spacing: 10) {
-                Button {
-                    revealControlsAndScheduleHide()
-                    viewModel.openFile()
-                } label: {
-                    Label(viewModel.t("打开文件"), systemImage: "folder")
-                }
-                .keyboardShortcut("o", modifiers: [.command])
-
-                Text(String(format: viewModel.t("当前：%.2fx"), viewModel.speed))
-
-                Spacer(minLength: 12)
-
-                Button {
-                    viewModel.switchPlaybackBackend()
-                } label: {
-                    Label(viewModel.playbackEngineStatus, systemImage: "arrow.triangle.2.circlepath")
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-            }
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    Text(viewModel.t("速度："))
-
-                    ForEach(viewModel.speedCandidates, id: \.self) { speed in
-                        Button("\(speed, specifier: "%g")x") {
-                            revealControlsAndScheduleHide()
-                            viewModel.setSpeed(speed)
-                        }
-                        .buttonStyle(.bordered)
-                        .tint(abs(viewModel.speed - speed) < 0.001 ? .blue : .gray)
-                    }
-
-                    LongPressSpeedButton(label: "-0.25x", delta: -0.25) { delta in
-                        revealControlsAndScheduleHide()
-                        viewModel.adjustSpeed(by: delta)
-                    }
-                    LongPressSpeedButton(label: "+0.25x", delta: 0.25) { delta in
-                        revealControlsAndScheduleHide()
-                        viewModel.adjustSpeed(by: delta)
-                    }
-                }
-                .padding(.vertical, 1)
-            }
-
-            HStack(spacing: 10) {
-                Button {
-                    viewModel.toggleMute()
-                } label: {
-                    Image(systemName: viewModel.isMuted || viewModel.volume == 0 ? "speaker.slash.fill" : "speaker.wave.2.fill")
-                        .foregroundStyle(.white)
-                }
-                .buttonStyle(.plain)
-
-                Slider(value: Binding(
-                    get: { viewModel.volume },
-                    set: { viewModel.setVolume($0) }
-                ), in: 0...100)
-                .frame(width: 100)
-                .foregroundStyle(.white)
-
-                Text(String(format: "%.0f%%", viewModel.volume))
-                    .foregroundStyle(.white)
-                    .frame(width: 35, alignment: .trailing)
-
-                Spacer()
+            ViewThatFits(in: .horizontal) {
+                widePlaybackControls
+                compactPlaybackControls
             }
         }
         .padding(.horizontal, 14)
@@ -127,6 +62,110 @@ struct ControlBarView: View {
                 scheduleHide()
             }
         }
+    }
+
+    private var widePlaybackControls: some View {
+        HStack(spacing: 10) {
+            openFileButton
+
+            Text(String(format: viewModel.t("当前：%.2fx"), viewModel.speed))
+                .fixedSize()
+
+            speedControls
+                .frame(minWidth: 260, maxWidth: .infinity)
+
+            volumeControl
+            playbackBackendButton
+        }
+    }
+
+    private var compactPlaybackControls: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 10) {
+                openFileButton
+
+                Text(String(format: viewModel.t("当前：%.2fx"), viewModel.speed))
+
+                Spacer(minLength: 12)
+
+                playbackBackendButton
+            }
+
+            speedControls
+            volumeControl
+        }
+    }
+
+    private var openFileButton: some View {
+        Button {
+            revealControlsAndScheduleHide()
+            viewModel.openFile()
+        } label: {
+            Label(viewModel.t("打开文件"), systemImage: "folder")
+        }
+        .keyboardShortcut("o", modifiers: [.command])
+    }
+
+    private var speedControls: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                Text(viewModel.t("速度："))
+
+                ForEach(viewModel.speedCandidates, id: \.self) { speed in
+                    Button("\(speed, specifier: "%g")x") {
+                        revealControlsAndScheduleHide()
+                        viewModel.setSpeed(speed)
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(abs(viewModel.speed - speed) < 0.001 ? .blue : .gray)
+                }
+
+                LongPressSpeedButton(label: "-0.25x", delta: -0.25) { delta in
+                    revealControlsAndScheduleHide()
+                    viewModel.adjustSpeed(by: delta)
+                }
+                LongPressSpeedButton(label: "+0.25x", delta: 0.25) { delta in
+                    revealControlsAndScheduleHide()
+                    viewModel.adjustSpeed(by: delta)
+                }
+            }
+            .padding(.vertical, 1)
+        }
+    }
+
+    private var volumeControl: some View {
+        HStack(spacing: 10) {
+            Button {
+                viewModel.toggleMute()
+            } label: {
+                Image(systemName: viewModel.isMuted || viewModel.volume == 0 ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                    .foregroundStyle(.white)
+            }
+            .buttonStyle(.plain)
+
+            Slider(value: Binding(
+                get: { viewModel.volume },
+                set: { viewModel.setVolume($0) }
+            ), in: 0...100)
+            .frame(width: 100)
+            .foregroundStyle(.white)
+
+            Text(String(format: "%.0f%%", viewModel.volume))
+                .foregroundStyle(.white)
+                .frame(width: 35, alignment: .trailing)
+        }
+        .fixedSize()
+    }
+
+    private var playbackBackendButton: some View {
+        Button {
+            viewModel.switchPlaybackBackend()
+        } label: {
+            Label(viewModel.playbackEngineStatus, systemImage: "arrow.triangle.2.circlepath")
+                .foregroundStyle(.secondary)
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
     }
 
     private func format(_ time: Double) -> String {
