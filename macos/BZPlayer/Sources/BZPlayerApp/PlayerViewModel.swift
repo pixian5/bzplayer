@@ -168,6 +168,8 @@ final class PlayerViewModel: NSObject, ObservableObject {
     private var hasAppliedInitialWindowBehavior = false
     private var nativeStallCount = 0
     private var lastStallPosition: Double = 0
+    private var nativePlaybackRefreshGeneration = UUID()
+    private var nativePlaybackRefreshInFlight = false
     private var attemptedBackendSwitch = false
     private var playbackFailureTimer: Timer?
     private var mediaAnalysisTask: Task<Void, Never>?
@@ -633,7 +635,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         speed = Self.normalizeSpeed(value)
         switch playbackBackend {
         case .native:
-            nativePlayer.rate = isPaused ? 0 : Float(speed)
+            applyNativePlaybackSpeed()
         case .vlc:
             vlcPlayer.setSpeed(speed)
         }
@@ -647,12 +649,8 @@ final class PlayerViewModel: NSObject, ObservableObject {
         }
         switch playbackBackend {
         case .native:
-            nativePlayer.play()
-            nativePlayer.rate = Float(speed)
-            // 强制刷新视频帧：AVPlayer 暂停后恢复时可能不渲染，seek 0.001s 强制刷新
-            let currentTime = nativePlayer.currentTime()
-            nativePlayer.seek(to: currentTime, toleranceBefore: .zero, toleranceAfter: .zero)
             isPaused = false
+            resumeNativePlaybackAtCurrentTime()
         case .vlc:
             vlcPlayer.play()
             isPaused = false
@@ -662,6 +660,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
     func pause() {
         switch playbackBackend {
         case .native:
+            invalidateNativePlaybackRefresh()
             nativePlayer.pause()
         case .vlc:
             vlcPlayer.pause()
@@ -872,7 +871,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
 
         switch playbackBackend {
         case .native:
-            nativePlayer.rate = isPaused ? 0 : Float(speed)
+            applyNativePlaybackSpeed()
         case .vlc:
             vlcPlayer.setSpeed(speed)
         }
@@ -1559,7 +1558,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
                 let seconds = time.seconds
                 
                 // Stall detection: if playing but time isn't moving
-                if !self.isPaused && !self.isSeeking && seconds.isFinite && seconds > 0 {
+                if !self.isPaused && !self.isSeeking && !self.nativePlaybackRefreshInFlight && seconds.isFinite && seconds > 0 {
                     if seconds == self.lastStallPosition {
                         self.nativeStallCount += 1
                         if self.nativeStallCount > 30 { // ~3 seconds stall
@@ -1638,6 +1637,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         invalidatePendingSeek()
         let previousBackend = playbackBackend
         playbackBackend = backend
+        invalidateNativePlaybackRefresh()
 
         if previousBackend == .native {
             unbindNativePlayer()
@@ -1743,10 +1743,74 @@ final class PlayerViewModel: NSObject, ObservableObject {
         isSeeking = false
     }
 
+    private func invalidateNativePlaybackRefresh() {
+        nativePlaybackRefreshGeneration = UUID()
+        nativePlaybackRefreshInFlight = false
+    }
+
+    private func applyNativePlaybackSpeed() {
+        guard playbackBackend == .native else { return }
+
+        if isPaused {
+            invalidateNativePlaybackRefresh()
+            nativePlayer.pause()
+            nativePlayer.rate = 0
+            return
+        }
+
+        resumeNativePlaybackAtCurrentTime()
+    }
+
+    /// Re-prime AVPlayer at the current frame when the rate changes.
+    ///
+    /// AVPlayer can keep advancing audio while its video renderer is no
+    /// longer synchronized after a live rate change. A zero-tolerance seek
+    /// followed by playImmediately(atRate:) is the same refresh path that
+    /// makes pause/resume recover the video, but it is now applied directly
+    /// when changing speed. The generation prevents an old seek completion
+    /// from restarting playback after a newer speed change, pause, or media
+    /// switch.
+    private func resumeNativePlaybackAtCurrentTime() {
+        guard playbackBackend == .native, !isPaused else { return }
+
+        let player = nativePlayer
+        let targetRate = Float(speed)
+        guard targetRate.isFinite, targetRate > 0 else { return }
+
+        invalidateNativePlaybackRefresh()
+        let refreshGeneration = nativePlaybackRefreshGeneration
+        let mediaGeneration = mediaOpenGeneration
+        nativePlaybackRefreshInFlight = true
+
+        let currentTime = player.currentTime()
+        guard currentTime.isValid, currentTime.isNumeric else {
+            nativePlaybackRefreshInFlight = false
+            player.playImmediately(atRate: targetRate)
+            return
+        }
+
+        player.pause()
+        player.seek(to: currentTime, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self, weak player] finished in
+            Task { @MainActor [weak self, weak player] in
+                guard let self,
+                      let player,
+                      player === self.nativePlayer,
+                      self.playbackBackend == .native,
+                      self.mediaOpenGeneration == mediaGeneration,
+                      self.nativePlaybackRefreshGeneration == refreshGeneration else { return }
+
+                self.nativePlaybackRefreshInFlight = false
+                guard finished, !self.isPaused else { return }
+                player.playImmediately(atRate: Float(self.speed))
+            }
+        }
+    }
+
     @discardableResult
     private func startNewPlaybackGeneration() -> UUID {
         playbackFailureTimer?.invalidate()
         playbackFailureTimer = nil
+        invalidateNativePlaybackRefresh()
         let generation = UUID()
         mediaOpenGeneration = generation
         return generation
@@ -2051,12 +2115,12 @@ final class PlayerViewModel: NSObject, ObservableObject {
                         await self.nativePlayer.seek(to: CMTime(seconds: resumeAt, preferredTimescale: 600))
                     }
                     if startPaused {
+                        self.invalidateNativePlaybackRefresh()
                         self.nativePlayer.pause()
                         self.isPaused = true
                     } else {
-                        self.nativePlayer.play()
-                        self.nativePlayer.rate = Float(self.speed)
                         self.isPaused = false
+                        self.resumeNativePlaybackAtCurrentTime()
                     }
                     if refreshVideoSurfaceAfterReady {
                         self.refreshNativeVideoSurface(generation: generation)
