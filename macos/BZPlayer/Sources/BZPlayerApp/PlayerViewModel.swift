@@ -207,6 +207,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
     private var pendingSpeedSaveTask: Task<Void, Never>?
     private var pendingWindowFrameSaveTask: Task<Void, Never>?
     private var mediaOpenGeneration = UUID()
+    private var activeSeekGeneration = UUID()
     private let callbackGeneration = PlayerGenerationBox()
     private var selectedSubtitlePath: String?
     private let subtitleCleanupTracker = SubtitleCleanupTracker()
@@ -745,11 +746,12 @@ final class PlayerViewModel: NSObject, ObservableObject {
     }
 
     private func closeCurrentPlaybackFile(showToast: Bool) {
+        flushPendingVolumeSave()
+        flushPendingSpeedSave()
+        flushPendingWindowFrameSave()
         mediaAnalysisTask?.cancel()
-        pendingVLCSeekTask?.cancel()
-        pendingVLCSeekTask = nil
-        mediaOpenGeneration = UUID()
-        callbackGeneration.store(mediaOpenGeneration)
+        invalidatePendingSeek()
+        startNewPlaybackGeneration()
         saveCurrentProgress(force: true)
         switch playbackBackend {
         case .native:
@@ -825,17 +827,20 @@ final class PlayerViewModel: NSObject, ObservableObject {
         guard duration > 0, progress.isFinite else { return }
         let targetTime = duration * progress
         let time = CMTime(seconds: targetTime, preferredTimescale: 600)
+        let seekGeneration = UUID()
+        activeSeekGeneration = seekGeneration
         isSeeking = true
         if playbackBackend == .native {
             pendingVLCSeekTask?.cancel()
             pendingVLCSeekTask = nil
             nativePlayer.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
                 DispatchQueue.main.async {
-                    self?.isSeeking = false
+                    guard let self, self.activeSeekGeneration == seekGeneration else { return }
+                    self.isSeeking = false
                 }
             }
         } else {
-            scheduleVLCSeek(to: targetTime)
+            scheduleVLCSeek(to: targetTime, seekGeneration: seekGeneration)
         }
     }
 
@@ -1083,8 +1088,15 @@ final class PlayerViewModel: NSObject, ObservableObject {
         if path != nil, playbackBackend == .native, let url = currentFileURL {
             let resumeAt = currentTime > 0 && currentTime < duration ? currentTime : nil
             let wasPaused = isPaused
+            let generation = startNewPlaybackGeneration()
             selectBackend(.vlc)
             loadVLC(url: url, resumeAt: resumeAt, startPaused: wasPaused)
+            schedulePlaybackFailureCheck(
+                for: url,
+                backend: .vlc,
+                resumeAt: resumeAt,
+                generation: generation
+            )
             return
         }
         if path == nil {
@@ -1179,8 +1191,15 @@ final class PlayerViewModel: NSObject, ObservableObject {
                 showToastMessage(t("AV1 视频当前不支持音频延迟，以避免切换到不稳定的 VLC 解码器"))
                 return
             }
+            let generation = startNewPlaybackGeneration()
             selectBackend(.vlc)
             loadVLC(url: url, resumeAt: resumeAt, startPaused: wasPaused)
+            schedulePlaybackFailureCheck(
+                for: url,
+                backend: .vlc,
+                resumeAt: resumeAt,
+                generation: generation
+            )
         } else if playbackBackend == .vlc {
             vlcPlayer.setAudioDelay(audioDelayMs)
         }
@@ -1253,6 +1272,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
             showToastMessage(t("AV1 视频已禁用 VLC 后端，以避免解码器崩溃"))
             return
         }
+        let generation = startNewPlaybackGeneration()
         selectBackend(newBackend)
 
         switch newBackend {
@@ -1261,6 +1281,12 @@ final class PlayerViewModel: NSObject, ObservableObject {
         case .vlc:
             loadVLC(url: url, resumeAt: resumeAt, startPaused: wasPaused)
         }
+        schedulePlaybackFailureCheck(
+            for: url,
+            backend: newBackend,
+            resumeAt: resumeAt,
+            generation: generation
+        )
     }
 
     func seekBy(seconds delta: Double) {
@@ -1272,17 +1298,20 @@ final class PlayerViewModel: NSObject, ObservableObject {
         guard rawTarget.isFinite else { return }
         let target = max(0, min(upperBound, rawTarget))
         let time = CMTime(seconds: target, preferredTimescale: 600)
+        let seekGeneration = UUID()
+        activeSeekGeneration = seekGeneration
         isSeeking = true
         if playbackBackend == .native {
             pendingVLCSeekTask?.cancel()
             pendingVLCSeekTask = nil
             nativePlayer.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
                 DispatchQueue.main.async {
-                    self?.isSeeking = false
+                    guard let self, self.activeSeekGeneration == seekGeneration else { return }
+                    self.isSeeking = false
                 }
             }
         } else {
-            scheduleVLCSeek(to: target)
+            scheduleVLCSeek(to: target, seekGeneration: seekGeneration)
         }
         currentTime = target
     }
@@ -1415,8 +1444,19 @@ final class PlayerViewModel: NSObject, ObservableObject {
                             print("检测到原生播放器卡死 (Position: \(seconds))，切至 VLC 内核...")
                             if let url = self.currentFileURL {
                                 let resumeAt = seconds.isFinite ? seconds : nil
+                                if self.currentMediaHasAV1Video {
+                                    self.reportAV1PlaybackFailure(for: url)
+                                    return
+                                }
+                                let generation = self.startNewPlaybackGeneration()
                                 self.selectBackend(.vlc)
                                 self.loadVLC(url: url, resumeAt: resumeAt)
+                                self.schedulePlaybackFailureCheck(
+                                    for: url,
+                                    backend: .vlc,
+                                    resumeAt: resumeAt,
+                                    generation: generation
+                                )
                                 return
                             }
                         }
@@ -1456,9 +1496,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
     }
 
     private func selectBackend(_ backend: PlaybackBackend) {
-        pendingVLCSeekTask?.cancel()
-        pendingVLCSeekTask = nil
-        isSeeking = false
+        invalidatePendingSeek()
         let previousBackend = playbackBackend
         playbackBackend = backend
 
@@ -1527,10 +1565,10 @@ final class PlayerViewModel: NSObject, ObservableObject {
         saveSettings()
     }
 
-    private func scheduleVLCSeek(to seconds: Double) {
+    private func scheduleVLCSeek(to seconds: Double, seekGeneration: UUID) {
         guard seconds.isFinite, seconds >= 0 else { return }
         pendingVLCSeekTask?.cancel()
-        let generation = mediaOpenGeneration
+        let mediaGeneration = mediaOpenGeneration
         pendingVLCSeekTask = Task { @MainActor [weak self] in
             do {
                 try await Task.sleep(nanoseconds: 40_000_000)
@@ -1540,7 +1578,8 @@ final class PlayerViewModel: NSObject, ObservableObject {
             guard let self,
                   !Task.isCancelled,
                   self.playbackBackend == .vlc,
-                  self.mediaOpenGeneration == generation else { return }
+                  self.mediaOpenGeneration == mediaGeneration,
+                  self.activeSeekGeneration == seekGeneration else { return }
             self.vlcPlayer.seek(seconds: seconds)
             self.pendingVLCSeekTask = nil
             do {
@@ -1550,9 +1589,27 @@ final class PlayerViewModel: NSObject, ObservableObject {
             }
             guard !Task.isCancelled,
                   self.playbackBackend == .vlc,
-                  self.mediaOpenGeneration == generation else { return }
+                  self.mediaOpenGeneration == mediaGeneration,
+                  self.activeSeekGeneration == seekGeneration else { return }
             self.isSeeking = false
         }
+    }
+
+    private func invalidatePendingSeek() {
+        pendingVLCSeekTask?.cancel()
+        pendingVLCSeekTask = nil
+        activeSeekGeneration = UUID()
+        isSeeking = false
+    }
+
+    @discardableResult
+    private func startNewPlaybackGeneration() -> UUID {
+        playbackFailureTimer?.invalidate()
+        playbackFailureTimer = nil
+        let generation = UUID()
+        mediaOpenGeneration = generation
+        callbackGeneration.store(generation)
+        return generation
     }
 
     private func scheduleSpeedSave(for url: URL?) {
@@ -1661,9 +1718,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         let resumeTime = forceStartAtBeginning ? nil : loadSavedProgress(for: url)
         debugLog("[BZPlayer] resumeTime: \(resumeTime ?? -1)")
         mediaAnalysisTask?.cancel()
-        let generation = UUID()
-        mediaOpenGeneration = generation
-        callbackGeneration.store(generation)
+        let generation = startNewPlaybackGeneration()
         isSeeking = false
         selectBackend(.native)
 
@@ -1675,7 +1730,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
                   self.mediaOpenGeneration == generation,
                   self.currentFileURL == url else { return }
 
-            self.currentMediaHasAV1Video = ffprobeInfo?.videoStreams.contains(where: { $0.codecName == "av1" }) == true
+            self.currentMediaHasAV1Video = self.hasAV1Video(url: url, ffprobeInfo: ffprobeInfo)
             self.currentNominalFPS = self.estimateFPS(for: url, ffprobeInfo: ffprobeInfo)
             debugLog("[BZPlayer] Selected backend: \(backend)")
             self.selectBackend(backend)
@@ -1765,16 +1820,14 @@ final class PlayerViewModel: NSObject, ObservableObject {
         guard hasFailed else { return }
 
         if originalBackend == .native, currentMediaHasAV1Video {
-            let errorMsg = "无法播放 AV1 文件：\(url.lastPathComponent)\n已阻止回退到 VLC，以避免触发 VLCKit dav1d 解码器崩溃。"
-            playbackError = errorMsg
-            loopMode = .none
-            showFileInfo()
+            reportAV1PlaybackFailure(for: url)
             return
         }
 
         if !attemptedBackendSwitch {
             attemptedBackendSwitch = true
             let newBackend: PlaybackBackend = originalBackend == .native ? .vlc : .native
+            let newGeneration = startNewPlaybackGeneration()
             print("[BZPlayer] Playback failed with \(originalBackend), switching to \(newBackend)")
             selectBackend(newBackend)
 
@@ -1784,7 +1837,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
                     url: url,
                     resumeAt: resumeAt,
                     refreshVideoSurfaceAfterReady: shouldRefreshNativeVideoSurface(url: url),
-                    generation: generation
+                    generation: newGeneration
                 )
             case .vlc:
                 loadVLC(url: url, resumeAt: resumeAt)
@@ -1794,7 +1847,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
                 for: url,
                 backend: newBackend,
                 resumeAt: resumeAt,
-                generation: generation
+                generation: newGeneration
             )
         } else {
             let errorMsg = "无法播放文件：\(url.lastPathComponent)\n多个播放内核都无法解码此文件。"
@@ -1869,7 +1922,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
     }
 
     private func chooseBackend(for url: URL, ffprobeInfo: FFprobeInfo? = nil) async -> PlaybackBackend {
-        if ffprobeInfo?.videoStreams.contains(where: { $0.codecName == "av1" }) == true {
+        if hasAV1Video(url: url, ffprobeInfo: ffprobeInfo) {
             // VLCKit 3.6's bundled dav1d decoder can crash on macOS 26 while AV1 is playing.
             // Prefer AVPlayer and never route this known codec to VLC.
             return .native
@@ -1896,6 +1949,31 @@ final class PlayerViewModel: NSObject, ObservableObject {
             }
         }
         return .native
+    }
+
+    private func hasAV1Video(url: URL, ffprobeInfo: FFprobeInfo? = nil) -> Bool {
+        if ffprobeInfo?.videoStreams.contains(where: { $0.codecName.lowercased() == "av1" }) == true {
+            return true
+        }
+
+        let asset = AVURLAsset(url: url)
+        let av1Subtypes: Set<String> = ["av01", "av1 ", "1va "]
+        return asset.tracks(withMediaType: .video).contains { track in
+            track.formatDescriptions.contains { formatDescription in
+                av1Subtypes.contains(codecSubtypeString(from: formatDescription))
+            }
+        }
+    }
+
+    private func reportAV1PlaybackFailure(for url: URL) {
+        guard playbackError == nil else { return }
+        playbackFailureTimer?.invalidate()
+        playbackFailureTimer = nil
+        nativePlayer.pause()
+        isPaused = true
+        loopMode = .none
+        playbackError = "无法播放 AV1 文件：\(url.lastPathComponent)\n已阻止回退到 VLC，以避免触发 VLCKit dav1d 解码器崩溃。"
+        showFileInfo()
     }
 
     private func shouldPreferVLC(ffprobeInfo: FFprobeInfo) -> Bool {

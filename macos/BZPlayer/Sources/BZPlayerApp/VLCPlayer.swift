@@ -102,8 +102,13 @@ final class VLCPlayer: NSObject {
 
             if self.currentMedia != nil || self.mediaPlayer.media != nil {
                 self.mediaPlayer.stop()
-                await self.waitForStopped()
+                let didStop = await self.waitForStopped()
                 guard !Task.isCancelled, self.mediaGeneration == generation else { return }
+                guard didStop else {
+                    self.pendingLoadTask = nil
+                    self.onStatusChanged?("VLC 停止旧媒体超时，请重试")
+                    return
+                }
                 self.mediaPlayer.media = nil
                 self.currentMedia = nil
             }
@@ -220,16 +225,22 @@ final class VLCPlayer: NSObject {
         }
     }
 
-    private func waitForStopped() async {
-        for _ in 0..<50 {
-            guard !Task.isCancelled else { return }
-            if mediaPlayer.state == .stopped { return }
+    private func waitForStopped() async -> Bool {
+        for _ in 0..<200 {
+            guard !Task.isCancelled else { return false }
+            switch mediaPlayer.state {
+            case .stopped, .ended, .error:
+                return true
+            default:
+                break
+            }
             do {
                 try await Task.sleep(nanoseconds: 10_000_000)
             } catch {
-                return
+                return false
             }
         }
+        return false
     }
 
     func reloadCurrentMedia(
@@ -248,9 +259,9 @@ final class VLCPlayer: NSObject {
             subtitleBackgroundOpacity: subtitleBackgroundOpacity
         )
         if startPaused {
-            mediaPlayer.pause()
+            pause()
         } else {
-            mediaPlayer.play()
+            play()
         }
     }
 
