@@ -7,6 +7,23 @@ import UniformTypeIdentifiers
 import VLCKitSPM
 import BZPlayerCore
 
+private final class PlayerGenerationBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = UUID()
+
+    func load() -> UUID {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
+
+    func store(_ value: UUID) {
+        lock.lock()
+        self.value = value
+        lock.unlock()
+    }
+}
+
 // Debug logger
 private let debugLogURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Documents/BZPlayer.log")
 private func debugLog(_ msg: String) {
@@ -185,7 +202,11 @@ final class PlayerViewModel: NSObject, ObservableObject {
     private var playbackFailureTimer: Timer?
     private var mediaAnalysisTask: Task<Void, Never>?
     private var pendingVolumeSaveTask: Task<Void, Never>?
+    private var pendingVLCSeekTask: Task<Void, Never>?
+    private var pendingSpeedSaveTask: Task<Void, Never>?
+    private var pendingWindowFrameSaveTask: Task<Void, Never>?
     private var mediaOpenGeneration = UUID()
+    private let callbackGeneration = PlayerGenerationBox()
     private var selectedSubtitlePath: String?
     private let subtitleCleanupTracker = SubtitleCleanupTracker()
     private static var hasCompletedNativeVP9Warmup = false
@@ -519,6 +540,9 @@ final class PlayerViewModel: NSObject, ObservableObject {
     deinit {
         mediaAnalysisTask?.cancel()
         pendingVolumeSaveTask?.cancel()
+        pendingVLCSeekTask?.cancel()
+        pendingSpeedSaveTask?.cancel()
+        pendingWindowFrameSaveTask?.cancel()
         playbackFailureTimer?.invalidate()
         toastHideWorkItem?.cancel()
         for observer in windowFrameObservers {
@@ -625,6 +649,8 @@ final class PlayerViewModel: NSObject, ObservableObject {
 
     func prepareForWindowClose() {
         flushPendingVolumeSave()
+        flushPendingSpeedSave()
+        flushPendingWindowFrameSave()
         closeCurrentPlaybackFile(showToast: false)
     }
 
@@ -719,7 +745,10 @@ final class PlayerViewModel: NSObject, ObservableObject {
 
     private func closeCurrentPlaybackFile(showToast: Bool) {
         mediaAnalysisTask?.cancel()
+        pendingVLCSeekTask?.cancel()
+        pendingVLCSeekTask = nil
         mediaOpenGeneration = UUID()
+        callbackGeneration.store(mediaOpenGeneration)
         saveCurrentProgress(force: true)
         switch playbackBackend {
         case .native:
@@ -733,6 +762,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         currentTime = 0
         duration = 0
         isPaused = true
+        isSeeking = false
         currentIndex = -1
         selectedSubtitlePath = nil
         windowTitle = Self.defaultWindowTitle
@@ -795,27 +825,21 @@ final class PlayerViewModel: NSObject, ObservableObject {
         let time = CMTime(seconds: targetTime, preferredTimescale: 600)
         isSeeking = true
         if playbackBackend == .native {
+            pendingVLCSeekTask?.cancel()
+            pendingVLCSeekTask = nil
             nativePlayer.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
                 DispatchQueue.main.async {
                     self?.isSeeking = false
                 }
             }
         } else {
-            vlcPlayer.seek(seconds: targetTime)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-                self?.isSeeking = false
-            }
+            scheduleVLCSeek(to: targetTime)
         }
     }
 
     func setSpeed(_ value: Double) {
         speed = Self.normalizeSpeed(value)
-        if let url = currentFileURL {
-            saveSpeedForFile(url)
-            debugLog("[BZPlayer] saveSpeedForFile called - url: \(url.lastPathComponent), speed: \(speed)")
-        }
-        // Remember as global last used speed and save all settings
-        saveSettings()
+        scheduleSpeedSave(for: currentFileURL)
 
         switch playbackBackend {
         case .native:
@@ -1236,16 +1260,15 @@ final class PlayerViewModel: NSObject, ObservableObject {
         let time = CMTime(seconds: target, preferredTimescale: 600)
         isSeeking = true
         if playbackBackend == .native {
+            pendingVLCSeekTask?.cancel()
+            pendingVLCSeekTask = nil
             nativePlayer.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
                 DispatchQueue.main.async {
                     self?.isSeeking = false
                 }
             }
         } else {
-            vlcPlayer.seek(seconds: target)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-                self?.isSeeking = false
-            }
+            scheduleVLCSeek(to: target)
         }
         currentTime = target
     }
@@ -1356,13 +1379,17 @@ final class PlayerViewModel: NSObject, ObservableObject {
     }
 
     private func bindNativePlayer() {
+        let callbackGeneration = self.callbackGeneration
         nativeTimeObserver = nativePlayer.addPeriodicTimeObserver(
             forInterval: CMTime(seconds: 0.1, preferredTimescale: 600),
             queue: .main
         ) { [weak self] time in
             guard let self else { return }
+            let generation = callbackGeneration.load()
             Task { @MainActor [weak self] in
-                guard let self, self.playbackBackend == .native else { return }
+                guard let self,
+                      self.playbackBackend == .native,
+                      self.mediaOpenGeneration == generation else { return }
                 let seconds = time.seconds
                 
                 // Stall detection: if playing but time isn't moving
@@ -1376,6 +1403,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
                                 let resumeAt = seconds.isFinite ? seconds : nil
                                 self.selectBackend(.vlc)
                                 self.loadVLC(url: url, resumeAt: resumeAt)
+                                return
                             }
                         }
                     } else {
@@ -1400,8 +1428,11 @@ final class PlayerViewModel: NSObject, ObservableObject {
             queue: .main
         ) { [weak self] notification in
             guard let self else { return }
+            let generation = callbackGeneration.load()
             Task { @MainActor [weak self] in
-                guard let self, self.playbackBackend == .native else { return }
+                guard let self,
+                      self.playbackBackend == .native,
+                      self.mediaOpenGeneration == generation else { return }
                 let notificationItem = notification.object as? AVPlayerItem
                 let currentItem = self.nativePlayer.currentItem
                 guard let notificationItem, notificationItem === currentItem else { return }
@@ -1411,6 +1442,9 @@ final class PlayerViewModel: NSObject, ObservableObject {
     }
 
     private func selectBackend(_ backend: PlaybackBackend) {
+        pendingVLCSeekTask?.cancel()
+        pendingVLCSeekTask = nil
+        isSeeking = false
         let previousBackend = playbackBackend
         playbackBackend = backend
 
@@ -1479,8 +1513,85 @@ final class PlayerViewModel: NSObject, ObservableObject {
         saveSettings()
     }
 
+    private func scheduleVLCSeek(to seconds: Double) {
+        guard seconds.isFinite, seconds >= 0 else { return }
+        pendingVLCSeekTask?.cancel()
+        let generation = mediaOpenGeneration
+        pendingVLCSeekTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: 40_000_000)
+            } catch {
+                return
+            }
+            guard let self,
+                  !Task.isCancelled,
+                  self.playbackBackend == .vlc,
+                  self.mediaOpenGeneration == generation else { return }
+            self.vlcPlayer.seek(seconds: seconds)
+            self.pendingVLCSeekTask = nil
+            do {
+                try await Task.sleep(nanoseconds: 300_000_000)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled,
+                  self.playbackBackend == .vlc,
+                  self.mediaOpenGeneration == generation else { return }
+            self.isSeeking = false
+        }
+    }
+
+    private func scheduleSpeedSave(for url: URL?) {
+        pendingSpeedSaveTask?.cancel()
+        pendingSpeedSaveTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: 150_000_000)
+            } catch {
+                return
+            }
+            guard let self, !Task.isCancelled else { return }
+            self.pendingSpeedSaveTask = nil
+            if let url, self.currentFileURL == url {
+                self.saveSpeedForFile(url)
+            }
+            self.saveSettings()
+        }
+    }
+
+    private func flushPendingSpeedSave() {
+        guard pendingSpeedSaveTask != nil else { return }
+        pendingSpeedSaveTask?.cancel()
+        pendingSpeedSaveTask = nil
+        if let url = currentFileURL {
+            saveSpeedForFile(url)
+        }
+        saveSettings()
+    }
+
+    private func scheduleWindowFrameSave() {
+        pendingWindowFrameSaveTask?.cancel()
+        pendingWindowFrameSaveTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: 150_000_000)
+            } catch {
+                return
+            }
+            guard let self, !Task.isCancelled else { return }
+            self.pendingWindowFrameSaveTask = nil
+            self.saveSettings()
+        }
+    }
+
+    private func flushPendingWindowFrameSave() {
+        guard pendingWindowFrameSaveTask != nil else { return }
+        pendingWindowFrameSaveTask?.cancel()
+        pendingWindowFrameSaveTask = nil
+        saveSettings()
+    }
+
     private func openFromPlaylist(_ url: URL, forceStartAtBeginning: Bool = false) {
         debugLog("[BZPlayer] openFromPlaylist: \(url.lastPathComponent), forceStartAtBeginning: \(forceStartAtBeginning)")
+        flushPendingSpeedSave()
         playbackError = nil
         attemptedBackendSwitch = false
         playbackFailureTimer?.invalidate()
@@ -1537,6 +1648,8 @@ final class PlayerViewModel: NSObject, ObservableObject {
         mediaAnalysisTask?.cancel()
         let generation = UUID()
         mediaOpenGeneration = generation
+        callbackGeneration.store(generation)
+        isSeeking = false
         selectBackend(.native)
 
         mediaAnalysisTask = Task { @MainActor [weak self] in
@@ -1584,7 +1697,6 @@ final class PlayerViewModel: NSObject, ObservableObject {
             subtitleFontSize: subtitleFontSize,
             subtitleBackgroundOpacity: subtitleBackgroundOpacity
         )
-        vlcPlayer.setAudioDelay(audioDelayMs)
         if startPaused {
             vlcPlayer.pause()
         } else {
@@ -1706,7 +1818,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
                         self.isPaused = false
                     }
                     if refreshVideoSurfaceAfterReady {
-                        self.refreshNativeVideoSurface()
+                        self.refreshNativeVideoSurface(generation: generation)
                     }
                     if reloadItemAfterReady {
                         self.reloadNativeItemAfterWarmup(
@@ -1836,9 +1948,11 @@ final class PlayerViewModel: NSObject, ObservableObject {
         }
     }
 
-    private func refreshNativeVideoSurface() {
+    private func refreshNativeVideoSurface(generation: UUID) {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
-            guard let self, self.playbackBackend == .native else { return }
+            guard let self,
+                  self.playbackBackend == .native,
+                  self.mediaOpenGeneration == generation else { return }
             debugLog("[BZPlayer] Refreshing native video surface")
             self.nativePlayerSurfaceRefreshID += 1
         }
@@ -2232,7 +2346,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
 
     private func persistWindowFrameIfNeeded(_ window: NSWindow) {
         guard !window.styleMask.contains(.fullScreen) else { return }
-        saveSettings()
+        scheduleWindowFrameSave()
     }
 
     private func showAlert(title: String, message: String) {

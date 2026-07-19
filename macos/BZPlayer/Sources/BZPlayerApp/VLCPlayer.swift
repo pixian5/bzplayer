@@ -3,6 +3,23 @@ import Foundation
 import VLCKitSPM
 import CoreText
 
+private final class VLCGenerationBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = UUID()
+
+    func load() -> UUID {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
+
+    func store(_ value: UUID) {
+        lock.lock()
+        self.value = value
+        lock.unlock()
+    }
+}
+
 @MainActor
 final class VLCPlayer: NSObject {
     var onTimeChanged: ((Double) -> Void)?
@@ -20,6 +37,11 @@ final class VLCPlayer: NSObject {
     private var didFireFileLoaded = false
     private var wasPlayingBeforeSeek: Bool?
     private var pendingPlayTask: Task<Void, Never>?
+    private var pendingLoadTask: Task<Void, Never>?
+    private var mediaGeneration = UUID()
+    private let callbackGeneration = VLCGenerationBox()
+    private var isTransitioning = false
+    private var shouldPlay = false
     private var currentURL: URL?
     private var configuredAudioDelayMs: Double = 0
     private var configuredSubtitleFontSize = 55
@@ -41,6 +63,7 @@ final class VLCPlayer: NSObject {
 
     deinit {
         pendingPlayTask?.cancel()
+        pendingLoadTask?.cancel()
         if let t = timeObserverToken { NotificationCenter.default.removeObserver(t) }
         if let t = stateObserverToken { NotificationCenter.default.removeObserver(t) }
     }
@@ -59,35 +82,73 @@ final class VLCPlayer: NSObject {
         subtitleBackgroundOpacity: Int = 0
     ) {
         cancelPendingPlay()
+        pendingLoadTask?.cancel()
+        pendingLoadTask = nil
+
+        let generation = UUID()
+        mediaGeneration = generation
+        callbackGeneration.store(generation)
         pendingResumeAt = resumeAt
         didFireFileLoaded = false
         currentURL = url
         configuredAudioDelayMs = audioDelayMs
         configuredSubtitleFontSize = max(1, subtitleFontSize)
         configuredSubtitleBackgroundOpacity = min(max(subtitleBackgroundOpacity, 0), 100)
-        let media = VLCMedia(url: url)
-        media.addOption(":subsdec-encoding=GB18030")
-        media.addOption(":freetype-font=/System/Library/Fonts/STHeiti Light.ttc")
-        media.addOption(":freetype-rel-fontsize=\(configuredSubtitleFontSize)")
-        media.addOption(":freetype-background-opacity=\(configuredSubtitleBackgroundOpacity * 255 / 100)")
-        media.addOption(":avcodec-hw=any")
-        media.addOption(":codec=videotoolbox")
-        currentMedia = media
-        mediaPlayer.media = media
+        isTransitioning = true
+        shouldPlay = false
+
+        pendingLoadTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+
+            if self.currentMedia != nil || self.mediaPlayer.media != nil {
+                self.mediaPlayer.stop()
+                await self.waitForStopped()
+                guard !Task.isCancelled, self.mediaGeneration == generation else { return }
+                self.mediaPlayer.media = nil
+                self.currentMedia = nil
+            }
+
+            guard !Task.isCancelled, self.mediaGeneration == generation else { return }
+            let media = VLCMedia(url: url)
+            media.addOption(":subsdec-encoding=GB18030")
+            media.addOption(":freetype-font=/System/Library/Fonts/STHeiti Light.ttc")
+            media.addOption(":freetype-rel-fontsize=\(self.configuredSubtitleFontSize)")
+            media.addOption(":freetype-background-opacity=\(self.configuredSubtitleBackgroundOpacity * 255 / 100)")
+            media.addOption(":avcodec-hw=any")
+            media.addOption(":codec=videotoolbox")
+            self.currentMedia = media
+            self.mediaPlayer.media = media
+            self.isTransitioning = false
+            self.pendingLoadTask = nil
+            self.applyConfiguredAudioDelay()
+            if self.shouldPlay {
+                self.mediaPlayer.play()
+            }
+        }
     }
 
     func play() {
+        shouldPlay = true
         cancelPendingPlay()
+        guard !isTransitioning, pendingLoadTask == nil else { return }
         mediaPlayer.play()
     }
 
     func pause() {
+        shouldPlay = false
         cancelPendingPlay()
+        guard !isTransitioning else { return }
         mediaPlayer.pause()
     }
 
     func stop() {
+        mediaGeneration = UUID()
+        callbackGeneration.store(mediaGeneration)
+        isTransitioning = false
+        shouldPlay = false
         cancelPendingPlay()
+        pendingLoadTask?.cancel()
+        pendingLoadTask = nil
         mediaPlayer.stop()
         mediaPlayer.media = nil
         currentMedia = nil
@@ -144,13 +205,30 @@ final class VLCPlayer: NSObject {
     func setAudioDelay(_ delayMs: Double) {
         guard delayMs.isFinite else { return }
         configuredAudioDelayMs = delayMs
-        let microseconds = (delayMs * 1_000).rounded()
+        applyConfiguredAudioDelay()
+    }
+
+    private func applyConfiguredAudioDelay() {
+        guard currentMedia != nil, !isTransitioning else { return }
+        let microseconds = (configuredAudioDelayMs * 1_000).rounded()
         if microseconds >= Double(Int.max) {
             mediaPlayer.currentAudioPlaybackDelay = Int.max
         } else if microseconds <= Double(Int.min) {
             mediaPlayer.currentAudioPlaybackDelay = Int.min
         } else {
             mediaPlayer.currentAudioPlaybackDelay = Int(microseconds)
+        }
+    }
+
+    private func waitForStopped() async {
+        for _ in 0..<50 {
+            guard !Task.isCancelled else { return }
+            if mediaPlayer.state == .stopped { return }
+            do {
+                try await Task.sleep(nanoseconds: 10_000_000)
+            } catch {
+                return
+            }
         }
     }
 
@@ -270,13 +348,15 @@ final class VLCPlayer: NSObject {
 
     private func bindNotifications() {
         let center = NotificationCenter.default
+        let callbackGeneration = self.callbackGeneration
         timeObserverToken = center.addObserver(
             forName: Notification.Name(VLCMediaPlayerTimeChanged),
             object: mediaPlayer,
             queue: .main
         ) { [weak self] _ in
             guard let self else { return }
-            Task { @MainActor [weak self] in self?.handleTimeChanged() }
+            let generation = callbackGeneration.load()
+            Task { @MainActor [weak self] in self?.handleTimeChanged(for: generation) }
         }
         stateObserverToken = center.addObserver(
             forName: Notification.Name(VLCMediaPlayerStateChanged),
@@ -284,12 +364,13 @@ final class VLCPlayer: NSObject {
             queue: .main
         ) { [weak self] _ in
             guard let self else { return }
-            Task { @MainActor [weak self] in self?.handleStateChanged() }
+            let generation = callbackGeneration.load()
+            Task { @MainActor [weak self] in self?.handleStateChanged(for: generation) }
         }
     }
 
-    private func handleTimeChanged() {
-        setAudioDelay(configuredAudioDelayMs)
+    private func handleTimeChanged(for generation: UUID) {
+        guard generation == mediaGeneration, !isTransitioning, currentMedia != nil else { return }
         let ms = mediaPlayer.time.value?.doubleValue ?? 0
         let seconds = ms / 1000.0
         onTimeChanged?(seconds)
@@ -338,7 +419,8 @@ final class VLCPlayer: NSObject {
         onFileLoaded?()
     }
 
-    private func handleStateChanged() {
+    private func handleStateChanged(for generation: UUID) {
+        guard generation == mediaGeneration, !isTransitioning, currentMedia != nil else { return }
         switch mediaPlayer.state {
         case .playing:
             fireFileLoadedIfReady()
