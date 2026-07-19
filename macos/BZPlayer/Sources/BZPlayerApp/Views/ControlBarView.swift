@@ -35,35 +35,54 @@ struct ControlBarView: View {
                     .font(.system(.body, design: .monospaced))
             }
 
-            HStack(spacing: 8) {
-                Button(viewModel.t("打开文件")) {
+            HStack(spacing: 10) {
+                Button {
                     revealControlsAndScheduleHide()
                     viewModel.openFile()
+                } label: {
+                    Label(viewModel.t("打开文件"), systemImage: "folder")
                 }
                 .keyboardShortcut("o", modifiers: [.command])
 
                 Text(String(format: viewModel.t("当前：%.2fx"), viewModel.speed))
 
-                Text(viewModel.t("速度："))
+                Spacer(minLength: 12)
 
-                ForEach(viewModel.speedCandidates, id: \.self) { speed in
-                    Button("\(speed, specifier: "%g")x") {
-                        revealControlsAndScheduleHide()
-                        viewModel.setSpeed(speed)
+                Button {
+                    viewModel.switchPlaybackBackend()
+                } label: {
+                    Label(viewModel.playbackEngineStatus, systemImage: "arrow.triangle.2.circlepath")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    Text(viewModel.t("速度："))
+
+                    ForEach(viewModel.speedCandidates, id: \.self) { speed in
+                        Button("\(speed, specifier: "%g")x") {
+                            revealControlsAndScheduleHide()
+                            viewModel.setSpeed(speed)
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(abs(viewModel.speed - speed) < 0.001 ? .blue : .gray)
                     }
-                    .buttonStyle(.bordered)
-                    .tint(abs(viewModel.speed - speed) < 0.001 ? .blue : .gray)
-                }
 
-                LongPressSpeedButton(label: "-0.25x", delta: -0.25) { delta in
-                    revealControlsAndScheduleHide()
-                    viewModel.adjustSpeed(by: delta)
+                    LongPressSpeedButton(label: "-0.25x", delta: -0.25) { delta in
+                        revealControlsAndScheduleHide()
+                        viewModel.adjustSpeed(by: delta)
+                    }
+                    LongPressSpeedButton(label: "+0.25x", delta: 0.25) { delta in
+                        revealControlsAndScheduleHide()
+                        viewModel.adjustSpeed(by: delta)
+                    }
                 }
-                LongPressSpeedButton(label: "+0.25x", delta: 0.25) { delta in
-                    revealControlsAndScheduleHide()
-                    viewModel.adjustSpeed(by: delta)
-                }
+                .padding(.vertical, 1)
+            }
 
+            HStack(spacing: 10) {
                 Button {
                     viewModel.toggleMute()
                 } label: {
@@ -76,25 +95,14 @@ struct ControlBarView: View {
                     get: { viewModel.volume },
                     set: { viewModel.setVolume($0) }
                 ), in: 0...100)
-                .frame(width: 80)
+                .frame(width: 100)
                 .foregroundStyle(.white)
 
                 Text(String(format: "%.0f%%", viewModel.volume))
                     .foregroundStyle(.white)
                     .frame(width: 35, alignment: .trailing)
 
-                Divider()
-                    .frame(height: 20)
-                    .background(Color.white.opacity(0.3))
-
                 Spacer()
-                Button {
-                    viewModel.switchPlaybackBackend()
-                } label: {
-                    Text(viewModel.playbackEngineStatus)
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
             }
         }
         .padding(.horizontal, 14)

@@ -7,40 +7,6 @@ import UniformTypeIdentifiers
 import VLCKitSPM
 import BZPlayerCore
 
-private final class PlayerGenerationBox: @unchecked Sendable {
-    private let lock = NSLock()
-    private var value = UUID()
-
-    func load() -> UUID {
-        lock.lock()
-        defer { lock.unlock() }
-        return value
-    }
-
-    func store(_ value: UUID) {
-        lock.lock()
-        self.value = value
-        lock.unlock()
-    }
-}
-
-// Debug logger
-private let debugLogURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Documents/BZPlayer.log")
-private func debugLog(_ msg: String) {
-    let line = "\(Date()): \(msg)\n"
-    if let data = line.data(using: .utf8) {
-        if FileManager.default.fileExists(atPath: debugLogURL.path) {
-            if let handle = try? FileHandle(forWritingTo: debugLogURL) {
-                handle.seekToEndOfFile()
-                handle.write(data)
-                handle.closeFile()
-            }
-        } else {
-            try? data.write(to: debugLogURL)
-        }
-    }
-}
-
 @MainActor
 final class PlayerViewModel: NSObject, ObservableObject {
     struct SubtitleMenuEntry {
@@ -149,6 +115,8 @@ final class PlayerViewModel: NSObject, ObservableObject {
     @Published var showToast: Bool = false
     @Published var showRecentFiles: Bool = true
     @Published var recentFiles: [String] = []
+    @Published var audioOnlyWhenMinimized: Bool
+    @Published private(set) var isAudioOnlyMode = false
     @Published var subtitleBackgroundOpacity: Int
     @Published var subtitleFontSize: Int
     @Published var appLanguage: String = "auto"
@@ -163,11 +131,12 @@ final class PlayerViewModel: NSObject, ObservableObject {
 
     var onShowFileInfo: ((String) -> Void)?
 
-    let vlcPlayer = VLCPlayer()
-    let nativePlayer = AVPlayer()
+    lazy var vlcPlayer = VLCPlayer()
+    lazy var nativePlayer = AVPlayer()
     let speedCandidates: [Double] = [0.25, 0.5, 1, 1.25, 1.5, 1.75, 2, 3, 4, 8, 16]
     static let numericSpeedDigits = Array(1...9)
     static let preferencesDidChangeNotification = Notification.Name("BZPlayer.preferencesDidChange")
+    static let reservedSpeedKeyCodes: Set<UInt16> = [39, 41]
 
     var hasOpenedFile: Bool {
         currentFileURL != nil
@@ -208,14 +177,29 @@ final class PlayerViewModel: NSObject, ObservableObject {
     private var pendingWindowFrameSaveTask: Task<Void, Never>?
     private var mediaOpenGeneration = UUID()
     private var activeSeekGeneration = UUID()
-    private let callbackGeneration = PlayerGenerationBox()
+    private var playbackInfrastructureInitialized = false
+    private static var settingsCache: AppSettings?
     private var selectedSubtitlePath: String?
+    private var audioOnlyState: AudioOnlyState?
+    private var pendingAudioOnlyAudioTrack: Int32?
+    private var pendingAudioOnlySubtitleTrack: Int32?
     private let subtitleCleanupTracker = SubtitleCleanupTracker()
     private static var hasCompletedNativeVP9Warmup = false
     private var vp9WarmupPlayer: AVPlayer?
     private var lastProgressSaveTime: TimeInterval = 0
     private var lastProgressSavePosition: Double = 0
     private let progressSaveInterval: TimeInterval = 5
+
+    private struct AudioOnlyState {
+        let url: URL
+        let backend: PlaybackBackend
+        let time: Double
+        let isPaused: Bool
+        let speed: Double
+        let audioTrack: Int32?
+        let subtitleTrack: Int32?
+        let nativeVideoTracks: [(AVPlayerItemTrack, Bool)]
+    }
 
     private static let shortcutSeekSecondsKey = "shortcutSeekSeconds"
     private static let shortcutFrameStepCountKey = "shortcutFrameStepCount"
@@ -268,6 +252,11 @@ final class PlayerViewModel: NSObject, ObservableObject {
         return UInt16(value)
     }
 
+    private static func normalizeUserShortcutKeyCode(_ value: Int, fallback: UInt16) -> UInt16 {
+        let normalized = normalizeKeyCode(value, fallback: fallback)
+        return reservedSpeedKeyCodes.contains(normalized) ? fallback : normalized
+    }
+
     // MARK: - 文件存储路径
     private static var settingsDir: URL {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
@@ -310,6 +299,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         var audioDelayMs: Double = 0
         var audioDelayStepMs: Double = 50
         var showRecentFiles: Bool = true
+        var audioOnlyWhenMinimized: Bool = false
         var subtitleBackgroundOpacity: Int = 0
         var subtitleFontSize: Int = 55
         var lastWindowFrame: String? = nil
@@ -334,6 +324,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
             case audioDelayMs
             case audioDelayStepMs
             case showRecentFiles
+            case audioOnlyWhenMinimized
             case subtitleBackgroundOpacity
             case subtitleFontSize
             case lastWindowFrame
@@ -363,6 +354,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
             audioDelayMs = try container.decodeIfPresent(Double.self, forKey: .audioDelayMs) ?? audioDelayMs
             audioDelayStepMs = try container.decodeIfPresent(Double.self, forKey: .audioDelayStepMs) ?? audioDelayStepMs
             showRecentFiles = try container.decodeIfPresent(Bool.self, forKey: .showRecentFiles) ?? showRecentFiles
+            audioOnlyWhenMinimized = try container.decodeIfPresent(Bool.self, forKey: .audioOnlyWhenMinimized) ?? audioOnlyWhenMinimized
             subtitleBackgroundOpacity = try container.decodeIfPresent(Int.self, forKey: .subtitleBackgroundOpacity) ?? subtitleBackgroundOpacity
             subtitleFontSize = try container.decodeIfPresent(Int.self, forKey: .subtitleFontSize) ?? subtitleFontSize
             lastWindowFrame = try container.decodeIfPresent(String.self, forKey: .lastWindowFrame) ?? lastWindowFrame
@@ -395,15 +387,19 @@ final class PlayerViewModel: NSObject, ObservableObject {
         }
     }
 
-    override init() {
+    override convenience init() {
+        self.init(loadPlaybackInfrastructure: true)
+    }
+
+    init(loadPlaybackInfrastructure: Bool) {
         let settings = Self.loadSettings()
         shortcutSeekSeconds = max(settings.shortcutSeekSeconds, 0.1)
         shortcutFrameStepCount = max(settings.shortcutFrameStepCount, 1)
-        previousFileKeyCode = Self.normalizeKeyCode(settings.previousFileKeyCode, fallback: 33)
-        nextFileKeyCode = Self.normalizeKeyCode(settings.nextFileKeyCode, fallback: 30)
-        audioStepDownKeyCode = Self.normalizeKeyCode(settings.audioStepDownKeyCode, fallback: 43)
-        audioStepUpKeyCode = Self.normalizeKeyCode(settings.audioStepUpKeyCode, fallback: 47)
-        speedToggleKeyCode = Self.normalizeKeyCode(settings.speedToggleKeyCode, fallback: 24)
+        previousFileKeyCode = Self.normalizeUserShortcutKeyCode(settings.previousFileKeyCode, fallback: 33)
+        nextFileKeyCode = Self.normalizeUserShortcutKeyCode(settings.nextFileKeyCode, fallback: 30)
+        audioStepDownKeyCode = Self.normalizeUserShortcutKeyCode(settings.audioStepDownKeyCode, fallback: 43)
+        audioStepUpKeyCode = Self.normalizeUserShortcutKeyCode(settings.audioStepUpKeyCode, fallback: 47)
+        speedToggleKeyCode = Self.normalizeUserShortcutKeyCode(settings.speedToggleKeyCode, fallback: 24)
         numericKeySpeeds = Self.normalizeNumericKeySpeeds(settings.numericKeySpeeds ?? [])
         playlistOrder = PlaylistOrder(rawValue: settings.playlistOrder) ?? .ascending
         loopMode = LoopMode(rawValue: settings.loopMode) ?? .playlist
@@ -414,6 +410,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         audioDelayMs = Self.normalizeAudioDelay(settings.audioDelayMs)
         audioDelayStepMs = Self.normalizeAudioDelayStep(settings.audioDelayStepMs)
         showRecentFiles = settings.showRecentFiles
+        audioOnlyWhenMinimized = settings.audioOnlyWhenMinimized
         subtitleBackgroundOpacity = Self.clampSubtitleOpacity(settings.subtitleBackgroundOpacity)
         subtitleFontSize = max(1, settings.subtitleFontSize)
         appLanguage = settings.appLanguage ?? "auto"
@@ -433,17 +430,25 @@ final class PlayerViewModel: NSObject, ObservableObject {
 
         fileAssociationStatus = t("未执行格式关联")
 
+        guard loadPlaybackInfrastructure else { return }
+        playbackInfrastructureInitialized = true
         bindVLCCallbacks()
-        bindNativePlayer()
+        bindNativePlayer(for: nativePlayer, generation: mediaOpenGeneration)
         selectBackend(.native)
         warmupVP9DecoderIfNeeded()
     }
 
     private static func loadSettings() -> AppSettings {
+        if let settingsCache {
+            return settingsCache
+        }
         guard let data = try? Data(contentsOf: settingsURL),
               let settings = try? JSONDecoder().decode(AppSettings.self, from: data) else {
-            return AppSettings()
+            let defaults = AppSettings()
+            settingsCache = defaults
+            return defaults
         }
+        settingsCache = settings
         return settings
     }
 
@@ -465,6 +470,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         settings.audioDelayMs = Self.normalizeAudioDelay(audioDelayMs)
         settings.audioDelayStepMs = Self.normalizeAudioDelayStep(audioDelayStepMs)
         settings.showRecentFiles = showRecentFiles
+        settings.audioOnlyWhenMinimized = audioOnlyWhenMinimized
         settings.subtitleBackgroundOpacity = subtitleBackgroundOpacity
         settings.subtitleFontSize = subtitleFontSize
         settings.lastUsedSpeed = Self.normalizeSpeed(speed)
@@ -474,6 +480,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
             settings.lastWindowFrame = NSStringFromRect(frame.frame)
         }
         guard let data = try? JSONEncoder().encode(settings) else { return }
+        Self.settingsCache = settings
         Self.writeJSONAtomically(data, to: Self.settingsURL)
         NotificationCenter.default.post(name: Self.preferencesDidChangeNotification, object: self)
     }
@@ -549,9 +556,6 @@ final class PlayerViewModel: NSObject, ObservableObject {
         toastHideWorkItem?.cancel()
         for observer in windowFrameObservers {
             NotificationCenter.default.removeObserver(observer)
-        }
-        if let nativeTimeObserver {
-            nativePlayer.removeTimeObserver(nativeTimeObserver)
         }
         if let nativeEndObserver {
             NotificationCenter.default.removeObserver(nativeEndObserver)
@@ -698,10 +702,10 @@ final class PlayerViewModel: NSObject, ObservableObject {
             removeFileSettings(for: url)
             selectedPlaylistIndices.removeAll()
             playlistDurations.removeValue(forKey: url)
-            print("[BZPlayer] Successfully moved file to trash: \(url.path)")
+            BZLogger.info("Moved file to trash: \(url.path)")
             showToastMessage(t("已将文件移入废纸篓"))
         } catch {
-            print("[BZPlayer] Failed to move file to trash: \(error)")
+            BZLogger.error("Failed to move file to trash: \(error.localizedDescription)")
             currentIndex = playlist.firstIndex(of: url) ?? -1
             openFromPlaylist(url)
             showToastMessage(t("无法将文件移入废纸篓"))
@@ -755,6 +759,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         saveCurrentProgress(force: true)
         switch playbackBackend {
         case .native:
+            unbindNativePlayer()
             nativePlayer.pause()
             nativePlayer.replaceCurrentItem(with: nil)
         case .vlc:
@@ -811,7 +816,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         let now = ProcessInfo.processInfo.systemUptime
         guard now - Self.globalLastNavigationTime > 1.0 else { return }
         Self.globalLastNavigationTime = now
-        print("[BZPlayer] Manually navigating to previous file")
+        BZLogger.debug("Manually navigating to previous file")
         moveInPlaylist(step: -1)
     }
     
@@ -819,7 +824,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         let now = ProcessInfo.processInfo.systemUptime
         guard now - Self.globalLastNavigationTime > 1.0 else { return }
         Self.globalLastNavigationTime = now
-        print("[BZPlayer] Manually navigating to next file")
+        BZLogger.debug("Manually navigating to next file")
         moveInPlaylist(step: 1)
     }
 
@@ -907,27 +912,27 @@ final class PlayerViewModel: NSObject, ObservableObject {
     }
 
     func setPreviousFileKeyCode(_ value: UInt16) {
-        previousFileKeyCode = value
+        previousFileKeyCode = Self.normalizeUserShortcutKeyCode(Int(value), fallback: 33)
         saveSettings()
     }
 
     func setNextFileKeyCode(_ value: UInt16) {
-        nextFileKeyCode = value
+        nextFileKeyCode = Self.normalizeUserShortcutKeyCode(Int(value), fallback: 30)
         saveSettings()
     }
 
     func setAudioStepDownKeyCode(_ value: UInt16) {
-        audioStepDownKeyCode = value
+        audioStepDownKeyCode = Self.normalizeUserShortcutKeyCode(Int(value), fallback: 43)
         saveSettings()
     }
 
     func setAudioStepUpKeyCode(_ value: UInt16) {
-        audioStepUpKeyCode = value
+        audioStepUpKeyCode = Self.normalizeUserShortcutKeyCode(Int(value), fallback: 47)
         saveSettings()
     }
 
     func setSpeedToggleKeyCode(_ value: UInt16) {
-        speedToggleKeyCode = value
+        speedToggleKeyCode = Self.normalizeUserShortcutKeyCode(Int(value), fallback: 24)
         saveSettings()
     }
 
@@ -945,6 +950,91 @@ final class PlayerViewModel: NSObject, ObservableObject {
     func setShowRecentFiles(_ value: Bool) {
         showRecentFiles = value
         saveSettings()
+    }
+
+    func setAudioOnlyWhenMinimized(_ value: Bool) {
+        audioOnlyWhenMinimized = value
+        saveSettings()
+        if !value, isAudioOnlyMode {
+            exitAudioOnlyMode()
+        }
+    }
+
+    func enterAudioOnlyModeIfNeeded() {
+        guard audioOnlyWhenMinimized,
+              !isAudioOnlyMode,
+              let url = currentFileURL else { return }
+
+        let nativeVideoTracks: [(AVPlayerItemTrack, Bool)]
+        let audioTrack: Int32?
+        let subtitleTrack: Int32?
+        switch playbackBackend {
+        case .native:
+            nativeVideoTracks = nativePlayer.currentItem?.tracks.compactMap { track in
+                guard track.assetTrack?.mediaType == .video else { return nil }
+                return (track, track.isEnabled)
+            } ?? []
+            audioTrack = nil
+            subtitleTrack = nil
+        case .vlc:
+            nativeVideoTracks = []
+            audioTrack = vlcPlayer.currentAudioIndex
+            subtitleTrack = vlcPlayer.currentSubtitleIndex
+        }
+
+        audioOnlyState = AudioOnlyState(
+            url: url,
+            backend: playbackBackend,
+            time: max(currentTime, 0),
+            isPaused: isPaused,
+            speed: speed,
+            audioTrack: audioTrack,
+            subtitleTrack: subtitleTrack,
+            nativeVideoTracks: nativeVideoTracks
+        )
+        isAudioOnlyMode = true
+
+        switch playbackBackend {
+        case .native:
+            for (track, _) in nativeVideoTracks {
+                track.isEnabled = false
+            }
+        case .vlc:
+            pendingAudioOnlyAudioTrack = audioTrack
+            pendingAudioOnlySubtitleTrack = subtitleTrack
+            loadVLC(url: url, resumeAt: currentTime, startPaused: isPaused)
+        }
+    }
+
+    func exitAudioOnlyMode() {
+        guard let state = audioOnlyState else { return }
+        audioOnlyState = nil
+        isAudioOnlyMode = false
+
+        switch state.backend {
+        case .native:
+            for (track, enabled) in state.nativeVideoTracks {
+                track.isEnabled = enabled
+            }
+        case .vlc:
+            pendingAudioOnlyAudioTrack = state.audioTrack
+            pendingAudioOnlySubtitleTrack = state.subtitleTrack
+            loadVLC(url: state.url, resumeAt: state.time, startPaused: state.isPaused)
+            setSpeed(state.speed)
+        }
+    }
+
+    private func clearAudioOnlyModeForMediaChange() {
+        guard let state = audioOnlyState else { return }
+        audioOnlyState = nil
+        isAudioOnlyMode = false
+        pendingAudioOnlyAudioTrack = nil
+        pendingAudioOnlySubtitleTrack = nil
+        if state.backend == .native {
+            for (track, enabled) in state.nativeVideoTracks {
+                track.isEnabled = enabled
+            }
+        }
     }
 
     func setSubtitleBackgroundOpacity(_ value: Int) {
@@ -1147,11 +1237,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
     }
 
     private static func writeJSONAtomically(_ data: Data, to url: URL) {
-        do {
-            try data.write(to: url, options: [.atomic])
-        } catch {
-            debugLog("[BZPlayer] Failed to write JSON file \(url.path): \(error.localizedDescription)")
-        }
+        JSONWriteQueue.shared.enqueue(data, to: url)
     }
 
     func adjustAudioDelay(by deltaMs: Double) {
@@ -1209,11 +1295,11 @@ final class PlayerViewModel: NSObject, ObservableObject {
         let settings = Self.loadSettings()
         shortcutSeekSeconds = max(settings.shortcutSeekSeconds, 0.1)
         shortcutFrameStepCount = max(settings.shortcutFrameStepCount, 1)
-        previousFileKeyCode = Self.normalizeKeyCode(settings.previousFileKeyCode, fallback: 33)
-        nextFileKeyCode = Self.normalizeKeyCode(settings.nextFileKeyCode, fallback: 30)
-        audioStepDownKeyCode = Self.normalizeKeyCode(settings.audioStepDownKeyCode, fallback: 43)
-        audioStepUpKeyCode = Self.normalizeKeyCode(settings.audioStepUpKeyCode, fallback: 47)
-        speedToggleKeyCode = Self.normalizeKeyCode(settings.speedToggleKeyCode, fallback: 24)
+        previousFileKeyCode = Self.normalizeUserShortcutKeyCode(settings.previousFileKeyCode, fallback: 33)
+        nextFileKeyCode = Self.normalizeUserShortcutKeyCode(settings.nextFileKeyCode, fallback: 30)
+        audioStepDownKeyCode = Self.normalizeUserShortcutKeyCode(settings.audioStepDownKeyCode, fallback: 43)
+        audioStepUpKeyCode = Self.normalizeUserShortcutKeyCode(settings.audioStepUpKeyCode, fallback: 47)
+        speedToggleKeyCode = Self.normalizeUserShortcutKeyCode(settings.speedToggleKeyCode, fallback: 24)
         numericKeySpeeds = Self.normalizeNumericKeySpeeds(settings.numericKeySpeeds ?? [])
         playlistOrder = PlaylistOrder(rawValue: settings.playlistOrder) ?? playlistOrder
         loopMode = LoopMode(rawValue: settings.loopMode) ?? loopMode
@@ -1224,6 +1310,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         allowMultipleWindows = settings.allowMultipleWindows
         audioDelayStepMs = Self.normalizeAudioDelayStep(settings.audioDelayStepMs)
         showRecentFiles = settings.showRecentFiles
+        audioOnlyWhenMinimized = settings.audioOnlyWhenMinimized
         subtitleBackgroundOpacity = Self.clampSubtitleOpacity(settings.subtitleBackgroundOpacity)
         subtitleFontSize = max(settings.subtitleFontSize, 1)
         appLanguage = settings.appLanguage ?? "auto"
@@ -1261,6 +1348,10 @@ final class PlayerViewModel: NSObject, ObservableObject {
 
     func switchPlaybackBackend() {
         guard let url = currentFileURL else { return }
+        guard !isAudioOnlyMode else {
+            showToastMessage(t("最小化音频模式下不能切换播放后端"))
+            return
+        }
         if playbackBackend == .vlc && (audioDelayMs != 0 || selectedSubtitlePath != nil) {
             showToastMessage(t("当前字幕或音频延迟需要使用 VLC 播放后端"))
             return
@@ -1407,6 +1498,14 @@ final class PlayerViewModel: NSObject, ObservableObject {
             self.syncText = "播放链路：VLC/libvlc"
             self.playbackEngineStatus = "VLC/libvlc"
             self.selectDefaultTracksBySystemLanguage()
+            if let audioTrack = self.pendingAudioOnlyAudioTrack {
+                self.vlcPlayer.currentAudioIndex = audioTrack
+                self.pendingAudioOnlyAudioTrack = nil
+            }
+            if let subtitleTrack = self.pendingAudioOnlySubtitleTrack {
+                self.vlcPlayer.currentSubtitleIndex = subtitleTrack
+                self.pendingAudioOnlySubtitleTrack = nil
+            }
             if let selectedSubtitlePath = self.selectedSubtitlePath {
                 self.selectSubtitle(path: selectedSubtitlePath)
             }
@@ -1421,16 +1520,15 @@ final class PlayerViewModel: NSObject, ObservableObject {
         }
     }
 
-    private func bindNativePlayer() {
-        let callbackGeneration = self.callbackGeneration
-        nativeTimeObserver = nativePlayer.addPeriodicTimeObserver(
+    private func bindNativePlayer(for player: AVPlayer, generation: UUID) {
+        nativeTimeObserver = player.addPeriodicTimeObserver(
             forInterval: CMTime(seconds: 0.1, preferredTimescale: 600),
             queue: .main
-        ) { [weak self] time in
-            guard let self else { return }
-            let generation = callbackGeneration.load()
-            Task { @MainActor [weak self] in
+        ) { [weak self, weak player] time in
+            Task { @MainActor [weak self, weak player] in
                 guard let self,
+                      let player,
+                      self.nativePlayer === player,
                       self.playbackBackend == .native,
                       self.mediaOpenGeneration == generation else { return }
                 let seconds = time.seconds
@@ -1441,7 +1539,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
                         self.nativeStallCount += 1
                         if self.nativeStallCount > 30 { // ~3 seconds stall
                             self.nativeStallCount = 0
-                            print("检测到原生播放器卡死 (Position: \(seconds))，切至 VLC 内核...")
+                            BZLogger.error("Native player stalled at \(seconds)s; switching to VLC")
                             if let url = self.currentFileURL {
                                 let resumeAt = seconds.isFinite ? seconds : nil
                                 if self.currentMediaHasAV1Video {
@@ -1480,11 +1578,11 @@ final class PlayerViewModel: NSObject, ObservableObject {
             forName: .AVPlayerItemDidPlayToEndTime,
             object: nil,
             queue: .main
-        ) { [weak self] notification in
-            guard let self else { return }
-            let generation = callbackGeneration.load()
-            Task { @MainActor [weak self] in
+        ) { [weak self, weak player] notification in
+            Task { @MainActor [weak self, weak player] in
                 guard let self,
+                      let player,
+                      self.nativePlayer === player,
                       self.playbackBackend == .native,
                       self.mediaOpenGeneration == generation else { return }
                 let notificationItem = notification.object as? AVPlayerItem
@@ -1495,14 +1593,30 @@ final class PlayerViewModel: NSObject, ObservableObject {
         }
     }
 
+    private func unbindNativePlayer() {
+        if let nativeTimeObserver {
+            nativePlayer.removeTimeObserver(nativeTimeObserver)
+            self.nativeTimeObserver = nil
+        }
+        if let nativeEndObserver {
+            NotificationCenter.default.removeObserver(nativeEndObserver)
+            self.nativeEndObserver = nil
+        }
+        nativeItemStatusObserver = nil
+    }
+
     private func selectBackend(_ backend: PlaybackBackend) {
+        guard playbackInfrastructureInitialized else {
+            playbackBackend = backend
+            return
+        }
         invalidatePendingSeek()
         let previousBackend = playbackBackend
         playbackBackend = backend
 
         if previousBackend == .native {
+            unbindNativePlayer()
             nativePlayer.pause()
-            nativeItemStatusObserver = nil
             nativePlayer.replaceCurrentItem(with: nil)
         }
 
@@ -1527,6 +1641,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
     }
 
     private func applyVolumeToActiveBackend() {
+        guard playbackInfrastructureInitialized else { return }
         switch playbackBackend {
         case .native:
             nativePlayer.volume = Float(volume / 100.0)
@@ -1536,6 +1651,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
     }
 
     private func applyMuteToActiveBackend() {
+        guard playbackInfrastructureInitialized else { return }
         switch playbackBackend {
         case .native:
             nativePlayer.isMuted = isMuted
@@ -1608,7 +1724,6 @@ final class PlayerViewModel: NSObject, ObservableObject {
         playbackFailureTimer = nil
         let generation = UUID()
         mediaOpenGeneration = generation
-        callbackGeneration.store(generation)
         return generation
     }
 
@@ -1661,7 +1776,8 @@ final class PlayerViewModel: NSObject, ObservableObject {
     }
 
     private func openFromPlaylist(_ url: URL, forceStartAtBeginning: Bool = false) {
-        debugLog("[BZPlayer] openFromPlaylist: \(url.lastPathComponent), forceStartAtBeginning: \(forceStartAtBeginning)")
+        BZLogger.debug("[BZPlayer] openFromPlaylist: \(url.lastPathComponent), forceStartAtBeginning: \(forceStartAtBeginning)")
+        clearAudioOnlyModeForMediaChange()
         flushPendingSpeedSave()
         playbackError = nil
         attemptedBackendSwitch = false
@@ -1671,7 +1787,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         if loopMode == .none && playbackError == nil {
             let settings = Self.loadSettings()
             loopMode = LoopMode(rawValue: settings.loopMode) ?? .playlist
-            debugLog("[BZPlayer] Restored loop mode to: \(loopMode)")
+            BZLogger.debug("[BZPlayer] Restored loop mode to: \(loopMode)")
         }
 
         isPaused = false
@@ -1697,16 +1813,16 @@ final class PlayerViewModel: NSObject, ObservableObject {
         if isFirstOpen {
             if let savedSpeed = loadSpeedForFile(url) {
                 speed = Self.normalizeSpeed(savedSpeed)
-                debugLog("[BZPlayer] Restored speed for file: \(savedSpeed)")
+                BZLogger.debug("[BZPlayer] Restored speed for file: \(savedSpeed)")
             } else {
                 let lastUsed = Self.loadSettings().lastUsedSpeed
                 speed = Self.normalizeSpeed(lastUsed)
                 saveSpeedForFile(url)
-                debugLog("[BZPlayer] Inherited last used speed: \(lastUsed)")
+                BZLogger.debug("[BZPlayer] Inherited last used speed: \(lastUsed)")
             }
         } else {
             saveSpeedForFile(url)
-            debugLog("[BZPlayer] Keeping current speed: \(speed) for new file")
+            BZLogger.debug("[BZPlayer] Keeping current speed: \(speed) for new file")
         }
 
         if let savedAudioDelay = loadAudioDelayForFile(url) {
@@ -1716,7 +1832,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         }
 
         let resumeTime = forceStartAtBeginning ? nil : loadSavedProgress(for: url)
-        debugLog("[BZPlayer] resumeTime: \(resumeTime ?? -1)")
+        BZLogger.debug("[BZPlayer] resumeTime: \(resumeTime ?? -1)")
         mediaAnalysisTask?.cancel()
         let generation = startNewPlaybackGeneration()
         isSeeking = false
@@ -1732,7 +1848,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
 
             self.currentMediaHasAV1Video = self.hasAV1Video(url: url, ffprobeInfo: ffprobeInfo)
             self.currentNominalFPS = self.estimateFPS(for: url, ffprobeInfo: ffprobeInfo)
-            debugLog("[BZPlayer] Selected backend: \(backend)")
+            BZLogger.debug("[BZPlayer] Selected backend: \(backend)")
             self.selectBackend(backend)
 
             switch backend {
@@ -1766,7 +1882,8 @@ final class PlayerViewModel: NSObject, ObservableObject {
             resumeAt: resumeAt,
             audioDelayMs: audioDelayMs,
             subtitleFontSize: subtitleFontSize,
-            subtitleBackgroundOpacity: subtitleBackgroundOpacity
+            subtitleBackgroundOpacity: subtitleBackgroundOpacity,
+            noVideo: isAudioOnlyMode
         )
         if startPaused {
             vlcPlayer.pause()
@@ -1783,7 +1900,8 @@ final class PlayerViewModel: NSObject, ObservableObject {
             startPaused: isPaused,
             audioDelayMs: audioDelayMs,
             subtitleFontSize: subtitleFontSize,
-            subtitleBackgroundOpacity: subtitleBackgroundOpacity
+            subtitleBackgroundOpacity: subtitleBackgroundOpacity,
+            noVideo: isAudioOnlyMode
         )
     }
 
@@ -1828,7 +1946,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
             attemptedBackendSwitch = true
             let newBackend: PlaybackBackend = originalBackend == .native ? .vlc : .native
             let newGeneration = startNewPlaybackGeneration()
-            print("[BZPlayer] Playback failed with \(originalBackend), switching to \(newBackend)")
+            BZLogger.error("Playback failed with \(originalBackend), switching to \(newBackend)")
             selectBackend(newBackend)
 
             switch newBackend {
@@ -1851,10 +1969,10 @@ final class PlayerViewModel: NSObject, ObservableObject {
             )
         } else {
             let errorMsg = "无法播放文件：\(url.lastPathComponent)\n多个播放内核都无法解码此文件。"
-            print("[BZPlayer] \(errorMsg)")
+            BZLogger.error(errorMsg)
             playbackError = errorMsg
             if loopMode != .none {
-                print("[BZPlayer] Stopping playback sequence due to unplayable file")
+                BZLogger.error("Stopping playback sequence due to unplayable file")
                 loopMode = .none
             }
             showFileInfo()
@@ -1870,6 +1988,14 @@ final class PlayerViewModel: NSObject, ObservableObject {
         generation mediaGeneration: UUID? = nil
     ) {
         let generation = mediaGeneration ?? mediaOpenGeneration
+        unbindNativePlayer()
+        nativePlayer.pause()
+        nativePlayer.replaceCurrentItem(with: nil)
+        let player = AVPlayer()
+        player.volume = Float(volume / 100.0)
+        player.isMuted = isMuted
+        nativePlayer = player
+        bindNativePlayer(for: player, generation: generation)
         let item = AVPlayerItem(url: url)
         nativeItemStatusObserver = item.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in
             guard let self else { return }
@@ -1906,7 +2032,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
                         )
                     }
                 } else if item.status == .failed {
-                    print("[BZPlayer] AVPlayerItem failed: \(String(describing: item.error)), switching to VLC")
+                    BZLogger.error("AVPlayerItem failed: \(String(describing: item.error)); switching to VLC")
                     self.playbackFailureTimer?.invalidate()
                     self.playbackFailureTimer = nil
                     self.checkAndHandlePlaybackFailure(
@@ -1918,7 +2044,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
                 }
             }
         }
-        nativePlayer.replaceCurrentItem(with: item)
+        player.replaceCurrentItem(with: item)
     }
 
     private func chooseBackend(for url: URL, ffprobeInfo: FFprobeInfo? = nil) async -> PlaybackBackend {
@@ -1944,7 +2070,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
             }
             if ffprobeInfo.videoStreams.contains(where: { $0.codecName == "h264" }),
                await hasVideoDecodeErrors(url: url, scanSeconds: 20) {
-                debugLog("[BZPlayer] Detected video decode errors, using VLC/libvlc: \(url.lastPathComponent)")
+                BZLogger.debug("[BZPlayer] Detected video decode errors, using VLC/libvlc: \(url.lastPathComponent)")
                 return .vlc
             }
         }
@@ -2060,7 +2186,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
             guard let self,
                   self.playbackBackend == .native,
                   self.mediaOpenGeneration == generation else { return }
-            debugLog("[BZPlayer] Refreshing native video surface")
+            BZLogger.debug("[BZPlayer] Refreshing native video surface")
             self.nativePlayerSurfaceRefreshID += 1
         }
     }
@@ -2085,7 +2211,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
                 reloadResumeAt = resumeAt
             }
 
-            debugLog("[BZPlayer] Reloading native VP9 item after AV warmup")
+            BZLogger.debug("[BZPlayer] Reloading native VP9 item after AV warmup")
             self.nativeItemStatusObserver = nil
             self.nativePlayer.replaceCurrentItem(with: nil)
             self.openWithNative(
@@ -2102,11 +2228,11 @@ final class PlayerViewModel: NSObject, ObservableObject {
     private func warmupVP9DecoderIfNeeded() {
         guard !Self.hasCompletedNativeVP9Warmup else { return }
         guard let url = Bundle.module.url(forResource: "Resources/vp9_warmup", withExtension: "mp4") else {
-            debugLog("[BZPlayer] VP9 warmup resource not found, skipping")
+            BZLogger.debug("[BZPlayer] VP9 warmup resource not found, skipping")
             return
         }
         Self.hasCompletedNativeVP9Warmup = true
-        debugLog("[BZPlayer] Starting silent VP9 decoder warmup")
+        BZLogger.debug("[BZPlayer] Starting silent VP9 decoder warmup")
         let item = AVPlayerItem(url: url)
         let player = AVPlayer(playerItem: item)
         player.isMuted = true
@@ -2116,7 +2242,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
             self?.vp9WarmupPlayer?.pause()
             self?.vp9WarmupPlayer = nil
-            debugLog("[BZPlayer] VP9 decoder warmup complete")
+            BZLogger.debug("[BZPlayer] VP9 decoder warmup complete")
         }
     }
 
@@ -2293,7 +2419,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
                 playlistDurations[url] = seconds
             }
         } catch {
-            debugLog("Failed to fetch duration for \(url): \(error)")
+            BZLogger.debug("Failed to fetch duration for \(url): \(error)")
         }
     }
 
@@ -2571,11 +2697,11 @@ final class PlayerViewModel: NSObject, ObservableObject {
     private func handlePlaybackFinished() {
         // Capture currentTime before any state changes to ensure accurate end-of-video detection
         let snapshotTime = currentTime
-        debugLog("[BZPlayer] handlePlaybackFinished called - Time: \(snapshotTime), Duration: \(duration), isPaused: \(isPaused), isSeeking: \(isSeeking), loopMode: \(loopMode)")
+        BZLogger.debug("[BZPlayer] handlePlaybackFinished called - Time: \(snapshotTime), Duration: \(duration), isPaused: \(isPaused), isSeeking: \(isSeeking), loopMode: \(loopMode)")
 
         // Don't auto-advance if there's a playback error
         if playbackError != nil {
-            debugLog("[BZPlayer] Playback error detected, pausing instead of auto-advancing")
+            BZLogger.debug("[BZPlayer] Playback error detected, pausing instead of auto-advancing")
             isPaused = true
             return
         }
@@ -2585,7 +2711,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         if effectiveDuration == 0 && playbackBackend == .vlc {
             if let vlcDuration = vlcPlayer.getDoubleProperty("duration") {
                 effectiveDuration = vlcDuration
-                debugLog("[BZPlayer] Got duration from VLC directly: \(effectiveDuration)")
+                BZLogger.debug("[BZPlayer] Got duration from VLC directly: \(effectiveDuration)")
             }
         }
 
@@ -2598,11 +2724,11 @@ final class PlayerViewModel: NSObject, ObservableObject {
         // NOTE: effectiveDuration must be > 0, otherwise it's likely a playback failure
         let isNearEnd = effectiveDuration > 0 && (timeDiff < 5.0 || progressPercent >= 0.9)
 
-        debugLog("[BZPlayer] isNearEnd check - duration: \(effectiveDuration), snapshotTime: \(snapshotTime), timeDiff: \(timeDiff), progressPercent: \(progressPercent), result: \(isNearEnd)")
+        BZLogger.debug("[BZPlayer] isNearEnd check - duration: \(effectiveDuration), snapshotTime: \(snapshotTime), timeDiff: \(timeDiff), progressPercent: \(progressPercent), result: \(isNearEnd)")
         guard isNearEnd else {
-            debugLog("[BZPlayer] Ignoring playback-finished notification (not near end or invalid duration)")
+            BZLogger.debug("[BZPlayer] Ignoring playback-finished notification (not near end or invalid duration)")
             if effectiveDuration == 0 {
-                debugLog("[BZPlayer] Duration is 0, treating playback-finished notification as a transient VLC signal")
+                BZLogger.debug("[BZPlayer] Duration is 0, treating playback-finished notification as a transient VLC signal")
             }
             return
         }
@@ -2621,7 +2747,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         lastAutoNextJumpTimes.append(now)
 
         if lastAutoNextJumpTimes.count > 5 {
-            debugLog("[BZPlayer] DETECTED INFINITE SKIP LOOP! Pausing playback to prevent instability.")
+            BZLogger.debug("[BZPlayer] DETECTED INFINITE SKIP LOOP! Pausing playback to prevent instability.")
             pause()
             lastAutoNextJumpTimes.removeAll()
             showAlert(title: "播放提示", message: "检测到连续快速切片，可能遇到无法播放的文件，已停止播放以防程序崩溃。")
@@ -2633,14 +2759,14 @@ final class PlayerViewModel: NSObject, ObservableObject {
 
         switch loopMode {
         case .singleFile:
-            debugLog("[BZPlayer] Loop mode: singleFile")
+            BZLogger.debug("[BZPlayer] Loop mode: singleFile")
             if let url = finishedFileURL {
                 openFromPlaylist(url, forceStartAtBeginning: true)
             } else {
                 isPaused = true
             }
         case .playlist:
-            debugLog("[BZPlayer] Loop mode: playlist, currentFileURL: \(String(describing: finishedFileURL)), currentIndex: \(currentIndex)")
+            BZLogger.debug("[BZPlayer] Loop mode: playlist, currentFileURL: \(String(describing: finishedFileURL)), currentIndex: \(currentIndex)")
             // Use path comparison to find current index, as URL instances may differ
             let current: Int
             if let currentURL = finishedFileURL {
@@ -2648,20 +2774,20 @@ final class PlayerViewModel: NSObject, ObservableObject {
             } else {
                 current = currentIndex
             }
-            debugLog("[BZPlayer] Calculated current index: \(current), playlist.count: \(playlist.count)")
+            BZLogger.debug("[BZPlayer] Calculated current index: \(current), playlist.count: \(playlist.count)")
             let nextIndex = current + 1
             if nextIndex < playlist.count {
-                debugLog("[BZPlayer] Opening next file at index \(nextIndex): \(playlist[nextIndex].lastPathComponent)")
+                BZLogger.debug("[BZPlayer] Opening next file at index \(nextIndex): \(playlist[nextIndex].lastPathComponent)")
                 openFromPlaylist(playlist[nextIndex])
             } else if let first = playlist.first {
-                debugLog("[BZPlayer] At end of playlist, looping back to first: \(first.lastPathComponent)")
+                BZLogger.debug("[BZPlayer] At end of playlist, looping back to first: \(first.lastPathComponent)")
                 openFromPlaylist(first)
             } else {
-                debugLog("[BZPlayer] Playlist is empty, pausing")
+                BZLogger.debug("[BZPlayer] Playlist is empty, pausing")
                 isPaused = true
             }
         case .none:
-            debugLog("[BZPlayer] Loop mode: none, pausing")
+            BZLogger.debug("[BZPlayer] Loop mode: none, pausing")
             isPaused = true
         }
     }
@@ -2758,7 +2884,7 @@ extension PlayerViewModel {
             })
             if let matchedTrack {
                 vlcPlayer.currentAudioIndex = matchedTrack.0
-                print("[BZPlayer] Auto-selected audio track based on active language (\(activeLang)): \(matchedTrack.1)")
+                BZLogger.debug("Auto-selected audio track based on active language (\(activeLang)): \(matchedTrack.1)")
             }
         }
         
@@ -2800,7 +2926,7 @@ extension PlayerViewModel {
                 })
                 if let matchedTrack {
                     vlcPlayer.currentSubtitleIndex = matchedTrack.0
-                    print("[BZPlayer] Auto-selected embedded subtitle track based on active language (\(activeLang)): \(matchedTrack.1)")
+                    BZLogger.debug("Auto-selected embedded subtitle track based on active language (\(activeLang)): \(matchedTrack.1)")
                 }
             }
         }
@@ -2878,10 +3004,10 @@ extension PlayerViewModel {
         do {
             try content.write(to: tempFileURL, atomically: true, encoding: .utf8)
             subtitleCleanupTracker.add(tempFileURL)
-            debugLog("[BZPlayer] Converted non-UTF8 subtitle to UTF8 at: \(tempFileURL.path)")
+            BZLogger.debug("[BZPlayer] Converted non-UTF8 subtitle to UTF8 at: \(tempFileURL.path)")
             return tempFileURL
         } catch {
-            debugLog("[BZPlayer] Failed to write UTF-8 subtitle: \(error)")
+            BZLogger.debug("[BZPlayer] Failed to write UTF-8 subtitle: \(error)")
             return nil
         }
     }

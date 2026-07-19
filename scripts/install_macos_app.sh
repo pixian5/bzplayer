@@ -1,10 +1,18 @@
 #!/bin/zsh
 set -euo pipefail
 
-# 用法: zsh scripts/install_macos_app.sh ["commit 消息"]
-# 示例: zsh scripts/install_macos_app.sh "修复播放卡顿"   # 带 commit
-# 示例: zsh scripts/install_macos_app.sh                 # 仅构建部署
-COMMIT_MSG="${1:-}"
+# 用法: zsh scripts/install_macos_app.sh [--commit "中文 commit 消息"]
+COMMIT_MSG=""
+if [[ "${1:-}" == "--commit" ]]; then
+    COMMIT_MSG="${2:-}"
+    if [[ -z "${COMMIT_MSG}" ]]; then
+        echo "--commit 后必须提供 commit 消息" >&2
+        exit 2
+    fi
+elif [[ $# -gt 0 ]]; then
+    echo "仅支持显式的 --commit \"消息\" 参数" >&2
+    exit 2
+fi
 
 APP_NAME="BZPlayer.app"
 APP_DIR="/Applications/${APP_NAME}"
@@ -39,82 +47,8 @@ pkill -9 -x BZPlayer || true
 echo "[deploy] Removing old app..."
 rm -rf "${APP_DIR}"
 
-mkdir -p "${APP_DIR}/Contents/MacOS"
-
-/bin/cat > "${APP_DIR}/Contents/Info.plist" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleDevelopmentRegion</key>
-    <string>zh_CN</string>
-    <key>CFBundleDocumentTypes</key>
-    <array>
-        <dict>
-            <key>CFBundleTypeName</key>
-            <string>视频文件</string>
-            <key>CFBundleTypeRole</key>
-            <string>Viewer</string>
-            <key>LSHandlerRank</key>
-            <string>Owner</string>
-            <key>LSItemContentTypes</key>
-            <array>
-                <string>public.movie</string>
-                <string>public.video</string>
-                <string>public.audio</string>
-                <string>public.mpeg-4</string>
-                <string>com.apple.quicktime-movie</string>
-                <string>com.apple.m4v-video</string>
-                <string>public.avi</string>
-                <string>org.matroska.mkv</string>
-                <string>org.webmproject.webm</string>
-                <string>public.mpeg</string>
-                <string>public.mpeg-2-transport-stream</string>
-                <string>com.microsoft.windows-media-wmv</string>
-                <string>com.adobe.flash.video</string>
-            </array>
-        </dict>
-    </array>
-    <key>CFBundleExecutable</key>
-    <string>BZPlayer</string>
-    <key>CFBundleIdentifier</key>
-    <string>tech.sbbz.bzplayer</string>
-    <key>CFBundleInfoDictionaryVersion</key>
-    <string>6.0</string>
-    <key>CFBundleName</key>
-    <string>BZPlayer</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>CFBundleShortVersionString</key>
-    <string>${NEXT_VERSION}</string>
-    <key>CFBundleVersion</key>
-    <string>${NEXT_VERSION}</string>
-    <key>LSMinimumSystemVersion</key>
-    <string>13.0</string>
-    <key>NSHighResolutionCapable</key>
-    <true/>
-    <key>NSPrincipalClass</key>
-    <string>NSApplication</string>
-    <key>CFBundleIconFile</key>
-    <string>AppIcon.icns</string>
-</dict>
-</plist>
-EOF
-
-echo "[deploy] Copying resources..."
-mkdir -p "${APP_DIR}/Contents/Resources"
-if [[ -f "${PROJECT_DIR}/Resources/AppIcon.icns" ]]; then
-    cp "${PROJECT_DIR}/Resources/AppIcon.icns" "${APP_DIR}/Contents/Resources/AppIcon.icns"
-fi
-
-cp "${BIN_SOURCE}" "${APP_DIR}/Contents/MacOS/BZPlayer"
-chmod +x "${APP_DIR}/Contents/MacOS/BZPlayer"
-
-echo "[deploy] Copying VLCKit.framework..."
-mkdir -p "${APP_DIR}/Contents/Frameworks"
-cp -R "${BUILD_DIR}/VLCKit.framework" "${APP_DIR}/Contents/Frameworks/"
-# SwiftPM's generated Bundle.module accessor looks next to the app bundle.
-cp -R "${BUILD_DIR}/BZPlayer_BZPlayerApp.bundle" "${APP_DIR}/"
+echo "[deploy] Packaging app bundle..."
+zsh "${SCRIPT_DIR}/build_macos_app.sh" "${APP_DIR}" "${NEXT_VERSION}" "${BUILD_DIR}"
 
 "${LSREGISTER}" -f "${APP_DIR}" >/dev/null
 open -a "${APP_DIR}"

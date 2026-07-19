@@ -2,89 +2,205 @@ import Foundation
 import CoreMedia
 import AVFoundation
 import Dispatch
+import Darwin
 import BZPlayerCore
 
-func probeMediaInfo(url: URL) async -> FFprobeInfo? {
-    await withCheckedContinuation { continuation in
-        DispatchQueue.global(qos: .userInitiated).async {
-            continuation.resume(returning: probeMediaInfoSynchronously(url: url))
+private struct ProcessResult: Sendable {
+    let terminationStatus: Int32
+    let standardOutput: Data
+    let standardError: Data
+}
+
+private final class AsyncProcessRunner: @unchecked Sendable {
+    private let lock = NSLock()
+    private var process: Process?
+    private var continuation: CheckedContinuation<ProcessResult, Never>?
+    private var didFinish = false
+    private var cancelRequested = false
+    private var timeoutWorkItem: DispatchWorkItem?
+
+    func start(
+        executableURL: URL,
+        arguments: [String],
+        timeout: TimeInterval,
+        continuation: CheckedContinuation<ProcessResult, Never>
+    ) {
+        lock.lock()
+        self.continuation = continuation
+        let shouldCancel = cancelRequested
+        lock.unlock()
+
+        guard !shouldCancel else {
+            finish(ProcessResult(terminationStatus: -1, standardOutput: Data(), standardError: Data()))
+            return
         }
+
+        let outputPipe = Pipe()
+        let errorPipe = Pipe()
+        let process = Process()
+        process.executableURL = executableURL
+        process.arguments = arguments
+        process.standardOutput = outputPipe
+        process.standardError = errorPipe
+        process.terminationHandler = { [weak self, weak process] terminatedProcess in
+            let output = try? outputPipe.fileHandleForReading.readToEnd() ?? Data()
+            let error = try? errorPipe.fileHandleForReading.readToEnd() ?? Data()
+            self?.finish(ProcessResult(
+                terminationStatus: terminatedProcess.terminationStatus,
+                standardOutput: output ?? Data(),
+                standardError: error ?? Data()
+            ))
+            process?.terminationHandler = nil
+        }
+
+        lock.lock()
+        self.process = process
+        let shouldCancelAfterInstall = cancelRequested
+        lock.unlock()
+
+        do {
+            try process.run()
+        } catch {
+            finish(ProcessResult(
+                terminationStatus: -1,
+                standardOutput: Data(),
+                standardError: Data(error.localizedDescription.utf8)
+            ))
+            return
+        }
+
+        if shouldCancelAfterInstall {
+            cancel()
+            return
+        }
+
+        let timeoutWorkItem = DispatchWorkItem { [weak self, weak process] in
+            guard let self, let process, process.isRunning else { return }
+            process.terminate()
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5) {
+                if process.isRunning {
+                    kill(process.processIdentifier, SIGKILL)
+                }
+            }
+            self.clearTimeoutWorkItem()
+        }
+        lock.lock()
+        self.timeoutWorkItem = timeoutWorkItem
+        lock.unlock()
+        DispatchQueue.global(qos: .utility).asyncAfter(
+            deadline: .now() + max(timeout, 0.1),
+            execute: timeoutWorkItem
+        )
+    }
+
+    func cancel() {
+        lock.lock()
+        cancelRequested = true
+        let process = self.process
+        lock.unlock()
+        if let process, process.isRunning {
+            process.terminate()
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5) {
+                if process.isRunning {
+                    kill(process.processIdentifier, SIGKILL)
+                }
+            }
+        }
+    }
+
+    private func clearTimeoutWorkItem() {
+        lock.lock()
+        timeoutWorkItem?.cancel()
+        timeoutWorkItem = nil
+        lock.unlock()
+    }
+
+    private func finish(_ result: ProcessResult) {
+        lock.lock()
+        guard !didFinish else {
+            lock.unlock()
+            return
+        }
+        didFinish = true
+        let continuation = self.continuation
+        self.continuation = nil
+        self.process = nil
+        timeoutWorkItem?.cancel()
+        timeoutWorkItem = nil
+        lock.unlock()
+        continuation?.resume(returning: result)
     }
 }
 
-private func probeMediaInfoSynchronously(url: URL) -> FFprobeInfo? {
-    let process = Process()
-    // Try common homebrew/standard paths if just "ffprobe" in env fails
-    let ffprobePath: String = {
-        let candidates = ["/opt/homebrew/bin/ffprobe", "/usr/local/bin/ffprobe", "/usr/bin/ffprobe"]
-        for p in candidates {
-            if FileManager.default.fileExists(atPath: p) { return p }
+private func runExternalProcess(
+    executableURL: URL,
+    arguments: [String],
+    timeout: TimeInterval
+) async -> ProcessResult {
+    let runner = AsyncProcessRunner()
+    return await withTaskCancellationHandler(operation: {
+        await withCheckedContinuation { continuation in
+            runner.start(
+                executableURL: executableURL,
+                arguments: arguments,
+                timeout: timeout,
+                continuation: continuation
+            )
         }
-        return "ffprobe" // fallback to env search
-    }()
-    
-    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-    process.arguments = [
-        ffprobePath,
+    }, onCancel: {
+        runner.cancel()
+    })
+}
+
+private func toolInvocation(_ name: String, arguments: [String]) -> (executableURL: URL, arguments: [String]) {
+    let candidates = [
+        "/opt/homebrew/bin/\(name)",
+        "/usr/local/bin/\(name)",
+        "/usr/bin/\(name)"
+    ]
+    if let path = candidates.first(where: { FileManager.default.fileExists(atPath: $0) }) {
+        return (URL(fileURLWithPath: path), arguments)
+    }
+    return (URL(fileURLWithPath: "/usr/bin/env"), [name] + arguments)
+}
+
+func probeMediaInfo(url: URL) async -> FFprobeInfo? {
+    let invocation = toolInvocation("ffprobe", arguments: [
         "-v", "error",
         "-show_entries",
         "stream=codec_name,codec_long_name,codec_type,codec_tag_string,profile,sample_rate,channels,channel_layout,bit_rate,width,height,r_frame_rate:stream_tags=language",
         "-of", "json",
         url.path
-    ]
-
-    let output = Pipe()
-    process.standardOutput = output
-    process.standardError = FileHandle.nullDevice
-
-    do {
-        try process.run()
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else { return nil }
-        guard
-            let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let streams = object["streams"] as? [[String: Any]]
-        else {
-            return nil
-        }
-
-        let mapped = streams.compactMap(ffprobeStreamSummary(from:))
-        return FFprobeInfo(
-            videoStreams: mapped.filter { $0.type == "video" }.map {
-                FFprobeStream(codecName: $0.codecName, codecTag: $0.codecTag, profile: $0.profile, summary: $0.summary)
-            },
-            audioStreams: mapped.filter { $0.type == "audio" }.map {
-                FFprobeStream(codecName: $0.codecName, codecTag: $0.codecTag, profile: $0.profile, summary: $0.summary)
-            }
-        )
-    } catch {
+    ])
+    let result = await runExternalProcess(
+        executableURL: invocation.executableURL,
+        arguments: invocation.arguments,
+        timeout: 8
+    )
+    guard result.terminationStatus == 0 else {
         return nil
     }
+    guard
+        let object = try? JSONSerialization.jsonObject(with: result.standardOutput) as? [String: Any],
+        let streams = object["streams"] as? [[String: Any]]
+    else {
+        return nil
+    }
+
+    let mapped = streams.compactMap(ffprobeStreamSummary(from:))
+    return FFprobeInfo(
+        videoStreams: mapped.filter { $0.type == "video" }.map {
+            FFprobeStream(codecName: $0.codecName, codecTag: $0.codecTag, profile: $0.profile, summary: $0.summary)
+        },
+        audioStreams: mapped.filter { $0.type == "audio" }.map {
+            FFprobeStream(codecName: $0.codecName, codecTag: $0.codecTag, profile: $0.profile, summary: $0.summary)
+        }
+    )
 }
 
 func hasVideoDecodeErrors(url: URL, scanSeconds: Int) async -> Bool {
-    await withCheckedContinuation { continuation in
-        DispatchQueue.global(qos: .utility).async {
-            continuation.resume(returning: hasVideoDecodeErrorsSynchronously(url: url, scanSeconds: scanSeconds))
-        }
-    }
-}
-
-private func hasVideoDecodeErrorsSynchronously(url: URL, scanSeconds: Int) -> Bool {
     guard url.isFileURL, scanSeconds > 0 else { return false }
-    let ffmpegPath: String = {
-        let candidates = ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/usr/bin/ffmpeg"]
-        for p in candidates {
-            if FileManager.default.fileExists(atPath: p) { return p }
-        }
-        return "ffmpeg"
-    }()
-
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-    process.arguments = [
-        ffmpegPath,
+    let invocation = toolInvocation("ffmpeg", arguments: [
         "-hide_banner",
         "-v", "warning",
         "-i", url.path,
@@ -92,46 +208,27 @@ private func hasVideoDecodeErrorsSynchronously(url: URL, scanSeconds: Int) -> Bo
         "-t", "\(scanSeconds)",
         "-f", "null",
         "-"
+    ])
+    let result = await runExternalProcess(
+        executableURL: invocation.executableURL,
+        arguments: invocation.arguments,
+        timeout: min(max(Double(scanSeconds), 8), 20)
+    )
+    guard result.terminationStatus == 0 || !result.standardError.isEmpty else {
+        return false
+    }
+    guard let output = String(data: result.standardError, encoding: .utf8)?.lowercased(), !output.isEmpty else {
+        return false
+    }
+    let errorMarkers = [
+        "invalid nal",
+        "error splitting the input into nal units",
+        "invalid data found when processing input",
+        "error submitting packet to decoder",
+        "failed to parse header of nalu",
+        "slice type"
     ]
-
-    let stderrURL = FileManager.default.temporaryDirectory
-        .appendingPathComponent("BZPlayer-ffmpeg-\(UUID().uuidString).log")
-    guard FileManager.default.createFile(atPath: stderrURL.path, contents: nil) else {
-        return false
-    }
-    defer { try? FileManager.default.removeItem(at: stderrURL) }
-
-    let stderrHandle: FileHandle
-    do {
-        stderrHandle = try FileHandle(forWritingTo: stderrURL)
-    } catch {
-        return false
-    }
-    defer { try? stderrHandle.close() }
-
-    process.standardOutput = FileHandle.nullDevice
-    process.standardError = stderrHandle
-
-    do {
-        try process.run()
-        process.waitUntilExit()
-        try? stderrHandle.close()
-        let data = try Data(contentsOf: stderrURL)
-        guard let output = String(data: data, encoding: .utf8)?.lowercased(), !output.isEmpty else {
-            return false
-        }
-        let errorMarkers = [
-            "invalid nal",
-            "error splitting the input into nal units",
-            "invalid data found when processing input",
-            "error submitting packet to decoder",
-            "failed to parse header of nalu",
-            "slice type"
-        ]
-        return errorMarkers.contains { output.contains($0) }
-    } catch {
-        return false
-    }
+    return errorMarkers.contains { output.contains($0) }
 }
 
 func codecDescription(from formatDescription: Any?, mediaType: String) -> String {

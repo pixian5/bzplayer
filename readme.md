@@ -20,12 +20,25 @@ cd macos/BZPlayer
 swift run
 ```
 
+验证与安装：
+
+```bash
+swift test --package-path macos/BZPlayer
+swift build -c release --package-path macos/BZPlayer
+zsh scripts/install_macos_app.sh
+```
+
+安装脚本会结束旧的 BZPlayer 进程、重建 `/Applications/BZPlayer.app` 并启动新版本。它默认不会提交 Git；只有明确执行 `zsh scripts/install_macos_app.sh --commit "中文提交说明"` 或 `./deploy.sh --commit "中文提交说明"` 才会提交并推送。
+
 ## 重大说明
 
 - 该播放器使用 `SwiftUI + AppKit + VLCKit`，**无法在 Ubuntu 直接运行**。
 - 如需在 Ubuntu 验证，只能做静态代码检查，实际功能需在 macOS 13+ 上运行确认。
 - `VLCKit.framework` 会随 `.app` 一起打包；未安装 `ffmpeg`/`ffprobe` 时仍可播放，但文件信息和部分兼容性诊断会跳过外部分析。
+- `ffprobe` 分析最多等待 8 秒，`ffmpeg` 解码诊断最多等待 20 秒；超时会终止子进程，不应阻塞播放启动。
 - AV1 视频优先使用系统 AVPlayer；为避免 macOS 26 上随 VLCKit 一起打包的 dav1d 解码器崩溃，AV1 不再回退到 VLC。AV1 容器或音频轨道不受系统支持时会提示无法播放。
+- “最小化到 Dock 时仅播放音频”默认关闭，是实验功能。开启后会在最小化时禁用 AVPlayer 视频轨道，或让 VLC 以 `:no-video` 重新加载；恢复窗口时会再次加载视频。该功能可能产生短暂切换，节能效果必须在目标机器上用 Activity Monitor、`powermetrics` 等工具实测，不能仅凭配置推断。
+- 当前本地安装与 GitHub Actions 生成的应用包均未自动签名或公证，首次运行可能需要在系统安全提示中允许。生产分发前应增加 Developer ID 签名、公证和 staple 流程。
 
 ## 自动构建与发布（GitHub Actions）
 
@@ -37,5 +50,7 @@ swift run
   - `BZPlayer.app`
   - `BZPlayer-v<版本>.dmg`
 - 版本规则：`version = GITHUB_RUN_NUMBER - 1`（首次为 `0`，之后每次 +1）
+- CI 会先执行 `swift test --package-path macos/BZPlayer`，再使用 `scripts/build_macos_app.sh` 生成与本地一致的 `.app` 和 DMG。
+- CI 只有在配置 `MACOS_CERTIFICATE_BASE64`、`MACOS_CERTIFICATE_PASSWORD`、`MACOS_SIGNING_IDENTITY` 后才签名；再配置 `APPLE_API_KEY_BASE64`、`APPLE_API_KEY_ID`、`APPLE_API_ISSUER` 才会公证并 staple，否则产物保持 unsigned。
 
 > 注意：Release 发布需要仓库具备 `contents: write` 权限（工作流已声明）。

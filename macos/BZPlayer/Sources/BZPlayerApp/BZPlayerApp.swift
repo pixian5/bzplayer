@@ -1,27 +1,10 @@
 import SwiftUI
 import AppKit
 
-// Debug logger
-private let debugLogURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Documents/BZPlayer.log")
-private func debugLog(_ msg: String) {
-    let line = "\(Date()): \(msg)\n"
-    if let data = line.data(using: .utf8) {
-        if FileManager.default.fileExists(atPath: debugLogURL.path) {
-            if let handle = try? FileHandle(forWritingTo: debugLogURL) {
-                handle.seekToEndOfFile()
-                handle.write(data)
-                handle.closeFile()
-            }
-        } else {
-            try? data.write(to: debugLogURL)
-        }
-    }
-}
-
 @main
 struct BZPlayerApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @StateObject private var settingsViewModel = PlayerViewModel()
+    @StateObject private var settingsViewModel = PlayerViewModel(loadPlaybackInfrastructure: false)
     @StateObject private var fileInfoViewModel = FileInfoViewModel()
 
     var body: some Scene {
@@ -78,6 +61,16 @@ private struct PlayerWindowRootView: View {
                 viewModel.prepareForWindowClose()
                 appDelegate.unregister(window: window)
             }
+            .onReceive(NotificationCenter.default.publisher(for: NSWindow.willMiniaturizeNotification)) { notification in
+                guard let window = notification.object as? NSWindow,
+                      window.windowNumber == windowNumber else { return }
+                viewModel.enterAudioOnlyModeIfNeeded()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSWindow.didDeminiaturizeNotification)) { notification in
+                guard let window = notification.object as? NSWindow,
+                      window.windowNumber == windowNumber else { return }
+                viewModel.exitAudioOnlyMode()
+            }
             .onReceive(NotificationCenter.default.publisher(for: PlayerViewModel.preferencesDidChangeNotification)) { notification in
                 guard let source = notification.object as? PlayerViewModel, source !== viewModel else { return }
                 viewModel.refreshPreferences()
@@ -102,13 +95,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         true
     }
 
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        JSONWriteQueue.shared.flush()
+        return .terminateNow
+    }
+
     func application(_ sender: NSApplication, openFile filename: String) -> Bool {
         let url = URL(fileURLWithPath: filename)
-        debugLog("[AppDelegate] openFile called: \(filename), registeredWindows count: \(registeredWindows.count)")
+        BZLogger.debug("[AppDelegate] openFile called: \(filename), registeredWindows count: \(registeredWindows.count)")
 
         // If there's an existing window, use it to play the file
         if let targetBinding = singleWindowTargetBinding() {
-            debugLog("[AppDelegate] Found existing window, reusing it")
+            BZLogger.debug("[AppDelegate] Found existing window, reusing it")
             let vm = targetBinding.viewModel
             let window = targetBinding.window
             DispatchQueue.main.async {
@@ -119,7 +117,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return true
         }
         // No existing window, create a new one
-        debugLog("[AppDelegate] No existing window found, creating new window")
+        BZLogger.debug("[AppDelegate] No existing window found, creating new window")
         DispatchQueue.main.async {
             self.pendingURLs = [url]
             self.createAdditionalPlayerWindow()
@@ -198,7 +196,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         registeredWindows[key] = WeakWindowBinding(window: window, viewModel: viewModel)
         cleanupDeadWindowBindings()
-        debugLog("[AppDelegate] Window registered, windowNumber: \(window.windowNumber), total registered: \(registeredWindows.count)")
+        BZLogger.debug("[AppDelegate] Window registered, windowNumber: \(window.windowNumber), total registered: \(registeredWindows.count)")
     }
 
     @MainActor
@@ -237,7 +235,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func createAdditionalPlayerWindow() {
-        debugLog("[AppDelegate] Creating additional player window")
+        BZLogger.debug("[AppDelegate] Creating additional player window")
         let fileInfoViewModel = FileInfoViewModel()
         let host = NSHostingController(rootView: PlayerWindowRootView(appDelegate: self, fileInfoViewModel: fileInfoViewModel))
         let window = NSWindow(contentViewController: host)
@@ -296,11 +294,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor
     private func singleWindowTargetBinding(excluding excludedViewModel: PlayerViewModel? = nil) -> WeakWindowBinding? {
         cleanupDeadWindowBindings()
-        debugLog("[AppDelegate] singleWindowTargetBinding called, registeredWindows: \(registeredWindows.count), keyWindow: \(NSApp.keyWindow != nil), mainWindow: \(NSApp.mainWindow != nil), activeViewModel: \(activeViewModel != nil)")
+        BZLogger.debug("[AppDelegate] singleWindowTargetBinding called, registeredWindows: \(registeredWindows.count), keyWindow: \(NSApp.keyWindow != nil), mainWindow: \(NSApp.mainWindow != nil), activeViewModel: \(activeViewModel != nil)")
 
         // First, try to find any valid binding from registeredWindows
         if let binding = registeredWindows.values.first(where: { $0.viewModel !== excludedViewModel && $0.window != nil && $0.viewModel != nil }) {
-            debugLog("[AppDelegate] Found valid binding from registeredWindows, windowNumber: \(binding.window?.windowNumber ?? -1)")
+            BZLogger.debug("[AppDelegate] Found valid binding from registeredWindows, windowNumber: \(binding.window?.windowNumber ?? -1)")
             return binding
         }
 
@@ -309,18 +307,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
            let binding = registeredWindows[ObjectIdentifier(keyWindow)],
            let viewModel = binding.viewModel,
            viewModel !== excludedViewModel {
-            debugLog("[AppDelegate] Found binding via key/main window")
+            BZLogger.debug("[AppDelegate] Found binding via key/main window")
             return binding
         }
 
         // Fall back to activeViewModel
         if let activeViewModel, activeViewModel !== excludedViewModel,
            let binding = registeredWindows.values.first(where: { $0.viewModel === activeViewModel }) {
-            debugLog("[AppDelegate] Found binding via activeViewModel")
+            BZLogger.debug("[AppDelegate] Found binding via activeViewModel")
             return binding
         }
 
-        debugLog("[AppDelegate] No binding found")
+        BZLogger.debug("[AppDelegate] No binding found")
         return nil
     }
 

@@ -71,7 +71,8 @@ struct PlayerContainerView: NSViewRepresentable {
         nsView.updateBackend(
             viewModel.playbackBackend,
             player: viewModel.nativePlayer,
-            nativeRefreshID: viewModel.nativePlayerSurfaceRefreshID
+            nativeRefreshID: viewModel.nativePlayerSurfaceRefreshID,
+            videoVisible: !viewModel.isAudioOnlyMode
         )
         if nsView.window != nil {
             if viewModel.playbackBackend == .vlc {
@@ -127,7 +128,12 @@ final class PlayerHostView: NSView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    func updateBackend(_ backend: PlayerViewModel.PlaybackBackend, player: AVPlayer, nativeRefreshID: Int) {
+    func updateBackend(
+        _ backend: PlayerViewModel.PlaybackBackend,
+        player: AVPlayer,
+        nativeRefreshID: Int,
+        videoVisible: Bool
+    ) {
         switch backend {
         case .native:
             if nativePlayerView.player !== player {
@@ -137,12 +143,12 @@ final class PlayerHostView: NSView {
                 nativePlayerView.player = player
             }
             lastNativeRefreshID = nativeRefreshID
-            nativePlayerView.isHidden = false
+            nativePlayerView.isHidden = !videoVisible
             vlcVideoView.isHidden = true
         case .vlc:
             nativePlayerView.player = nil
             nativePlayerView.isHidden = true
-            vlcVideoView.isHidden = false
+            vlcVideoView.isHidden = !videoVisible
         }
     }
 }

@@ -222,6 +222,16 @@ struct SettingsView: View {
                     Text(viewModel.t("关闭后，新打开的文件会直接在当前窗口播放，不另开新窗口。"))
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
+
+                    Toggle(viewModel.t("最小化到 Dock 时仅播放音频（实验）"), isOn: Binding(
+                        get: { viewModel.audioOnlyWhenMinimized },
+                        set: { viewModel.setAudioOnlyWhenMinimized($0) }
+                    ))
+                    .toggleStyle(.checkbox)
+
+                    Text(viewModel.t("开启后，窗口最小化时会尝试停止视频解码；恢复窗口后继续显示视频。该模式可能短暂重新加载媒体，节能效果需要在本机实测。"))
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
                         
                     Toggle(viewModel.t("显示最近播放"), isOn: Binding(
                         get: { viewModel.showRecentFiles },
@@ -339,7 +349,7 @@ struct SettingsView: View {
             .init(label: "-", keyCode: 27),
             .init(label: "=", keyCode: 24),
             .init(label: "\\", keyCode: 42)
-        ]
+        ].filter { !PlayerViewModel.reservedSpeedKeyCodes.contains($0.keyCode) }
     }
 }
 

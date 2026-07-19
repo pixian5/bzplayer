@@ -1,1 +1,5 @@
 app_output.log
+.DS_Store
+macos/BZPlayer/.build/
+dist/
+release/
