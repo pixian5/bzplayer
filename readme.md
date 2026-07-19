@@ -25,6 +25,7 @@ swift run
 - 该播放器使用 `SwiftUI + AppKit + VLCKit`，**无法在 Ubuntu 直接运行**。
 - 如需在 Ubuntu 验证，只能做静态代码检查，实际功能需在 macOS 13+ 上运行确认。
 - `VLCKit.framework` 会随 `.app` 一起打包；未安装 `ffmpeg`/`ffprobe` 时仍可播放，但文件信息和部分兼容性诊断会跳过外部分析。
+- AV1 视频优先使用系统 AVPlayer；为避免 macOS 26 上随 VLCKit 一起打包的 dav1d 解码器崩溃，AV1 不再回退到 VLC。AV1 容器或音频轨道不受系统支持时会提示无法播放。
 
 ## 自动构建与发布（GitHub Actions）
 

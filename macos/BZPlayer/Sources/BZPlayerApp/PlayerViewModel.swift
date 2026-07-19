@@ -187,6 +187,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
 
     private(set) var currentFileURL: URL?
     private var currentVideoSize: CGSize?
+    private var currentMediaHasAV1Video = false
     private var currentNominalFPS: Double = 30
     private var nativeTimeObserver: Any?
     private var nativeItemStatusObserver: NSKeyValueObservation?
@@ -758,6 +759,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
             vlcPlayer.stop()
         }
         currentFileURL = nil
+        currentMediaHasAV1Video = false
         openedFilePath = ""
         currentTime = 0
         duration = 0
@@ -1073,6 +1075,10 @@ final class PlayerViewModel: NSObject, ObservableObject {
     }
 
     func selectSubtitle(path: String?) {
+        if path != nil, playbackBackend == .native, currentMediaHasAV1Video {
+            showToastMessage(t("AV1 视频当前不支持切换外部字幕"))
+            return
+        }
         selectedSubtitlePath = path
         if path != nil, playbackBackend == .native, let url = currentFileURL {
             let resumeAt = currentTime > 0 && currentTime < duration ? currentTime : nil
@@ -1169,6 +1175,10 @@ final class PlayerViewModel: NSObject, ObservableObject {
         let wasPaused = isPaused
 
         if audioDelayMs != 0, playbackBackend == .native {
+            if currentMediaHasAV1Video {
+                showToastMessage(t("AV1 视频当前不支持音频延迟，以避免切换到不稳定的 VLC 解码器"))
+                return
+            }
             selectBackend(.vlc)
             loadVLC(url: url, resumeAt: resumeAt, startPaused: wasPaused)
         } else if playbackBackend == .vlc {
@@ -1239,6 +1249,10 @@ final class PlayerViewModel: NSObject, ObservableObject {
         let resumeAt = currentTime > 0 && currentTime < duration ? currentTime : nil
         let wasPaused = isPaused
         let newBackend: PlaybackBackend = playbackBackend == .native ? .vlc : .native
+        if newBackend == .vlc, currentMediaHasAV1Video {
+            showToastMessage(t("AV1 视频已禁用 VLC 后端，以避免解码器崩溃"))
+            return
+        }
         selectBackend(newBackend)
 
         switch newBackend {
@@ -1607,6 +1621,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         saveCurrentProgress(force: true)
         let isFirstOpen = currentFileURL == nil
         currentFileURL = url
+        currentMediaHasAV1Video = false
         openedFilePath = url.path
         openedFiles.insert(url)
         saveOpenedFiles()
@@ -1660,6 +1675,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
                   self.mediaOpenGeneration == generation,
                   self.currentFileURL == url else { return }
 
+            self.currentMediaHasAV1Video = ffprobeInfo?.videoStreams.contains(where: { $0.codecName == "av1" }) == true
             self.currentNominalFPS = self.estimateFPS(for: url, ffprobeInfo: ffprobeInfo)
             debugLog("[BZPlayer] Selected backend: \(backend)")
             self.selectBackend(backend)
@@ -1747,6 +1763,14 @@ final class PlayerViewModel: NSObject, ObservableObject {
               mediaOpenGeneration == generation else { return }
         let hasFailed = duration == 0 && (isPaused || currentTime < 0.5)
         guard hasFailed else { return }
+
+        if originalBackend == .native, currentMediaHasAV1Video {
+            let errorMsg = "无法播放 AV1 文件：\(url.lastPathComponent)\n已阻止回退到 VLC，以避免触发 VLCKit dav1d 解码器崩溃。"
+            playbackError = errorMsg
+            loopMode = .none
+            showFileInfo()
+            return
+        }
 
         if !attemptedBackendSwitch {
             attemptedBackendSwitch = true
@@ -1845,6 +1869,11 @@ final class PlayerViewModel: NSObject, ObservableObject {
     }
 
     private func chooseBackend(for url: URL, ffprobeInfo: FFprobeInfo? = nil) async -> PlaybackBackend {
+        if ffprobeInfo?.videoStreams.contains(where: { $0.codecName == "av1" }) == true {
+            // VLCKit 3.6's bundled dav1d decoder can crash on macOS 26 while AV1 is playing.
+            // Prefer AVPlayer and never route this known codec to VLC.
+            return .native
+        }
         // MKV, AVI and other containers are not natively supported by AVPlayer on macOS
         let nonNativeContainers: Set<String> = [
             "mkv", "avi", "flv", "wmv", "webm", "rmvb", "ts", "mpeg", "mpg",
