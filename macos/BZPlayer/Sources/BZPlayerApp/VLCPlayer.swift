@@ -30,6 +30,8 @@ final class VLCPlayer: NSObject {
     private var configuredAudioDelayMs: Double = 0
     private var configuredSubtitleFontSize = 55
     private var configuredSubtitleBackgroundOpacity = 0
+    /// Desired playback rate; survives mediaPlayer recreation in load().
+    private var configuredRate: Float = 1.0
     private weak var currentAttachedView: VLCVideoView?
 
     override init() {
@@ -127,8 +129,11 @@ final class VLCPlayer: NSObject {
             self.isTransitioning = false
             self.pendingLoadTask = nil
             self.applyConfiguredAudioDelay()
+            self.applyConfiguredRate(to: player)
             if self.shouldPlay {
                 player.play()
+                // VLCKit 4 often only honors rate after play has started.
+                self.applyConfiguredRate(to: player)
             }
         }
     }
@@ -138,6 +143,7 @@ final class VLCPlayer: NSObject {
         cancelPendingPlay()
         guard !isTransitioning, pendingLoadTask == nil else { return }
         mediaPlayer.play()
+        applyConfiguredRate(to: mediaPlayer)
     }
 
     func pause() {
@@ -181,6 +187,7 @@ final class VLCPlayer: NSObject {
                     guard !Task.isCancelled else { return }
                     guard let self else { return }
                     self.mediaPlayer.play()
+                    self.applyConfiguredRate(to: self.mediaPlayer)
                     self.wasPlayingBeforeSeek = nil
                     self.pendingPlayTask = nil
                 } catch {
@@ -195,7 +202,14 @@ final class VLCPlayer: NSObject {
 
     func setSpeed(_ speed: Double) {
         guard speed.isFinite else { return }
-        mediaPlayer.rate = Float(speed)
+        // Clamp to a practical range; libvlc rejects non-positive rates.
+        let rate = Float(min(max(speed, 0.01), 32))
+        configuredRate = rate
+        applyConfiguredRate(to: mediaPlayer)
+    }
+
+    private func applyConfiguredRate(to player: VLCMediaPlayer) {
+        player.rate = configuredRate
     }
 
     func setVolume(_ volume: Double) {
@@ -250,6 +264,7 @@ final class VLCPlayer: NSObject {
         player.delegate = self
         player.drawable = currentAttachedView
         player.timeChangeUpdateInterval = 0.25
+        applyConfiguredRate(to: player)
         return player
     }
 
@@ -477,6 +492,8 @@ final class VLCPlayer: NSObject {
         guard generation == mediaGeneration, !isTransitioning, currentMedia != nil else { return }
         switch player.state {
         case .playing:
+            // Re-apply after transition to playing — VLCKit 4 may reset rate on media start.
+            applyConfiguredRate(to: player)
             fireFileLoadedIfReady(player: player)
             onPauseChanged?(false)
         case .paused:
