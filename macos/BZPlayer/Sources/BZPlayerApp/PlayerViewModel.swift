@@ -1646,6 +1646,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         }
 
         if previousBackend == .vlc {
+            vlcPlayer.detach()
             vlcPlayer.stop()
             vlcPlayer.cancelPendingRender()
         }

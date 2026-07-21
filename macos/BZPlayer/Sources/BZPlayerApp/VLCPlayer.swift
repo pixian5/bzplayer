@@ -58,8 +58,15 @@ final class VLCPlayer: NSObject {
 
     func attach(to view: VLCVideoView) {
         guard currentAttachedView !== view else { return }
+        // Clear old drawable before attaching new one to avoid OpenGL assert
+        mediaPlayer.drawable = nil
         currentAttachedView = view
         mediaPlayer.drawable = view
+    }
+
+    func detach() {
+        mediaPlayer.drawable = nil
+        currentAttachedView = nil
     }
 
     func load(
@@ -161,6 +168,7 @@ final class VLCPlayer: NSObject {
         pendingLoadTask?.cancel()
         pendingLoadTask = nil
         removeNotifications()
+        mediaPlayer.drawable = nil
         mediaPlayer.stop()
         needsStopWait = true
         currentMedia = nil
@@ -262,9 +270,12 @@ final class VLCPlayer: NSObject {
     private func makeMediaPlayer() -> VLCMediaPlayer {
         let player = VLCMediaPlayer(library: library)
         player.delegate = self
-        player.drawable = currentAttachedView
         player.timeChangeUpdateInterval = 0.25
         applyConfiguredRate(to: player)
+        // Attach drawable after other setup to avoid transient states
+        if let view = currentAttachedView {
+            player.drawable = view
+        }
         return player
     }
 
