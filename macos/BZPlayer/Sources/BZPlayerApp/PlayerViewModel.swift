@@ -2151,7 +2151,8 @@ final class PlayerViewModel: NSObject, ObservableObject {
 
     private func chooseBackend(for url: URL, ffprobeInfo: FFprobeInfo? = nil) async -> PlaybackBackend {
         if await hasAV1Video(url: url, ffprobeInfo: ffprobeInfo) {
-            // VLCKit 3.6's bundled dav1d decoder can crash on macOS 26 while AV1 is playing.
+            // Older VLCKit 3.6 dav1d could crash on macOS 26 while AV1 is playing.
+            // Keep AV1 on AVPlayer until VLCKit 4.x AV1 path is re-validated on target OS.
             // Prefer AVPlayer and never route this known codec to VLC.
             return .native
         }

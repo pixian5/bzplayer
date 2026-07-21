@@ -31,6 +31,9 @@ fi
 NEXT_VERSION="${VERSION_NUM}"
 echo "[deploy] BZPlayer version from Git: ${NEXT_VERSION}"
 
+echo "[deploy] Ensuring VLCKit is present..."
+zsh "${SCRIPT_DIR}/fetch_vlckit.sh"
+
 echo "[deploy] Building release binary..."
 cd "${PROJECT_DIR}"
 BUILD_DIR=$(swift build -c release --show-bin-path)
@@ -51,7 +54,8 @@ echo "[deploy] Packaging app bundle..."
 zsh "${SCRIPT_DIR}/build_macos_app.sh" "${APP_DIR}" "${NEXT_VERSION}" "${BUILD_DIR}"
 
 "${LSREGISTER}" -f "${APP_DIR}" >/dev/null
-open -a "${APP_DIR}"
+# Use path form; `open -a` expects an app name, not a full .app path.
+open "${APP_DIR}"
 
 if [[ -n "${COMMIT_MSG}" ]]; then
     echo "[deploy] Committing and pushing..."

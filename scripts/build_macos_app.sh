@@ -90,4 +90,14 @@ if [[ -f "${PROJECT_DIR}/Resources/AppIcon.icns" ]]; then
     cp "${PROJECT_DIR}/Resources/AppIcon.icns" "${APP_DIR}/Contents/Resources/AppIcon.icns"
 fi
 
+# SPM links VLCKit as @rpath; the binary only has @loader_path by default, so
+# dyld looks next to MacOS/ not Contents/Frameworks/. Add the app-bundle rpath.
+install_name_tool -add_rpath "@executable_path/../Frameworks" \
+    "${APP_DIR}/Contents/MacOS/BZPlayer" 2>/dev/null || true
+# If rpath already exists (re-packaging), -add_rpath fails; ensure presence:
+if ! otool -l "${APP_DIR}/Contents/MacOS/BZPlayer" | grep -q "@executable_path/../Frameworks"; then
+    install_name_tool -add_rpath "@executable_path/../Frameworks" \
+        "${APP_DIR}/Contents/MacOS/BZPlayer"
+fi
+
 plutil -lint "${APP_DIR}/Contents/Info.plist"

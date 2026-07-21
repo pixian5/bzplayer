@@ -11,7 +11,9 @@ let package = Package(
         .executable(name: "BZPlayer", targets: ["BZPlayerApp"])
     ],
     dependencies: [
-        .package(url: "https://github.com/tylerjonesio/vlckit-spm/", .upToNextMajor(from: "3.5.1"))
+        // VLCKit 4.0.0-alpha.20 (VideoLAN 4.0.0a20). Remote SPM zip is ~821MB and often
+        // times out; use a local path package. Run scripts/fetch_vlckit.sh if missing.
+        .package(path: "../Vendor/vlckit-spm")
     ],
     targets: [
         .target(

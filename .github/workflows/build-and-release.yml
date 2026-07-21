@@ -38,6 +38,10 @@ jobs:
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
 
+      - name: Fetch VLCKit binary
+        shell: bash
+        run: zsh scripts/fetch_vlckit.sh
+
       - name: Build release binary
         shell: bash
         run: |

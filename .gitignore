@@ -4,3 +4,6 @@ macos/BZPlayer/.build/
 dist/
 release/
 artifacts/
+# VLCKit binary (~2.6GB extracted / ~821MB zip); fetch via scripts/fetch_vlckit.sh
+macos/Vendor/vlckit-spm/VLCKit.xcframework/
+macos/Vendor/vlckit-spm/__MACOSX/

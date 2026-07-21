@@ -16,6 +16,10 @@
 ```bash
 # ffmpeg/ffprobe 仅用于可选的媒体分析和解码诊断
 brew install ffmpeg
+
+# VLCKit 4 二进制约 821MB，默认不进 Git；首次需拉取到 macos/Vendor/vlckit-spm
+zsh scripts/fetch_vlckit.sh
+
 cd macos/BZPlayer
 swift run
 ```
@@ -23,6 +27,7 @@ swift run
 验证与安装：
 
 ```bash
+zsh scripts/fetch_vlckit.sh
 swift test --package-path macos/BZPlayer
 swift build -c release --package-path macos/BZPlayer
 zsh scripts/install_macos_app.sh
@@ -46,7 +51,9 @@ bash scripts/measure_audio_only.sh "/path/to/media.mp4" \
 - 如需在 Ubuntu 验证，只能做静态代码检查，实际功能需在 macOS 13+ 上运行确认。
 - `VLCKit.framework` 会随 `.app` 一起打包；未安装 `ffmpeg`/`ffprobe` 时仍可播放，但文件信息和部分兼容性诊断会跳过外部分析。
 - `ffprobe` 分析最多等待 8 秒，`ffmpeg` 解码诊断最多等待 20 秒；超时会终止子进程，不应阻塞播放启动。
-- AV1 视频优先使用系统 AVPlayer；为避免 macOS 26 上随 VLCKit 一起打包的 dav1d 解码器崩溃，AV1 不再回退到 VLC。AV1 容器或音频轨道不受系统支持时会提示无法播放。
+- 播放内核：VLC 后端使用 VLCKit **4.0.0-alpha.20**（libvlc 4.0.0-dev）。仓库通过本地 path package `macos/Vendor/vlckit-spm` 引入（远程 SPM 二进制约 821MB，易超时）。首次构建必须先运行 `zsh scripts/fetch_vlckit.sh`。
+- 打包的 `.app` 依赖 `@executable_path/../Frameworks` 加载 `VLCKit.framework`；请使用 `scripts/build_macos_app.sh` / `install_macos_app.sh`，不要只拷贝 release 二进制。
+- AV1 视频优先使用系统 AVPlayer；在 VLCKit 4.x 的 AV1/dav1d 路径于目标 macOS 上复测通过前，AV1 仍不回退到 VLC。AV1 容器或音频轨道不受系统支持时会提示无法播放。
 - “最小化到 Dock 时仅播放音频”默认关闭，是实验功能。开启后会在最小化时禁用 AVPlayer 视频轨道，或让 VLC 以 `:no-video` 重新加载；恢复窗口时会再次加载视频。该功能可能产生短暂切换，节能效果必须在目标机器上用 Activity Monitor、`powermetrics` 等工具实测，不能仅凭配置推断。
 - 当前本地安装与 GitHub Actions 生成的应用包均未自动签名或公证，首次运行可能需要在系统安全提示中允许。生产分发前应增加 Developer ID 签名、公证和 staple 流程。
 

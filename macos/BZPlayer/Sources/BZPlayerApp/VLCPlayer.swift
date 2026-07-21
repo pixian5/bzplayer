@@ -41,6 +41,8 @@ final class VLCPlayer: NSObject {
         mediaPlayer = VLCMediaPlayer(library: library)
         super.init()
         mediaPlayer.delegate = self
+        // VLCKit 4 defaults time updates to 1s; keep UI scrubber responsive.
+        mediaPlayer.timeChangeUpdateInterval = 0.25
         bindNotifications()
         registerCustomFonts()
     }
@@ -105,7 +107,12 @@ final class VLCPlayer: NSObject {
             let player = self.makeMediaPlayer()
             self.mediaPlayer = player
             self.bindNotifications(for: player, generation: generation)
-            let media = VLCMedia(url: url)
+            guard let media = VLCMedia(url: url) else {
+                self.pendingLoadTask = nil
+                self.isTransitioning = false
+                self.onStatusChanged?("VLC 无法打开媒体")
+                return
+            }
             media.addOption(":subsdec-encoding=GB18030")
             media.addOption(":freetype-font=/System/Library/Fonts/STHeiti Light.ttc")
             media.addOption(":freetype-rel-fontsize=\(self.configuredSubtitleFontSize)")
@@ -158,13 +165,13 @@ final class VLCPlayer: NSObject {
     func seek(seconds: Double) {
         guard seconds >= 0 else { return }
         let ms = milliseconds(for: seconds)
-        
+
         cancelPendingPlay(resetSeekState: false)
-        
+
         if wasPlayingBeforeSeek == nil {
             wasPlayingBeforeSeek = mediaPlayer.isPlaying
         }
-        
+
         if wasPlayingBeforeSeek == true {
             mediaPlayer.pause()
             mediaPlayer.time = VLCTime(int: ms)
@@ -222,8 +229,9 @@ final class VLCPlayer: NSObject {
     private func waitForStopped(_ player: VLCMediaPlayer) async -> Bool {
         for _ in 0..<200 {
             guard !Task.isCancelled else { return false }
+            // VLCKit 4 removed .ended; natural EOS and stop both land on .stopped.
             switch player.state {
-            case .stopped, .ended, .error:
+            case .stopped, .error:
                 return true
             default:
                 break
@@ -241,6 +249,7 @@ final class VLCPlayer: NSObject {
         let player = VLCMediaPlayer(library: library)
         player.delegate = self
         player.drawable = currentAttachedView
+        player.timeChangeUpdateInterval = 0.25
         return player
     }
 
@@ -277,59 +286,73 @@ final class VLCPlayer: NSObject {
     }
 
     func disableSubtitle() {
-        mediaPlayer.currentVideoSubTitleIndex = -1
+        mediaPlayer.deselectAllTextTracks()
     }
 
+    /// Track list index is exposed as Int32 for menu/ViewModel compatibility.
+    /// VLCKit 4 uses string track IDs internally; selection is by list index.
     var subtitleTracks: [(Int32, String)] {
-        guard let names = mediaPlayer.videoSubTitlesNames as? [String],
-              let indexes = mediaPlayer.videoSubTitlesIndexes as? [NSNumber],
-              names.count == indexes.count else {
-            return []
+        mediaPlayer.textTracks.enumerated().map { index, track in
+            (Int32(index), track.trackName)
         }
-        return zip(indexes.map { $0.intValue }, names).map { (Int32($0), $1) }
     }
 
     var currentSubtitleIndex: Int32 {
         get {
-            return mediaPlayer.currentVideoSubTitleIndex
+            if let index = mediaPlayer.textTracks.firstIndex(where: { $0.isSelected }) {
+                return Int32(index)
+            }
+            return -1
         }
         set {
-            mediaPlayer.currentVideoSubTitleIndex = newValue
+            if newValue < 0 {
+                mediaPlayer.deselectAllTextTracks()
+                return
+            }
+            let tracks = mediaPlayer.textTracks
+            guard tracks.indices.contains(Int(newValue)) else { return }
+            mediaPlayer.selectTrack(at: Int(newValue), type: .text)
         }
     }
 
     var audioTracks: [(Int32, String)] {
-        guard let names = mediaPlayer.audioTrackNames as? [String],
-              let indexes = mediaPlayer.audioTrackIndexes as? [NSNumber],
-              names.count == indexes.count else {
-            return []
+        mediaPlayer.audioTracks.enumerated().map { index, track in
+            (Int32(index), track.trackName)
         }
-        return zip(indexes.map { $0.intValue }, names).map { (Int32($0), $1) }
     }
 
     var currentAudioIndex: Int32 {
         get {
-            return mediaPlayer.currentAudioTrackIndex
+            if let index = mediaPlayer.audioTracks.firstIndex(where: { $0.isSelected }) {
+                return Int32(index)
+            }
+            return -1
         }
         set {
-            mediaPlayer.currentAudioTrackIndex = newValue
+            if newValue < 0 {
+                mediaPlayer.deselectAllAudioTracks()
+                return
+            }
+            let tracks = mediaPlayer.audioTracks
+            guard tracks.indices.contains(Int(newValue)) else { return }
+            mediaPlayer.selectTrack(at: Int(newValue), type: .audio)
         }
     }
 
     func cancelPendingRender() {
         // VLC handles rendering natively, no pending renders to cancel
     }
-    
+
     private func registerCustomFonts() {
         let fontURL = Bundle.module.url(forResource: "simhei", withExtension: "ttf") ??
                       Bundle.module.url(forResource: "simhei", withExtension: "ttf", subdirectory: "Resources") ??
                       Bundle.main.url(forResource: "simhei", withExtension: "ttf")
-        
+
         guard let url = fontURL else {
             BZLogger.error("Bundled simhei.ttf not found in module or main bundle")
             return
         }
-        
+
         var error: Unmanaged<CFError>?
         if CTFontManagerRegisterFontsForURL(url as CFURL, .process, &error) {
             BZLogger.info("Registered bundled simhei.ttf: \(url.path)")
@@ -368,7 +391,7 @@ final class VLCPlayer: NSObject {
         removeNotifications()
         let center = NotificationCenter.default
         timeObserverToken = center.addObserver(
-            forName: Notification.Name(VLCMediaPlayerTimeChanged),
+            forName: VLCMediaPlayer.timeChangedNotification,
             object: player,
             queue: .main
         ) { [weak self] _ in
@@ -378,7 +401,7 @@ final class VLCPlayer: NSObject {
             }
         }
         stateObserverToken = center.addObserver(
-            forName: Notification.Name(VLCMediaPlayerStateChanged),
+            forName: VLCMediaPlayer.stateChangedNotification,
             object: player,
             queue: .main
         ) { [weak self] _ in
@@ -459,10 +482,19 @@ final class VLCPlayer: NSObject {
         case .paused:
             fireFileLoadedIfReady(player: player)
             onPauseChanged?(true)
-        case .ended:
-            onEndReached?()
+        case .stopped:
+            // VLCKit 4 removed .ended; natural EOS lands on .stopped.
+            // Intentional stop()/load() clears notifications and currentMedia first, and
+            // sets shouldPlay = false — only fire when playback was still expected.
+            if shouldPlay {
+                shouldPlay = false
+                onEndReached?()
+            }
         case .error:
-            onEndReached?()
+            if shouldPlay {
+                shouldPlay = false
+                onEndReached?()
+            }
         default:
             break
         }
@@ -470,11 +502,19 @@ final class VLCPlayer: NSObject {
 }
 
 extension VLCPlayer: VLCMediaPlayerDelegate {
-    nonisolated func mediaPlayerStateChanged(_ notification: Notification) {
+    nonisolated func mediaPlayerStateChanged(_ newState: VLCMediaPlayerState) {
         // Handled via NotificationCenter observer on main queue
     }
 
-    nonisolated func mediaPlayerTimeChanged(_ notification: Notification) {
+    nonisolated func mediaPlayerTimeChanged(_ aNotification: Notification) {
         // Handled via NotificationCenter observer on main queue
+    }
+
+    nonisolated func mediaPlayerLengthChanged(_ length: Int64) {
+        Task { @MainActor [weak self] in
+            guard let self, length > 0 else { return }
+            self.onDurationChanged?(Double(length) / 1000.0)
+            self.fireFileLoadedIfReady(player: self.mediaPlayer)
+        }
     }
 }
