@@ -428,6 +428,22 @@ struct Localization {
             "es": "No se pudo cargar el archivo de subtítulos",
             "ru": "Не удалось загрузить файл субтитров"
         ],
+        "字幕位置已重置": [
+            "en": "Subtitle position reset",
+            "ja": "字幕位置をリセットしました",
+            "de": "Untertitelposition zurückgesetzt",
+            "fr": "Position des sous-titres réinitialisée",
+            "es": "Posición de subtítulos restablecida",
+            "ru": "Позиция субтитров сброшена"
+        ],
+        "重置字幕位置": [
+            "en": "Reset subtitle position",
+            "ja": "字幕位置をリセット",
+            "de": "Untertitelposition zurücksetzen",
+            "fr": "Réinitialiser la position des sous-titres",
+            "es": "Restablecer posición de subtítulos",
+            "ru": "Сбросить позицию субтитров"
+        ],
         "当前音频延迟需要使用 VLC 播放后端": [
             "en": "Current audio delay requires the VLC playback backend",
             "ja": "現在の音声遅延には VLC 再生バックエンドが必要です",

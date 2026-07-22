@@ -119,6 +119,10 @@ final class PlayerViewModel: NSObject, ObservableObject {
     @Published private(set) var isAudioOnlyMode = false
     @Published var subtitleBackgroundOpacity: Int
     @Published var subtitleFontSize: Int
+    /// Native subtitle center X in host width fraction (0=left, 0.5=center, 1=right).
+    @Published var subtitlePositionX: Double
+    /// Native subtitle center Y in host height fraction measured from bottom (0=bottom, 1=top).
+    @Published var subtitlePositionY: Double
     /// Active external subtitle line rendered by the native (AVPlayer) overlay.
     @Published private(set) var nativeSubtitleText: String = ""
     /// Bumps when native subtitle overlay content/style changes so NSViewRepresentable refreshes.
@@ -311,6 +315,10 @@ final class PlayerViewModel: NSObject, ObservableObject {
         var audioOnlyWhenMinimized: Bool = false
         var subtitleBackgroundOpacity: Int = 0
         var subtitleFontSize: Int = 55
+        /// 0...1, center X of native subtitle bubble.
+        var subtitlePositionX: Double = 0.5
+        /// 0...1 from bottom, center Y of native subtitle bubble.
+        var subtitlePositionY: Double = 0.12
         var lastWindowFrame: String? = nil
         var lastUsedSpeed: Double = 1.0
         var appLanguage: String? = "auto"
@@ -336,6 +344,8 @@ final class PlayerViewModel: NSObject, ObservableObject {
             case audioOnlyWhenMinimized
             case subtitleBackgroundOpacity
             case subtitleFontSize
+            case subtitlePositionX
+            case subtitlePositionY
             case lastWindowFrame
             case lastUsedSpeed
             case appLanguage
@@ -366,6 +376,8 @@ final class PlayerViewModel: NSObject, ObservableObject {
             audioOnlyWhenMinimized = try container.decodeIfPresent(Bool.self, forKey: .audioOnlyWhenMinimized) ?? audioOnlyWhenMinimized
             subtitleBackgroundOpacity = try container.decodeIfPresent(Int.self, forKey: .subtitleBackgroundOpacity) ?? subtitleBackgroundOpacity
             subtitleFontSize = try container.decodeIfPresent(Int.self, forKey: .subtitleFontSize) ?? subtitleFontSize
+            subtitlePositionX = try container.decodeIfPresent(Double.self, forKey: .subtitlePositionX) ?? subtitlePositionX
+            subtitlePositionY = try container.decodeIfPresent(Double.self, forKey: .subtitlePositionY) ?? subtitlePositionY
             lastWindowFrame = try container.decodeIfPresent(String.self, forKey: .lastWindowFrame) ?? lastWindowFrame
             lastUsedSpeed = try container.decodeIfPresent(Double.self, forKey: .lastUsedSpeed) ?? lastUsedSpeed
             appLanguage = try container.decodeIfPresent(String.self, forKey: .appLanguage) ?? appLanguage
@@ -422,6 +434,8 @@ final class PlayerViewModel: NSObject, ObservableObject {
         audioOnlyWhenMinimized = settings.audioOnlyWhenMinimized
         subtitleBackgroundOpacity = Self.clampSubtitleOpacity(settings.subtitleBackgroundOpacity)
         subtitleFontSize = max(1, settings.subtitleFontSize)
+        subtitlePositionX = Self.clampSubtitlePosition(settings.subtitlePositionX, fallback: 0.5)
+        subtitlePositionY = Self.clampSubtitlePosition(settings.subtitlePositionY, fallback: 0.12)
         appLanguage = settings.appLanguage ?? "auto"
         let loadedRecentFiles = Self.loadRecentFilesFromDisk() ?? []
         let filteredRecentFiles = loadedRecentFiles.filter { path in
@@ -482,6 +496,8 @@ final class PlayerViewModel: NSObject, ObservableObject {
         settings.audioOnlyWhenMinimized = audioOnlyWhenMinimized
         settings.subtitleBackgroundOpacity = subtitleBackgroundOpacity
         settings.subtitleFontSize = subtitleFontSize
+        settings.subtitlePositionX = Self.clampSubtitlePosition(subtitlePositionX, fallback: 0.5)
+        settings.subtitlePositionY = Self.clampSubtitlePosition(subtitlePositionY, fallback: 0.12)
         settings.lastUsedSpeed = Self.normalizeSpeed(speed)
         settings.appLanguage = appLanguage
         settings.numericKeySpeeds = Self.normalizeNumericKeySpeeds(numericKeySpeeds)
@@ -1089,6 +1105,26 @@ final class PlayerViewModel: NSObject, ObservableObject {
         reloadVLCMediaIfNeeded()
     }
 
+    /// Persist native subtitle bubble center (fractions of host size).
+    /// X: 0=left … 1=right. Y: 0=bottom … 1=top.
+    func setSubtitlePosition(x: Double, y: Double, persist: Bool = true) {
+        let nx = Self.clampSubtitlePosition(x, fallback: subtitlePositionX)
+        let ny = Self.clampSubtitlePosition(y, fallback: subtitlePositionY)
+        let changed = abs(nx - subtitlePositionX) > 0.0005 || abs(ny - subtitlePositionY) > 0.0005
+        guard changed else { return }
+        subtitlePositionX = nx
+        subtitlePositionY = ny
+        nativeSubtitleRenderID &+= 1
+        if persist {
+            saveSettings()
+        }
+    }
+
+    func resetSubtitlePosition() {
+        setSubtitlePosition(x: 0.5, y: 0.12, persist: true)
+        showToastMessage(t("字幕位置已重置"))
+    }
+
     /// Point size used by the native subtitle overlay (maps VLC relative size to pt).
     var nativeSubtitlePointSize: CGFloat {
         // VLC freetype-rel-fontsize defaults around 55; map to a readable macOS point size.
@@ -1358,6 +1394,8 @@ final class PlayerViewModel: NSObject, ObservableObject {
         audioOnlyWhenMinimized = settings.audioOnlyWhenMinimized
         subtitleBackgroundOpacity = Self.clampSubtitleOpacity(settings.subtitleBackgroundOpacity)
         subtitleFontSize = max(settings.subtitleFontSize, 1)
+        subtitlePositionX = Self.clampSubtitlePosition(settings.subtitlePositionX, fallback: 0.5)
+        subtitlePositionY = Self.clampSubtitlePosition(settings.subtitlePositionY, fallback: 0.12)
         appLanguage = settings.appLanguage ?? "auto"
         if currentFileURL == nil {
             audioDelayMs = Self.normalizeAudioDelay(settings.audioDelayMs)
@@ -2996,6 +3034,11 @@ private extension PlayerViewModel {
         if value <= 0 { return 0 }
         if value >= 100 { return 100 }
         return candidates.min(by: { abs($0 - value) < abs($1 - value) }) ?? 0
+    }
+
+    static func clampSubtitlePosition(_ value: Double, fallback: Double) -> Double {
+        guard value.isFinite else { return fallback }
+        return min(max(value, 0.02), 0.98)
     }
 
     @discardableResult

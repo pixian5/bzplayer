@@ -19,6 +19,8 @@ struct PlayerContainerView: NSViewRepresentable {
     private var subtitleFontSize: CGFloat { viewModel.nativeSubtitlePointSize }
     private var subtitleBackgroundOpacity: Int { viewModel.subtitleBackgroundOpacity }
     private var subtitleRenderID: Int { viewModel.nativeSubtitleRenderID }
+    private var subtitlePositionX: Double { viewModel.subtitlePositionX }
+    private var subtitlePositionY: Double { viewModel.subtitlePositionY }
 
     func makeNSView(context: Context) -> PlayerHostView {
         let view = PlayerHostView()
@@ -52,6 +54,9 @@ struct PlayerContainerView: NSViewRepresentable {
         view.clickView.onCurrentSubtitleFontSize = {
             viewModel.subtitleFontSize
         }
+        view.clickView.onResetSubtitlePosition = {
+            viewModel.resetSubtitlePosition()
+        }
         view.clickView.onBuildAudioTrackMenuEntries = {
             viewModel.audioTrackMenuEntries()
         }
@@ -78,6 +83,9 @@ struct PlayerContainerView: NSViewRepresentable {
         view.clickView.onSpeedKeyUp = {
             // 不需要额外操作
         }
+        view.onSubtitlePositionChanged = { [weak viewModel] x, y, persist in
+            viewModel?.setSubtitlePosition(x: x, y: y, persist: persist)
+        }
         return view
     }
 
@@ -91,10 +99,17 @@ struct PlayerContainerView: NSViewRepresentable {
         // AppKit subtitle label above AVPlayerLayer (not SwiftUI overlay).
         // Touch subtitleRenderID so SwiftUI tracks it as an update dependency.
         _ = subtitleRenderID
+        if nsView.onSubtitlePositionChanged == nil {
+            nsView.onSubtitlePositionChanged = { [weak viewModel] x, y, persist in
+                viewModel?.setSubtitlePosition(x: x, y: y, persist: persist)
+            }
+        }
         nsView.updateNativeSubtitle(
             text: subtitleText,
             fontSize: subtitleFontSize,
-            backgroundOpacity: subtitleBackgroundOpacity
+            backgroundOpacity: subtitleBackgroundOpacity,
+            positionX: subtitlePositionX,
+            positionY: subtitlePositionY
         )
         if nsView.window != nil, backend == .vlc {
             viewModel.attachVLCView(nsView.vlcVideoView)
@@ -110,14 +125,20 @@ final class PlayerHostView: NSView {
     private let playerLayer = AVPlayerLayer()
     let vlcVideoView = VLCVideoView(frame: .zero)
     let clickView = ClickCaptureView()
-    private let subtitleContainer = NSView()
+    private let subtitleContainer = DraggableSubtitleView()
     private let subtitleBackground = NSView()
     private let subtitleLabel = NSTextField(wrappingLabelWithString: "")
     private var lastNativeRefreshID = 0
     private var lastSubtitleText = ""
     private var lastSubtitleFontSize: CGFloat = -1
     private var lastSubtitleOpacity = -1
+    private var lastPositionX: Double = -1
+    private var lastPositionY: Double = -1
     private weak var boundPlayer: AVPlayer?
+    private var isDraggingSubtitle = false
+
+    /// Reports fractional center position (x: 0...1 left→right, y: 0...1 bottom→top).
+    var onSubtitlePositionChanged: ((Double, Double, Bool) -> Void)?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -137,10 +158,23 @@ final class PlayerHostView: NSView {
         vlcVideoView.isHidden = true
         clickView.translatesAutoresizingMaskIntoConstraints = false
 
-        subtitleContainer.translatesAutoresizingMaskIntoConstraints = false
+        // Frame-based positioning (dragable); do not use Auto Layout for the bubble itself.
+        subtitleContainer.translatesAutoresizingMaskIntoConstraints = true
         subtitleContainer.wantsLayer = true
         subtitleContainer.isHidden = true
-        subtitleContainer.layer?.zPosition = 100
+        subtitleContainer.layer?.zPosition = 200
+        subtitleContainer.onDragBegan = { [weak self] in
+            self?.isDraggingSubtitle = true
+            self?.clickView.cancelPendingSingleClick()
+        }
+        subtitleContainer.onDragMoved = { [weak self] pointInHost in
+            // Only move the bubble locally while dragging; persist once on mouse-up.
+            self?.handleSubtitleDrag(to: pointInHost, persist: false, notifyViewModel: false)
+        }
+        subtitleContainer.onDragEnded = { [weak self] pointInHost in
+            self?.handleSubtitleDrag(to: pointInHost, persist: true, notifyViewModel: true)
+            self?.isDraggingSubtitle = false
+        }
 
         subtitleBackground.translatesAutoresizingMaskIntoConstraints = false
         subtitleBackground.wantsLayer = true
@@ -186,16 +220,12 @@ final class PlayerHostView: NSView {
             clickView.topAnchor.constraint(equalTo: topAnchor),
             clickView.bottomAnchor.constraint(equalTo: bottomAnchor),
 
-            subtitleContainer.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 48),
-            subtitleContainer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -48),
-            subtitleContainer.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -64),
+            // subtitleContainer is positioned manually via frame in layout/update.
 
-            subtitleBackground.leadingAnchor.constraint(greaterThanOrEqualTo: subtitleContainer.leadingAnchor),
-            subtitleBackground.trailingAnchor.constraint(lessThanOrEqualTo: subtitleContainer.trailingAnchor),
-            subtitleBackground.centerXAnchor.constraint(equalTo: subtitleContainer.centerXAnchor),
+            subtitleBackground.leadingAnchor.constraint(equalTo: subtitleContainer.leadingAnchor),
+            subtitleBackground.trailingAnchor.constraint(equalTo: subtitleContainer.trailingAnchor),
             subtitleBackground.topAnchor.constraint(equalTo: subtitleContainer.topAnchor),
             subtitleBackground.bottomAnchor.constraint(equalTo: subtitleContainer.bottomAnchor),
-            subtitleBackground.widthAnchor.constraint(lessThanOrEqualTo: subtitleContainer.widthAnchor),
 
             subtitleLabel.leadingAnchor.constraint(equalTo: subtitleBackground.leadingAnchor, constant: 18),
             subtitleLabel.trailingAnchor.constraint(equalTo: subtitleBackground.trailingAnchor, constant: -18),
@@ -216,15 +246,20 @@ final class PlayerHostView: NSView {
         CATransaction.setDisableActions(true)
         playerLayer.frame = nativeVideoContainer.bounds
         CATransaction.commit()
+        if !isDraggingSubtitle {
+            applySubtitleFrame()
+        }
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
-        // Never let the subtitle layer steal clicks from ClickCaptureView.
-        let hit = super.hitTest(point)
-        if hit === subtitleContainer || hit === subtitleBackground || hit === subtitleLabel {
-            return clickView
+        // Prefer subtitle bubble when visible so it can be dragged.
+        if !subtitleContainer.isHidden {
+            let local = convert(point, to: subtitleContainer)
+            if subtitleContainer.bounds.contains(local) {
+                return subtitleContainer.hitTest(local) ?? subtitleContainer
+            }
         }
-        return hit
+        return super.hitTest(point)
     }
 
     func updateBackend(
@@ -258,34 +293,50 @@ final class PlayerHostView: NSView {
             updateNativeSubtitle(
                 text: "",
                 fontSize: lastSubtitleFontSize > 0 ? lastSubtitleFontSize : 30,
-                backgroundOpacity: lastSubtitleOpacity >= 0 ? lastSubtitleOpacity : 0
+                backgroundOpacity: lastSubtitleOpacity >= 0 ? lastSubtitleOpacity : 0,
+                positionX: lastPositionX >= 0 ? lastPositionX : 0.5,
+                positionY: lastPositionY >= 0 ? lastPositionY : 0.12
             )
         }
     }
 
-    func updateNativeSubtitle(text: String, fontSize: CGFloat, backgroundOpacity: Int) {
+    func updateNativeSubtitle(
+        text: String,
+        fontSize: CGFloat,
+        backgroundOpacity: Int,
+        positionX: Double,
+        positionY: Double
+    ) {
         let normalizedOpacity = max(0, min(100, backgroundOpacity))
         let normalizedFont = max(16, min(72, fontSize))
+        let nx = min(max(positionX.isFinite ? positionX : 0.5, 0.02), 0.98)
+        let ny = min(max(positionY.isFinite ? positionY : 0.12, 0.02), 0.98)
 
         if text != lastSubtitleText {
             lastSubtitleText = text
             subtitleLabel.stringValue = text
+            // Text size changed → remeasure bubble.
+            subtitleContainer.invalidateIntrinsicContentSize()
+            needsLayout = true
         }
 
         if normalizedFont != lastSubtitleFontSize {
             lastSubtitleFontSize = normalizedFont
             subtitleLabel.font = .systemFont(ofSize: normalizedFont, weight: .semibold)
+            subtitleContainer.invalidateIntrinsicContentSize()
+            needsLayout = true
         }
 
         if normalizedOpacity != lastSubtitleOpacity {
             lastSubtitleOpacity = normalizedOpacity
-            // Always keep a faint backdrop when opacity is 0 so thin white text
-            // remains readable; user opacity scales on top of a minimal shadow box.
-            let alpha = max(CGFloat(normalizedOpacity) / 100.0, text.isEmpty ? 0 : 0.25)
-            subtitleBackground.layer?.backgroundColor = NSColor.black.withAlphaComponent(alpha).cgColor
-        } else if !text.isEmpty, lastSubtitleOpacity == 0 {
-            // Re-apply minimal backdrop after text reappears.
-            subtitleBackground.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.25).cgColor
+        }
+        // Always keep a faint backdrop when opacity is 0 so thin white text remains readable.
+        let alpha = max(CGFloat(normalizedOpacity) / 100.0, text.isEmpty ? 0 : 0.25)
+        subtitleBackground.layer?.backgroundColor = NSColor.black.withAlphaComponent(alpha).cgColor
+
+        if abs(nx - lastPositionX) > 0.0005 || abs(ny - lastPositionY) > 0.0005 {
+            lastPositionX = nx
+            lastPositionY = ny
         }
 
         subtitleContainer.isHidden = text.isEmpty
@@ -295,6 +346,125 @@ final class PlayerHostView: NSView {
             clickView.layer?.zPosition = 50
             nativeVideoContainer.layer?.zPosition = 0
         }
+
+        if !isDraggingSubtitle {
+            applySubtitleFrame()
+        }
+    }
+
+    private func handleSubtitleDrag(to pointInHost: NSPoint, persist: Bool, notifyViewModel: Bool) {
+        let hostSize = bounds.size
+        guard hostSize.width > 1, hostSize.height > 1 else { return }
+        let bubbleSize = subtitleBubbleSize()
+        let halfW = bubbleSize.width / 2
+        let halfH = bubbleSize.height / 2
+        let clampedX = min(max(pointInHost.x, halfW + 8), hostSize.width - halfW - 8)
+        let clampedY = min(max(pointInHost.y, halfH + 8), hostSize.height - halfH - 8)
+
+        let frame = CGRect(
+            x: clampedX - halfW,
+            y: clampedY - halfH,
+            width: bubbleSize.width,
+            height: bubbleSize.height
+        )
+        subtitleContainer.frame = frame
+
+        let fracX = Double(clampedX / hostSize.width)
+        let fracY = Double(clampedY / hostSize.height)
+        lastPositionX = fracX
+        lastPositionY = fracY
+        if notifyViewModel {
+            onSubtitlePositionChanged?(fracX, fracY, persist)
+        }
+    }
+
+    private func applySubtitleFrame() {
+        guard !subtitleContainer.isHidden else { return }
+        let hostSize = bounds.size
+        guard hostSize.width > 1, hostSize.height > 1 else { return }
+        let bubbleSize = subtitleBubbleSize()
+        let xFrac = lastPositionX >= 0 ? lastPositionX : 0.5
+        let yFrac = lastPositionY >= 0 ? lastPositionY : 0.12
+        let centerX = CGFloat(xFrac) * hostSize.width
+        let centerY = CGFloat(yFrac) * hostSize.height
+        let halfW = bubbleSize.width / 2
+        let halfH = bubbleSize.height / 2
+        let originX = min(max(centerX - halfW, 8), hostSize.width - bubbleSize.width - 8)
+        let originY = min(max(centerY - halfH, 8), hostSize.height - bubbleSize.height - 8)
+        let frame = CGRect(x: originX, y: originY, width: bubbleSize.width, height: bubbleSize.height)
+        if subtitleContainer.frame != frame {
+            subtitleContainer.frame = frame
+        }
+    }
+
+    private func subtitleBubbleSize() -> CGSize {
+        let hostWidth = max(bounds.width, 100)
+        let maxTextWidth = max(hostWidth - 96, 120)
+        let font = subtitleLabel.font ?? .systemFont(ofSize: 30, weight: .semibold)
+        let text = subtitleLabel.stringValue as NSString
+        let bounds = text.boundingRect(
+            with: NSSize(width: maxTextWidth, height: 10_000),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [.font: font]
+        )
+        let width = min(max(ceil(bounds.width) + 36, 80), maxTextWidth + 36)
+        let height = max(ceil(bounds.height) + 20, 36)
+        return CGSize(width: width, height: height)
+    }
+}
+
+/// Subtitle bubble that can be dragged. Clicks outside still go to ClickCaptureView.
+private final class DraggableSubtitleView: NSView {
+    var onDragBegan: (() -> Void)?
+    var onDragMoved: ((NSPoint) -> Void)?
+    var onDragEnded: ((NSPoint) -> Void)?
+
+    private var isDragging = false
+    private var dragOffset = CGPoint.zero
+
+    override var mouseDownCanMoveWindow: Bool { false }
+
+    override func mouseDown(with event: NSEvent) {
+        guard let host = superview else { return }
+        let locationInSelf = convert(event.locationInWindow, from: nil)
+        guard bounds.contains(locationInSelf) else { return }
+        isDragging = true
+        let locationInHost = host.convert(event.locationInWindow, from: nil)
+        dragOffset = CGPoint(
+            x: locationInHost.x - frame.midX,
+            y: locationInHost.y - frame.midY
+        )
+        onDragBegan?()
+        NSCursor.closedHand.set()
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard isDragging, let host = superview else { return }
+        let locationInHost = host.convert(event.locationInWindow, from: nil)
+        let target = NSPoint(
+            x: locationInHost.x - dragOffset.x,
+            y: locationInHost.y - dragOffset.y
+        )
+        onDragMoved?(target)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard isDragging, let host = superview else {
+            isDragging = false
+            return
+        }
+        let locationInHost = host.convert(event.locationInWindow, from: nil)
+        let target = NSPoint(
+            x: locationInHost.x - dragOffset.x,
+            y: locationInHost.y - dragOffset.y
+        )
+        isDragging = false
+        onDragEnded?(target)
+        NSCursor.arrow.set()
+    }
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .openHand)
     }
 }
 
@@ -309,6 +479,7 @@ final class ClickCaptureView: NSView {
     var onCurrentSubtitleBackgroundOpacity: (() -> Int)?
     var onSetSubtitleFontSize: ((Int) -> Void)?
     var onCurrentSubtitleFontSize: (() -> Int)?
+    var onResetSubtitlePosition: (() -> Void)?
     var onBuildAudioTrackMenuEntries: (() -> [PlayerViewModel.TrackMenuEntry])?
     var onSelectAudioTrack: ((Int32) -> Void)?
     var onBuildEmbeddedSubtitleMenuEntries: (() -> [PlayerViewModel.TrackMenuEntry])?
@@ -333,6 +504,11 @@ final class ClickCaptureView: NSView {
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    func cancelPendingSingleClick() {
+        pendingSingleClick?.cancel()
+        pendingSingleClick = nil
     }
 
     override var acceptsFirstResponder: Bool {
@@ -540,6 +716,15 @@ final class ClickCaptureView: NSView {
         fontSizeMenuItem.submenu = fontSizeMenu
         subtitleMenu.addItem(fontSizeMenuItem)
 
+        // 2.5 重置字幕位置（原生外挂字幕可拖动）
+        let resetPositionItem = NSMenuItem(
+            title: t("重置字幕位置"),
+            action: #selector(handleResetSubtitlePosition),
+            keyEquivalent: ""
+        )
+        resetPositionItem.target = self
+        subtitleMenu.addItem(resetPositionItem)
+
         subtitleMenuItem.submenu = subtitleMenu
         menu.addItem(subtitleMenuItem)
 
@@ -592,6 +777,11 @@ final class ClickCaptureView: NSView {
     private func handleSubtitleFontSizeSelection(_ sender: NSMenuItem) {
         guard let value = sender.representedObject as? Int else { return }
         onSetSubtitleFontSize?(value)
+    }
+
+    @objc
+    private func handleResetSubtitlePosition() {
+        onResetSubtitlePosition?()
     }
 
     @objc
