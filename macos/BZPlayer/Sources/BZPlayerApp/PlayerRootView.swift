@@ -24,30 +24,8 @@ struct PlayerRootView: View {
     var body: some View {
         ZStack {
             playerArea
-
-            // Native AVPlayer external subtitle overlay (VLC renders its own).
-            if viewModel.playbackBackend == .native, !viewModel.nativeSubtitleText.isEmpty {
-                VStack {
-                    Spacer()
-                    Text(viewModel.nativeSubtitleText)
-                        .font(.system(size: viewModel.nativeSubtitlePointSize, weight: .semibold))
-                        .foregroundColor(.white)
-                        .multilineTextAlignment(.center)
-                        .lineLimit(nil)
-                        .shadow(color: .black.opacity(0.9), radius: 2, x: 0, y: 1)
-                        .padding(.horizontal, 18)
-                        .padding(.vertical, 8)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(Color.black.opacity(Double(viewModel.subtitleBackgroundOpacity) / 100.0))
-                        )
-                        .padding(.horizontal, 40)
-                        .padding(.bottom, max(controlBarHeight + 12, 48))
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .allowsHitTesting(false)
-                .zIndex(1)
-            }
+            // Native external subtitles are drawn inside PlayerHostView (above AVPlayerLayer),
+            // not here — SwiftUI overlays can be covered by the video surface.
 
             ControlBarView(
                 seekValue: $seekValue,

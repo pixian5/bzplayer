@@ -36,6 +36,8 @@ zsh "${SCRIPT_DIR}/fetch_vlckit.sh"
 
 echo "[deploy] Building release binary..."
 cd "${PROJECT_DIR}"
+# 必须真正编译；仅 --show-bin-path 会复用旧产物，导致修了源码却装上旧二进制。
+swift build -c release --product BZPlayer
 BUILD_DIR=$(swift build -c release --show-bin-path)
 BIN_SOURCE="${BUILD_DIR}/BZPlayer"
 [[ -x "${BIN_SOURCE}" ]]

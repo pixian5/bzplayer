@@ -121,6 +121,8 @@ final class PlayerViewModel: NSObject, ObservableObject {
     @Published var subtitleFontSize: Int
     /// Active external subtitle line rendered by the native (AVPlayer) overlay.
     @Published private(set) var nativeSubtitleText: String = ""
+    /// Bumps when native subtitle overlay content/style changes so NSViewRepresentable refreshes.
+    @Published private(set) var nativeSubtitleRenderID: Int = 0
     @Published var appLanguage: String = "auto"
     /// 已打开过但未播完的文件（持久化保存）
     @Published var openedFiles: Set<URL> = []
@@ -1090,8 +1092,9 @@ final class PlayerViewModel: NSObject, ObservableObject {
     /// Point size used by the native subtitle overlay (maps VLC relative size to pt).
     var nativeSubtitlePointSize: CGFloat {
         // VLC freetype-rel-fontsize defaults around 55; map to a readable macOS point size.
-        let mapped = CGFloat(subtitleFontSize) * 0.45
-        return min(max(mapped, 14), 64)
+        // Keep this fairly large so external subtitles remain obvious on high-DPI displays.
+        let mapped = CGFloat(subtitleFontSize) * 0.55
+        return min(max(mapped, 18), 72)
     }
 
     func setAudioDelayStepMs(_ value: Double) {
@@ -2998,42 +3001,79 @@ private extension PlayerViewModel {
     @discardableResult
     func applyNativeExternalSubtitle(path: String) -> Bool {
         let url = URL(fileURLWithPath: path)
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            clearNativeSubtitleOverlay()
-            BZLogger.debug("[BZPlayer] External subtitle missing: \(path)")
-            return false
+        let exists = FileManager.default.fileExists(atPath: url.path)
+        if !exists {
+            // Security-scoped bookmark / permission edge case: try coordinated read via Data.
+            if (try? Data(contentsOf: url, options: [.mappedIfSafe])) == nil {
+                clearNativeSubtitleOverlay()
+                BZLogger.error("[BZPlayer] External subtitle missing or unreadable: \(path)")
+                return false
+            }
+            // File is readable even if fileExists returned false (rare path resolution cases).
+            BZLogger.debug("[BZPlayer] External subtitle fileExists=false but Data readable: \(path)")
         }
-        guard let cues = ExternalSubtitleParser.loadCues(from: url) else {
+        guard let cues = ExternalSubtitleParser.loadCues(from: url), !cues.isEmpty else {
             clearNativeSubtitleOverlay()
-            BZLogger.debug("[BZPlayer] Failed to parse external subtitle: \(path)")
+            BZLogger.error("[BZPlayer] Failed to parse external subtitle or empty: \(path)")
             return false
         }
         nativeSubtitleCues = cues
         nativeSubtitleCueIndex = 0
-        updateNativeSubtitleOverlay(at: currentTime)
-        BZLogger.debug("[BZPlayer] Loaded \(cues.count) native subtitle cues from \(url.lastPathComponent)")
+        // Prefer live player clock when available so overlay matches the frame on screen.
+        let clock = playbackBackend == .native ? nativePlayer.currentTime().seconds : currentTime
+        let time = clock.isFinite ? max(0, clock) : currentTime
+        updateNativeSubtitleOverlay(at: time)
+        // Also force a render-id bump so the host view refreshes even if text is still empty
+        // (e.g. first cue starts later than current time).
+        nativeSubtitleRenderID &+= 1
+        BZLogger.info("[BZPlayer] Loaded \(cues.count) native subtitle cues from \(url.lastPathComponent) at t=\(String(format: "%.2f", time)) text=\(nativeSubtitleText.isEmpty ? "<empty>" : nativeSubtitleText)")
+        // Persist a tiny breadcrumb for manual verification without Console filters.
+        Self.writeSubtitleDebugLog(
+            "loaded cues=\(cues.count) file=\(url.lastPathComponent) t=\(String(format: "%.2f", time)) backend=\(playbackBackend.rawValue)"
+        )
         return true
+    }
+
+    private static func writeSubtitleDebugLog(_ line: String) {
+        guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+            return
+        }
+        let dir = appSupport.appendingPathComponent("BZPlayer", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let file = dir.appendingPathComponent("subtitle-debug.log")
+        let stamped = "\(ISO8601DateFormatter().string(from: Date())) \(line)\n"
+        if let data = stamped.data(using: .utf8) {
+            if FileManager.default.fileExists(atPath: file.path) {
+                if let handle = try? FileHandle(forWritingTo: file) {
+                    defer { try? handle.close() }
+                    _ = try? handle.seekToEnd()
+                    try? handle.write(contentsOf: data)
+                }
+            } else {
+                try? data.write(to: file)
+            }
+        }
     }
 
     func clearNativeSubtitleOverlay() {
         nativeSubtitleCues = []
         nativeSubtitleCueIndex = 0
-        if !nativeSubtitleText.isEmpty {
-            nativeSubtitleText = ""
-        }
+        setNativeSubtitleText("")
+    }
+
+    private func setNativeSubtitleText(_ text: String) {
+        guard nativeSubtitleText != text else { return }
+        nativeSubtitleText = text
+        nativeSubtitleRenderID &+= 1
     }
 
     func updateNativeSubtitleOverlay(at time: Double) {
         guard playbackBackend == .native else {
-            if !nativeSubtitleText.isEmpty {
-                nativeSubtitleText = ""
-            }
+            setNativeSubtitleText("")
             return
         }
         guard !nativeSubtitleCues.isEmpty, time.isFinite else {
-            if !nativeSubtitleText.isEmpty {
-                nativeSubtitleText = ""
-            }
+            setNativeSubtitleText("")
             return
         }
 
@@ -3041,9 +3081,7 @@ private extension PlayerViewModel {
         if nativeSubtitleCues.indices.contains(nativeSubtitleCueIndex) {
             let current = nativeSubtitleCues[nativeSubtitleCueIndex]
             if current.contains(time: time) {
-                if nativeSubtitleText != current.text {
-                    nativeSubtitleText = current.text
-                }
+                setNativeSubtitleText(current.text)
                 return
             }
             if time >= current.end {
@@ -3053,16 +3091,11 @@ private extension PlayerViewModel {
                 }
                 if index < nativeSubtitleCues.count, nativeSubtitleCues[index].contains(time: time) {
                     nativeSubtitleCueIndex = index
-                    let text = nativeSubtitleCues[index].text
-                    if nativeSubtitleText != text {
-                        nativeSubtitleText = text
-                    }
+                    setNativeSubtitleText(nativeSubtitleCues[index].text)
                     return
                 }
                 nativeSubtitleCueIndex = min(index, max(nativeSubtitleCues.count - 1, 0))
-                if !nativeSubtitleText.isEmpty {
-                    nativeSubtitleText = ""
-                }
+                setNativeSubtitleText("")
                 return
             }
         }
@@ -3073,11 +3106,9 @@ private extension PlayerViewModel {
             }) {
                 nativeSubtitleCueIndex = index
             }
-            if nativeSubtitleText != cue.text {
-                nativeSubtitleText = cue.text
-            }
-        } else if !nativeSubtitleText.isEmpty {
-            nativeSubtitleText = ""
+            setNativeSubtitleText(cue.text)
+        } else {
+            setNativeSubtitleText("")
         }
     }
 

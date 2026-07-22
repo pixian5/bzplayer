@@ -1,10 +1,24 @@
 import AppKit
+import AVFoundation
 import AVKit
 import SwiftUI
 import VLCKitSPM
 
 struct PlayerContainerView: NSViewRepresentable {
     @ObservedObject var viewModel: PlayerViewModel
+
+    // Explicit inputs so SwiftUI always calls updateNSView when subtitle text changes.
+    // Relying only on @ObservedObject can miss high-frequency text updates on some macOS versions.
+    private var backend: PlayerViewModel.PlaybackBackend { viewModel.playbackBackend }
+    private var nativePlayer: AVPlayer { viewModel.nativePlayer }
+    private var nativeRefreshID: Int { viewModel.nativePlayerSurfaceRefreshID }
+    private var videoVisible: Bool { !viewModel.isAudioOnlyMode }
+    private var subtitleText: String {
+        viewModel.playbackBackend == .native ? viewModel.nativeSubtitleText : ""
+    }
+    private var subtitleFontSize: CGFloat { viewModel.nativeSubtitlePointSize }
+    private var subtitleBackgroundOpacity: Int { viewModel.subtitleBackgroundOpacity }
+    private var subtitleRenderID: Int { viewModel.nativeSubtitleRenderID }
 
     func makeNSView(context: Context) -> PlayerHostView {
         let view = PlayerHostView()
@@ -69,49 +83,100 @@ struct PlayerContainerView: NSViewRepresentable {
 
     func updateNSView(_ nsView: PlayerHostView, context: Context) {
         nsView.updateBackend(
-            viewModel.playbackBackend,
-            player: viewModel.nativePlayer,
-            nativeRefreshID: viewModel.nativePlayerSurfaceRefreshID,
-            videoVisible: !viewModel.isAudioOnlyMode
+            backend,
+            player: nativePlayer,
+            nativeRefreshID: nativeRefreshID,
+            videoVisible: videoVisible
         )
-        if nsView.window != nil {
-            if viewModel.playbackBackend == .vlc {
-                viewModel.attachVLCView(nsView.vlcVideoView)
-            }
+        // AppKit subtitle label above AVPlayerLayer (not SwiftUI overlay).
+        // Touch subtitleRenderID so SwiftUI tracks it as an update dependency.
+        _ = subtitleRenderID
+        nsView.updateNativeSubtitle(
+            text: subtitleText,
+            fontSize: subtitleFontSize,
+            backgroundOpacity: subtitleBackgroundOpacity
+        )
+        if nsView.window != nil, backend == .vlc {
+            viewModel.attachVLCView(nsView.vlcVideoView)
         }
     }
 }
 
+/// Hosts native AVPlayer via AVPlayerLayer (not AVPlayerView) so external
+/// subtitle labels can reliably sit above the video without being covered by
+/// AVPlayerView's private video layer hierarchy.
 final class PlayerHostView: NSView {
-    let nativePlayerView = AVPlayerView()
+    private let nativeVideoContainer = NSView()
+    private let playerLayer = AVPlayerLayer()
     let vlcVideoView = VLCVideoView(frame: .zero)
     let clickView = ClickCaptureView()
+    private let subtitleContainer = NSView()
+    private let subtitleBackground = NSView()
+    private let subtitleLabel = NSTextField(wrappingLabelWithString: "")
     private var lastNativeRefreshID = 0
+    private var lastSubtitleText = ""
+    private var lastSubtitleFontSize: CGFloat = -1
+    private var lastSubtitleOpacity = -1
+    private weak var boundPlayer: AVPlayer?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
         layer?.backgroundColor = NSColor.black.cgColor
 
-        nativePlayerView.translatesAutoresizingMaskIntoConstraints = false
-        nativePlayerView.controlsStyle = .none
-        nativePlayerView.videoGravity = .resizeAspect
-        nativePlayerView.showsFullScreenToggleButton = false
-        nativePlayerView.player = nil
+        nativeVideoContainer.translatesAutoresizingMaskIntoConstraints = false
+        nativeVideoContainer.wantsLayer = true
+        nativeVideoContainer.layer?.backgroundColor = NSColor.black.cgColor
+        playerLayer.videoGravity = .resizeAspect
+        playerLayer.backgroundColor = NSColor.black.cgColor
+        // Ensure video is always below subtitles / click capture.
+        playerLayer.zPosition = 0
+        nativeVideoContainer.layer?.addSublayer(playerLayer)
 
         vlcVideoView.translatesAutoresizingMaskIntoConstraints = false
         vlcVideoView.isHidden = true
         clickView.translatesAutoresizingMaskIntoConstraints = false
 
-        addSubview(nativePlayerView)
+        subtitleContainer.translatesAutoresizingMaskIntoConstraints = false
+        subtitleContainer.wantsLayer = true
+        subtitleContainer.isHidden = true
+        subtitleContainer.layer?.zPosition = 100
+
+        subtitleBackground.translatesAutoresizingMaskIntoConstraints = false
+        subtitleBackground.wantsLayer = true
+        subtitleBackground.layer?.cornerRadius = 8
+        subtitleBackground.layer?.backgroundColor = NSColor.clear.cgColor
+
+        subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
+        subtitleLabel.isEditable = false
+        subtitleLabel.isSelectable = false
+        subtitleLabel.isBezeled = false
+        subtitleLabel.drawsBackground = false
+        subtitleLabel.backgroundColor = .clear
+        subtitleLabel.textColor = .white
+        subtitleLabel.alignment = .center
+        subtitleLabel.lineBreakMode = .byWordWrapping
+        subtitleLabel.maximumNumberOfLines = 0
+        subtitleLabel.font = .systemFont(ofSize: 30, weight: .semibold)
+        let shadow = NSShadow()
+        shadow.shadowColor = NSColor.black.withAlphaComponent(0.95)
+        shadow.shadowBlurRadius = 4
+        shadow.shadowOffset = NSSize(width: 0, height: -1)
+        subtitleLabel.shadow = shadow
+
+        // Bottom → top: video, VLC, click capture, subtitle overlay.
+        addSubview(nativeVideoContainer)
         addSubview(vlcVideoView)
         addSubview(clickView)
+        addSubview(subtitleContainer)
+        subtitleContainer.addSubview(subtitleBackground)
+        subtitleBackground.addSubview(subtitleLabel)
 
         NSLayoutConstraint.activate([
-            nativePlayerView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            nativePlayerView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            nativePlayerView.topAnchor.constraint(equalTo: topAnchor),
-            nativePlayerView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            nativeVideoContainer.leadingAnchor.constraint(equalTo: leadingAnchor),
+            nativeVideoContainer.trailingAnchor.constraint(equalTo: trailingAnchor),
+            nativeVideoContainer.topAnchor.constraint(equalTo: topAnchor),
+            nativeVideoContainer.bottomAnchor.constraint(equalTo: bottomAnchor),
             vlcVideoView.leadingAnchor.constraint(equalTo: leadingAnchor),
             vlcVideoView.trailingAnchor.constraint(equalTo: trailingAnchor),
             vlcVideoView.topAnchor.constraint(equalTo: topAnchor),
@@ -119,13 +184,47 @@ final class PlayerHostView: NSView {
             clickView.leadingAnchor.constraint(equalTo: leadingAnchor),
             clickView.trailingAnchor.constraint(equalTo: trailingAnchor),
             clickView.topAnchor.constraint(equalTo: topAnchor),
-            clickView.bottomAnchor.constraint(equalTo: bottomAnchor)
+            clickView.bottomAnchor.constraint(equalTo: bottomAnchor),
+
+            subtitleContainer.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 48),
+            subtitleContainer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -48),
+            subtitleContainer.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -64),
+
+            subtitleBackground.leadingAnchor.constraint(greaterThanOrEqualTo: subtitleContainer.leadingAnchor),
+            subtitleBackground.trailingAnchor.constraint(lessThanOrEqualTo: subtitleContainer.trailingAnchor),
+            subtitleBackground.centerXAnchor.constraint(equalTo: subtitleContainer.centerXAnchor),
+            subtitleBackground.topAnchor.constraint(equalTo: subtitleContainer.topAnchor),
+            subtitleBackground.bottomAnchor.constraint(equalTo: subtitleContainer.bottomAnchor),
+            subtitleBackground.widthAnchor.constraint(lessThanOrEqualTo: subtitleContainer.widthAnchor),
+
+            subtitleLabel.leadingAnchor.constraint(equalTo: subtitleBackground.leadingAnchor, constant: 18),
+            subtitleLabel.trailingAnchor.constraint(equalTo: subtitleBackground.trailingAnchor, constant: -18),
+            subtitleLabel.topAnchor.constraint(equalTo: subtitleBackground.topAnchor, constant: 10),
+            subtitleLabel.bottomAnchor.constraint(equalTo: subtitleBackground.bottomAnchor, constant: -10)
         ])
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    override func layout() {
+        super.layout()
+        // Keep AVPlayerLayer bounds in sync with its host view.
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        playerLayer.frame = nativeVideoContainer.bounds
+        CATransaction.commit()
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        // Never let the subtitle layer steal clicks from ClickCaptureView.
+        let hit = super.hitTest(point)
+        if hit === subtitleContainer || hit === subtitleBackground || hit === subtitleLabel {
+            return clickView
+        }
+        return hit
     }
 
     func updateBackend(
@@ -136,19 +235,65 @@ final class PlayerHostView: NSView {
     ) {
         switch backend {
         case .native:
-            if nativePlayerView.player !== player {
-                nativePlayerView.player = player
-            } else if nativeRefreshID != lastNativeRefreshID {
-                nativePlayerView.player = nil
-                nativePlayerView.player = player
+            let needsRebind = boundPlayer !== player || playerLayer.player !== player
+            let needsRefresh = nativeRefreshID != lastNativeRefreshID
+            if needsRebind || needsRefresh {
+                // Drop then reattach so the surface re-primes after decoder warmup / player replacement.
+                playerLayer.player = nil
+                playerLayer.player = player
+                boundPlayer = player
             }
             lastNativeRefreshID = nativeRefreshID
-            nativePlayerView.isHidden = !videoVisible
+            nativeVideoContainer.isHidden = !videoVisible
+            playerLayer.isHidden = !videoVisible
             vlcVideoView.isHidden = true
+            playerLayer.frame = nativeVideoContainer.bounds
         case .vlc:
-            nativePlayerView.player = nil
-            nativePlayerView.isHidden = true
+            playerLayer.player = nil
+            boundPlayer = nil
+            nativeVideoContainer.isHidden = true
+            playerLayer.isHidden = true
             vlcVideoView.isHidden = !videoVisible
+            // VLC draws its own subtitles.
+            updateNativeSubtitle(
+                text: "",
+                fontSize: lastSubtitleFontSize > 0 ? lastSubtitleFontSize : 30,
+                backgroundOpacity: lastSubtitleOpacity >= 0 ? lastSubtitleOpacity : 0
+            )
+        }
+    }
+
+    func updateNativeSubtitle(text: String, fontSize: CGFloat, backgroundOpacity: Int) {
+        let normalizedOpacity = max(0, min(100, backgroundOpacity))
+        let normalizedFont = max(16, min(72, fontSize))
+
+        if text != lastSubtitleText {
+            lastSubtitleText = text
+            subtitleLabel.stringValue = text
+        }
+
+        if normalizedFont != lastSubtitleFontSize {
+            lastSubtitleFontSize = normalizedFont
+            subtitleLabel.font = .systemFont(ofSize: normalizedFont, weight: .semibold)
+        }
+
+        if normalizedOpacity != lastSubtitleOpacity {
+            lastSubtitleOpacity = normalizedOpacity
+            // Always keep a faint backdrop when opacity is 0 so thin white text
+            // remains readable; user opacity scales on top of a minimal shadow box.
+            let alpha = max(CGFloat(normalizedOpacity) / 100.0, text.isEmpty ? 0 : 0.25)
+            subtitleBackground.layer?.backgroundColor = NSColor.black.withAlphaComponent(alpha).cgColor
+        } else if !text.isEmpty, lastSubtitleOpacity == 0 {
+            // Re-apply minimal backdrop after text reappears.
+            subtitleBackground.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.25).cgColor
+        }
+
+        subtitleContainer.isHidden = text.isEmpty
+        if !text.isEmpty {
+            // Keep the overlay above everything else in this host.
+            subtitleContainer.layer?.zPosition = 200
+            clickView.layer?.zPosition = 50
+            nativeVideoContainer.layer?.zPosition = 0
         }
     }
 }
