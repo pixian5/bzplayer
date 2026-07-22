@@ -53,7 +53,7 @@ bash scripts/measure_audio_only.sh "/path/to/media.mp4" \
 - `ffprobe` 分析最多等待 8 秒，`ffmpeg` 解码诊断最多等待 20 秒；超时会终止子进程，不应阻塞播放启动。
 - 播放内核：VLC 后端使用 VLCKit **4.0.0-alpha.20**（libvlc 4.0.0-dev）。仓库通过本地 path package `macos/Vendor/vlckit-spm` 引入（远程 SPM 二进制约 821MB，易超时）。首次构建必须先运行 `zsh scripts/fetch_vlckit.sh`。
 - 打包的 `.app` 依赖 `@executable_path/../Frameworks` 加载 `VLCKit.framework`；请使用 `scripts/build_macos_app.sh` / `install_macos_app.sh`，不要只拷贝 release 二进制。
-- AV1 视频优先使用系统 AVPlayer；在 VLCKit 4.x 的 AV1/dav1d 路径于目标 macOS 上复测通过前，AV1 仍不回退到 VLC。AV1 容器或音频轨道不受系统支持时会提示无法播放。
+- AV1 视频在 mp4/mov 等系统友好容器上默认优先使用 AVPlayer；可手动切换到 VLC（VLCKit 4 / libavcodec+dav1d 或系统硬件解码）。原生播放失败时会回退到 VLC。MKV/WebM 等非原生容器中的 AV1 直接走 VLC。
 - “最小化到 Dock 时仅播放音频”默认关闭，是实验功能。开启后会在最小化时禁用 AVPlayer 视频轨道，或让 VLC 以 `:no-video` 重新加载；恢复窗口时会再次加载视频。该功能可能产生短暂切换，节能效果必须在目标机器上用 Activity Monitor、`powermetrics` 等工具实测，不能仅凭配置推断。
 - 当前本地安装与 GitHub Actions 生成的应用包均未自动签名或公证，首次运行可能需要在系统安全提示中允许。生产分发前应增加 Developer ID 签名、公证和 staple 流程。
 

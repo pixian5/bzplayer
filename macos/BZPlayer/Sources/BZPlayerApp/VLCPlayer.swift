@@ -38,7 +38,7 @@ final class VLCPlayer: NSObject {
         library = VLCLibrary(options: [
             "--freetype-font=/System/Library/Fonts/STHeiti Light.ttc",
             "--subsdec-encoding=GB18030",
-            "--avcodec-hw=any",
+            // VLCKit 4 已移除 --avcodec-hw；硬件解码由模块自动协商，勿再传该选项。
             // macOS 26 上 OpenGL vout（macosx / caopengllayer）会在渲染线程的
             // vout_display_opengl_Prepare 命中断言并 abort（SIGABRT），播放约 15s 后崩溃。
             // 模块短名是 samplebufferdisplay（AVSampleBufferDisplayLayer / CoreMedia），
@@ -132,8 +132,9 @@ final class VLCPlayer: NSObject {
             media.addOption(":freetype-font=/System/Library/Fonts/STHeiti Light.ttc")
             media.addOption(":freetype-rel-fontsize=\(self.configuredSubtitleFontSize)")
             media.addOption(":freetype-background-opacity=\(self.configuredSubtitleBackgroundOpacity * 255 / 100)")
-            media.addOption(":avcodec-hw=any")
-            media.addOption(":codec=videotoolbox")
+            // Do NOT force :codec=videotoolbox — VideoToolbox rejects av01 on many Macs and
+            // that forced codec list prevented a clean dav1d/libavcodec path for AV1.
+            // Let VLC pick: VT for H.264/HEVC when available, dav1d/avcodec for AV1.
             if noVideo {
                 media.addOption(":no-video")
             }

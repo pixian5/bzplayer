@@ -1265,8 +1265,8 @@ final class PlayerViewModel: NSObject, ObservableObject {
 
         guard let path else { return }
 
-        // Native backend (including AV1-forced native): render external subtitles with overlay.
-        // Do not switch to VLC just for external subtitles — AV1 cannot use VLC, and native overlay works for common text formats.
+        // Native backend: render external subtitles with overlay (including AV1 on AVPlayer).
+        // Do not switch to VLC just for external subtitles.
         if playbackBackend == .native {
             if applyNativeExternalSubtitle(path: path) {
                 showToastMessage(t("字幕：") + (path as NSString).lastPathComponent)
@@ -1354,10 +1354,6 @@ final class PlayerViewModel: NSObject, ObservableObject {
         let wasPaused = isPaused
 
         if audioDelayMs != 0, playbackBackend == .native {
-            if currentMediaHasAV1Video {
-                showToastMessage(t("AV1 视频当前不支持音频延迟，以避免切换到不稳定的 VLC 解码器"))
-                return
-            }
             let generation = startNewPlaybackGeneration()
             selectBackend(.vlc)
             loadVLC(url: url, resumeAt: resumeAt, startPaused: wasPaused)
@@ -1443,10 +1439,6 @@ final class PlayerViewModel: NSObject, ObservableObject {
         let resumeAt = currentTime > 0 && currentTime < duration ? currentTime : nil
         let wasPaused = isPaused
         let newBackend: PlaybackBackend = playbackBackend == .native ? .vlc : .native
-        if newBackend == .vlc, currentMediaHasAV1Video {
-            showToastMessage(t("AV1 视频已禁用 VLC 后端，以避免解码器崩溃"))
-            return
-        }
         let generation = startNewPlaybackGeneration()
         selectBackend(newBackend)
 
@@ -1633,10 +1625,6 @@ final class PlayerViewModel: NSObject, ObservableObject {
                             BZLogger.error("Native player stalled at \(seconds)s; switching to VLC")
                             if let url = self.currentFileURL {
                                 let resumeAt = seconds.isFinite ? seconds : nil
-                                if self.currentMediaHasAV1Video {
-                                    self.reportAV1PlaybackFailure(for: url)
-                                    return
-                                }
                                 let generation = self.startNewPlaybackGeneration()
                                 self.selectBackend(.vlc)
                                 self.loadVLC(url: url, resumeAt: resumeAt)
@@ -2108,11 +2096,6 @@ final class PlayerViewModel: NSObject, ObservableObject {
         let hasFailed = duration == 0 && (isPaused || currentTime < 0.5)
         guard hasFailed else { return }
 
-        if originalBackend == .native, currentMediaHasAV1Video {
-            reportAV1PlaybackFailure(for: url)
-            return
-        }
-
         if !attemptedBackendSwitch {
             attemptedBackendSwitch = true
             let newBackend: PlaybackBackend = originalBackend == .native ? .vlc : .native
@@ -2143,14 +2126,18 @@ final class PlayerViewModel: NSObject, ObservableObject {
                 generation: newGeneration
             )
         } else {
-            let errorMsg = "无法播放文件：\(url.lastPathComponent)\n多个播放内核都无法解码此文件。"
-            BZLogger.error(errorMsg)
-            playbackError = errorMsg
-            if loopMode != .none {
-                BZLogger.error("Stopping playback sequence due to unplayable file")
-                loopMode = .none
+            if currentMediaHasAV1Video {
+                reportAV1PlaybackFailure(for: url)
+            } else {
+                let errorMsg = "无法播放文件：\(url.lastPathComponent)\n多个播放内核都无法解码此文件。"
+                BZLogger.error(errorMsg)
+                playbackError = errorMsg
+                if loopMode != .none {
+                    BZLogger.error("Stopping playback sequence due to unplayable file")
+                    loopMode = .none
+                }
+                showFileInfo()
             }
-            showFileInfo()
         }
     }
 
@@ -2237,12 +2224,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
     }
 
     private func chooseBackend(for url: URL, ffprobeInfo: FFprobeInfo? = nil) async -> PlaybackBackend {
-        if await hasAV1Video(url: url, ffprobeInfo: ffprobeInfo) {
-            // Older VLCKit 3.6 dav1d could crash on macOS 26 while AV1 is playing.
-            // Keep AV1 on AVPlayer until VLCKit 4.x AV1 path is re-validated on target OS.
-            // Prefer AVPlayer and never route this known codec to VLC.
-            return .native
-        }
+        let hasAV1 = await hasAV1Video(url: url, ffprobeInfo: ffprobeInfo)
         // MKV, AVI and other containers are not natively supported by AVPlayer on macOS
         let nonNativeContainers: Set<String> = [
             "mkv", "avi", "flv", "wmv", "webm", "rmvb", "ts", "mpeg", "mpg",
@@ -2255,6 +2237,11 @@ final class PlayerViewModel: NSObject, ObservableObject {
         // by the native overlay, so they no longer force a backend switch.
         if audioDelayMs != 0 {
             return .vlc
+        }
+        // AV1 in native-friendly containers (mp4/mov/m4v) prefers AVPlayer for
+        // power/efficiency; VLC remains available via manual switch and failure fallback.
+        if hasAV1 {
+            return .native
         }
         if let ffprobeInfo {
             if shouldPreferVLC(ffprobeInfo: ffprobeInfo) {
@@ -2294,10 +2281,15 @@ final class PlayerViewModel: NSObject, ObservableObject {
         guard playbackError == nil else { return }
         playbackFailureTimer?.invalidate()
         playbackFailureTimer = nil
-        nativePlayer.pause()
+        switch playbackBackend {
+        case .native:
+            nativePlayer.pause()
+        case .vlc:
+            vlcPlayer.pause()
+        }
         isPaused = true
         loopMode = .none
-        playbackError = "无法播放 AV1 文件：\(url.lastPathComponent)\n已阻止回退到 VLC，以避免触发 VLCKit dav1d 解码器崩溃。"
+        playbackError = "无法播放 AV1 文件：\(url.lastPathComponent)\n原生 AVPlayer 与 VLC 后端均未能成功播放。"
         showFileInfo()
     }
 
