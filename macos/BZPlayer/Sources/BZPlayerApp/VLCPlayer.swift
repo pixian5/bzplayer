@@ -38,7 +38,13 @@ final class VLCPlayer: NSObject {
         library = VLCLibrary(options: [
             "--freetype-font=/System/Library/Fonts/STHeiti Light.ttc",
             "--subsdec-encoding=GB18030",
-            "--avcodec-hw=any"
+            "--avcodec-hw=any",
+            // macOS 26 上 OpenGL vout（macosx / caopengllayer）会在渲染线程的
+            // vout_display_opengl_Prepare 命中断言并 abort（SIGABRT），播放约 15s 后崩溃。
+            // 模块短名是 samplebufferdisplay（AVSampleBufferDisplayLayer / CoreMedia），
+            // 不是 avsamplebuffer——后者是音频输出模块；写成 vout 会导致有声无画。
+            // macosx 是旧 NSOpenGL vout，同样不能用来修这个崩溃。
+            "--vout=samplebufferdisplay"
         ])
         mediaPlayer = VLCMediaPlayer(library: library)
         super.init()

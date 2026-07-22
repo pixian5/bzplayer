@@ -420,6 +420,22 @@ struct Localization {
             "es": "Subtítulo: ",
             "ru": "Субтитры: "
         ],
+        "无法加载字幕文件": [
+            "en": "Failed to load subtitle file",
+            "ja": "字幕ファイルを読み込めません",
+            "de": "Untertiteldatei konnte nicht geladen werden",
+            "fr": "Échec du chargement du fichier de sous-titres",
+            "es": "No se pudo cargar el archivo de subtítulos",
+            "ru": "Не удалось загрузить файл субтитров"
+        ],
+        "当前音频延迟需要使用 VLC 播放后端": [
+            "en": "Current audio delay requires the VLC playback backend",
+            "ja": "現在の音声遅延には VLC 再生バックエンドが必要です",
+            "de": "Die aktuelle Audioverzögerung erfordert das VLC-Wiedergabe-Backend",
+            "fr": "Le décalage audio actuel nécessite le backend de lecture VLC",
+            "es": "El retraso de audio actual requiere el backend de reproducción VLC",
+            "ru": "Текущая задержка звука требует движок воспроизведения VLC"
+        ],
         "音频延迟: %.0f ms": [
             "en": "Audio Delay: %.0f ms",
             "ja": "音声遅延: %.0f ms",

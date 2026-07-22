@@ -119,6 +119,8 @@ final class PlayerViewModel: NSObject, ObservableObject {
     @Published private(set) var isAudioOnlyMode = false
     @Published var subtitleBackgroundOpacity: Int
     @Published var subtitleFontSize: Int
+    /// Active external subtitle line rendered by the native (AVPlayer) overlay.
+    @Published private(set) var nativeSubtitleText: String = ""
     @Published var appLanguage: String = "auto"
     /// 已打开过但未播完的文件（持久化保存）
     @Published var openedFiles: Set<URL> = []
@@ -182,6 +184,9 @@ final class PlayerViewModel: NSObject, ObservableObject {
     private var playbackInfrastructureInitialized = false
     private static var settingsCache: AppSettings?
     private var selectedSubtitlePath: String?
+    /// Parsed external subtitle cues for the native AVPlayer overlay.
+    private var nativeSubtitleCues: [ExternalSubtitleCue] = []
+    private var nativeSubtitleCueIndex: Int = 0
     private var audioOnlyState: AudioOnlyState?
     private var pendingAudioOnlyAudioTrack: Int32?
     private var pendingAudioOnlySubtitleTrack: Int32?
@@ -790,6 +795,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         isSeeking = false
         currentIndex = -1
         selectedSubtitlePath = nil
+        clearNativeSubtitleOverlay()
         windowTitle = Self.defaultWindowTitle
         attachedWindow?.title = windowTitle
         playbackError = nil
@@ -851,6 +857,8 @@ final class PlayerViewModel: NSObject, ObservableObject {
         let seekGeneration = UUID()
         activeSeekGeneration = seekGeneration
         isSeeking = true
+        currentTime = targetTime
+        updateNativeSubtitleOverlay(at: targetTime)
         if playbackBackend == .native {
             pendingVLCSeekTask?.cancel()
             pendingVLCSeekTask = nil
@@ -858,6 +866,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
                 DispatchQueue.main.async {
                     guard let self, self.activeSeekGeneration == seekGeneration else { return }
                     self.isSeeking = false
+                    self.updateNativeSubtitleOverlay(at: self.currentTime)
                 }
             }
         } else {
@@ -1065,13 +1074,24 @@ final class PlayerViewModel: NSObject, ObservableObject {
         let normalized = Self.clampSubtitleOpacity(value)
         subtitleBackgroundOpacity = normalized
         saveSettings()
+        // VLC applies opacity via media options (requires reload).
+        // Native overlay reads @Published opacity directly.
         reloadVLCMediaIfNeeded()
     }
 
     func setSubtitleFontSize(_ size: Int) {
         subtitleFontSize = max(1, size)
         saveSettings()
+        // VLC applies font size via media options (requires reload).
+        // Native overlay reads @Published font size directly.
         reloadVLCMediaIfNeeded()
+    }
+
+    /// Point size used by the native subtitle overlay (maps VLC relative size to pt).
+    var nativeSubtitlePointSize: CGFloat {
+        // VLC freetype-rel-fontsize defaults around 55; map to a readable macOS point size.
+        let mapped = CGFloat(subtitleFontSize) * 0.45
+        return min(max(mapped, 14), 64)
     }
 
     func setAudioDelayStepMs(_ value: Double) {
@@ -1194,41 +1214,39 @@ final class PlayerViewModel: NSObject, ObservableObject {
     }
 
     func selectSubtitle(path: String?) {
-        if path != nil, playbackBackend == .native, currentMediaHasAV1Video {
-            showToastMessage(t("AV1 视频当前不支持切换外部字幕"))
-            return
-        }
         selectedSubtitlePath = path
-        if path != nil, playbackBackend == .native, let url = currentFileURL {
-            let resumeAt = currentTime > 0 && currentTime < duration ? currentTime : nil
-            let wasPaused = isPaused
-            let generation = startNewPlaybackGeneration()
-            selectBackend(.vlc)
-            loadVLC(url: url, resumeAt: resumeAt, startPaused: wasPaused)
-            schedulePlaybackFailureCheck(
-                for: url,
-                backend: .vlc,
-                resumeAt: resumeAt,
-                generation: generation
-            )
-            return
-        }
         if path == nil {
+            clearNativeSubtitleOverlay()
             if playbackBackend == .vlc {
                 vlcPlayer.disableSubtitle()
             }
             showToastMessage(t("字幕：已关闭"))
-        } else if let path {
-            if playbackBackend == .vlc {
-                let subtitleURL = URL(fileURLWithPath: path)
-                if let utf8SubtitleURL = convertSubtitleToUTF8(at: subtitleURL) {
-                    vlcPlayer.setExternalSubtitle(url: utf8SubtitleURL)
-                } else {
-                    vlcPlayer.setExternalSubtitle(url: subtitleURL)
-                }
-            }
-            showToastMessage(t("字幕：") + (path as NSString).lastPathComponent)
+            return
         }
+
+        guard let path else { return }
+
+        // Native backend (including AV1-forced native): render external subtitles with overlay.
+        // Do not switch to VLC just for external subtitles — AV1 cannot use VLC, and native overlay works for common text formats.
+        if playbackBackend == .native {
+            if applyNativeExternalSubtitle(path: path) {
+                showToastMessage(t("字幕：") + (path as NSString).lastPathComponent)
+            } else {
+                showToastMessage(t("无法加载字幕文件"))
+            }
+            return
+        }
+
+        if playbackBackend == .vlc {
+            let subtitleURL = URL(fileURLWithPath: path)
+            if let utf8SubtitleURL = convertSubtitleToUTF8(at: subtitleURL) {
+                vlcPlayer.setExternalSubtitle(url: utf8SubtitleURL)
+            } else {
+                vlcPlayer.setExternalSubtitle(url: subtitleURL)
+            }
+            clearNativeSubtitleOverlay()
+        }
+        showToastMessage(t("字幕：") + (path as NSString).lastPathComponent)
     }
 
     private func addRecentFile(_ url: URL) {
@@ -1376,8 +1394,9 @@ final class PlayerViewModel: NSObject, ObservableObject {
             showToastMessage(t("最小化音频模式下不能切换播放后端"))
             return
         }
-        if playbackBackend == .vlc && (audioDelayMs != 0 || selectedSubtitlePath != nil) {
-            showToastMessage(t("当前字幕或音频延迟需要使用 VLC 播放后端"))
+        // Audio delay still requires VLC; external subtitles are supported on native via overlay.
+        if playbackBackend == .vlc && audioDelayMs != 0 {
+            showToastMessage(t("当前音频延迟需要使用 VLC 播放后端"))
             return
         }
         let resumeAt = currentTime > 0 && currentTime < duration ? currentTime : nil
@@ -1393,7 +1412,12 @@ final class PlayerViewModel: NSObject, ObservableObject {
         switch newBackend {
         case .native:
             openWithNative(url: url, resumeAt: resumeAt, startPaused: wasPaused)
+            // Restore external subtitle overlay after switching back to native.
+            if let selectedSubtitlePath {
+                _ = applyNativeExternalSubtitle(path: selectedSubtitlePath)
+            }
         case .vlc:
+            clearNativeSubtitleOverlay()
             loadVLC(url: url, resumeAt: resumeAt, startPaused: wasPaused)
         }
         schedulePlaybackFailureCheck(
@@ -1423,12 +1447,14 @@ final class PlayerViewModel: NSObject, ObservableObject {
                 DispatchQueue.main.async {
                     guard let self, self.activeSeekGeneration == seekGeneration else { return }
                     self.isSeeking = false
+                    self.updateNativeSubtitleOverlay(at: self.currentTime)
                 }
             }
         } else {
             scheduleVLCSeek(to: target, seekGeneration: seekGeneration)
         }
         currentTime = target
+        updateNativeSubtitleOverlay(at: target)
     }
 
     func seekByConfiguredFrameStep(_ direction: Int) {
@@ -1591,6 +1617,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
                 }
 
                 self.currentTime = seconds.isFinite ? max(0, seconds) : 0
+                self.updateNativeSubtitleOverlay(at: self.currentTime)
                 self.saveCurrentProgressIfNeeded()
             }
         }
@@ -1658,6 +1685,8 @@ final class PlayerViewModel: NSObject, ObservableObject {
             nativePlayer.volume = Float(volume / 100.0)
             nativePlayer.isMuted = isMuted
         case .vlc:
+            // VLC renders its own subtitles; hide the native text overlay.
+            clearNativeSubtitleOverlay()
             playbackEngineStatus = "VLC/libvlc"
             syncText = "播放链路：VLC/libvlc"
             vlcPlayer.setVolume(volume)
@@ -1896,6 +1925,8 @@ final class PlayerViewModel: NSObject, ObservableObject {
         currentNominalFPS = 30
         let discoveredSubtitles = discoverSubtitleFiles(for: url)
         selectedSubtitlePath = pickDefaultSubtitle(for: url, from: discoveredSubtitles)?.path
+        // Clear any previous native overlay until the new item is ready.
+        clearNativeSubtitleOverlay()
         updateWindowTitle(url.lastPathComponent)
         showToastMessage(url.lastPathComponent)
         applyWindowBehaviorForCurrentMedia(isFirstOpen: isFirstOpen)
@@ -2115,6 +2146,20 @@ final class PlayerViewModel: NSObject, ObservableObject {
                     if let resumeAt, resumeAt > 0 {
                         await self.nativePlayer.seek(to: CMTime(seconds: resumeAt, preferredTimescale: 600))
                     }
+                    // Apply external subtitle for native path (including AV1).
+                    if let selectedSubtitlePath = self.selectedSubtitlePath {
+                        _ = self.applyNativeExternalSubtitle(path: selectedSubtitlePath)
+                    } else {
+                        self.clearNativeSubtitleOverlay()
+                    }
+                    let displayTime: Double
+                    if let resumeAt, resumeAt > 0 {
+                        displayTime = resumeAt
+                    } else {
+                        let t = self.nativePlayer.currentTime().seconds
+                        displayTime = t.isFinite ? max(0, t) : 0
+                    }
+                    self.updateNativeSubtitleOverlay(at: displayTime)
                     if startPaused {
                         self.invalidateNativePlaybackRefresh()
                         self.nativePlayer.pause()
@@ -2165,7 +2210,9 @@ final class PlayerViewModel: NSObject, ObservableObject {
         if nonNativeContainers.contains(url.pathExtension.lowercased()) {
             return .vlc
         }
-        if audioDelayMs != 0 || selectedSubtitlePath != nil {
+        // Audio delay still needs VLC. External text subtitles are rendered
+        // by the native overlay, so they no longer force a backend switch.
+        if audioDelayMs != 0 {
             return .vlc
         }
         if let ffprobeInfo {
@@ -2946,6 +2993,92 @@ private extension PlayerViewModel {
         if value <= 0 { return 0 }
         if value >= 100 { return 100 }
         return candidates.min(by: { abs($0 - value) < abs($1 - value) }) ?? 0
+    }
+
+    @discardableResult
+    func applyNativeExternalSubtitle(path: String) -> Bool {
+        let url = URL(fileURLWithPath: path)
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            clearNativeSubtitleOverlay()
+            BZLogger.debug("[BZPlayer] External subtitle missing: \(path)")
+            return false
+        }
+        guard let cues = ExternalSubtitleParser.loadCues(from: url) else {
+            clearNativeSubtitleOverlay()
+            BZLogger.debug("[BZPlayer] Failed to parse external subtitle: \(path)")
+            return false
+        }
+        nativeSubtitleCues = cues
+        nativeSubtitleCueIndex = 0
+        updateNativeSubtitleOverlay(at: currentTime)
+        BZLogger.debug("[BZPlayer] Loaded \(cues.count) native subtitle cues from \(url.lastPathComponent)")
+        return true
+    }
+
+    func clearNativeSubtitleOverlay() {
+        nativeSubtitleCues = []
+        nativeSubtitleCueIndex = 0
+        if !nativeSubtitleText.isEmpty {
+            nativeSubtitleText = ""
+        }
+    }
+
+    func updateNativeSubtitleOverlay(at time: Double) {
+        guard playbackBackend == .native else {
+            if !nativeSubtitleText.isEmpty {
+                nativeSubtitleText = ""
+            }
+            return
+        }
+        guard !nativeSubtitleCues.isEmpty, time.isFinite else {
+            if !nativeSubtitleText.isEmpty {
+                nativeSubtitleText = ""
+            }
+            return
+        }
+
+        // Fast path: reuse the previous cue index when playback is advancing.
+        if nativeSubtitleCues.indices.contains(nativeSubtitleCueIndex) {
+            let current = nativeSubtitleCues[nativeSubtitleCueIndex]
+            if current.contains(time: time) {
+                if nativeSubtitleText != current.text {
+                    nativeSubtitleText = current.text
+                }
+                return
+            }
+            if time >= current.end {
+                var index = nativeSubtitleCueIndex + 1
+                while index < nativeSubtitleCues.count, nativeSubtitleCues[index].end <= time {
+                    index += 1
+                }
+                if index < nativeSubtitleCues.count, nativeSubtitleCues[index].contains(time: time) {
+                    nativeSubtitleCueIndex = index
+                    let text = nativeSubtitleCues[index].text
+                    if nativeSubtitleText != text {
+                        nativeSubtitleText = text
+                    }
+                    return
+                }
+                nativeSubtitleCueIndex = min(index, max(nativeSubtitleCues.count - 1, 0))
+                if !nativeSubtitleText.isEmpty {
+                    nativeSubtitleText = ""
+                }
+                return
+            }
+        }
+
+        if let cue = ExternalSubtitleParser.activeCue(in: nativeSubtitleCues, at: time) {
+            if let index = nativeSubtitleCues.firstIndex(where: {
+                $0.start == cue.start && $0.end == cue.end && $0.text == cue.text
+            }) {
+                nativeSubtitleCueIndex = index
+            }
+            if nativeSubtitleText != cue.text {
+                nativeSubtitleText = cue.text
+            }
+        } else if !nativeSubtitleText.isEmpty {
+            nativeSubtitleText = ""
+        }
     }
 
     func discoverSubtitleFilesForCurrentMedia() -> [URL] {
