@@ -17,7 +17,7 @@ BIN_SOURCE="${BUILD_DIR}/BZPlayer"
 [[ -d "${BUILD_DIR}/VLCKit.framework" ]]
 [[ -d "${BUILD_DIR}/BZPlayer_BZPlayerApp.bundle" ]]
 
-rm -rf "${APP_DIR}"
+/bin/rm -rf "${APP_DIR}"
 mkdir -p "${APP_DIR}/Contents/MacOS" "${APP_DIR}/Contents/Resources" "${APP_DIR}/Contents/Frameworks"
 
 cat > "${APP_DIR}/Contents/Info.plist" <<EOF
@@ -82,12 +82,12 @@ cat > "${APP_DIR}/Contents/Info.plist" <<EOF
 </plist>
 EOF
 
-cp "${BIN_SOURCE}" "${APP_DIR}/Contents/MacOS/BZPlayer"
+/bin/cp "${BIN_SOURCE}" "${APP_DIR}/Contents/MacOS/BZPlayer"
 chmod +x "${APP_DIR}/Contents/MacOS/BZPlayer"
-cp -R "${BUILD_DIR}/VLCKit.framework" "${APP_DIR}/Contents/Frameworks/"
-cp -R "${BUILD_DIR}/BZPlayer_BZPlayerApp.bundle" "${APP_DIR}/"
+/bin/cp -R "${BUILD_DIR}/VLCKit.framework" "${APP_DIR}/Contents/Frameworks/"
+/bin/cp -R "${BUILD_DIR}/BZPlayer_BZPlayerApp.bundle" "${APP_DIR}/"
 if [[ -f "${PROJECT_DIR}/Resources/AppIcon.icns" ]]; then
-    cp "${PROJECT_DIR}/Resources/AppIcon.icns" "${APP_DIR}/Contents/Resources/AppIcon.icns"
+    /bin/cp "${PROJECT_DIR}/Resources/AppIcon.icns" "${APP_DIR}/Contents/Resources/AppIcon.icns"
 fi
 
 # SPM links VLCKit as @rpath; the binary only has @loader_path by default, so

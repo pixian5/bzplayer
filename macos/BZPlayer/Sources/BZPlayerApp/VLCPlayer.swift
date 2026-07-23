@@ -49,8 +49,8 @@ final class VLCPlayer: NSObject {
         mediaPlayer = VLCMediaPlayer(library: library)
         super.init()
         mediaPlayer.delegate = self
-        // VLCKit 4 defaults time updates to 1s; keep UI scrubber responsive.
-        mediaPlayer.timeChangeUpdateInterval = 0.25
+        // VLCKit 4 defaults time updates to 1s; 0.5s balances responsiveness and energy.
+        mediaPlayer.timeChangeUpdateInterval = 0.5
         bindNotifications()
         registerCustomFonts()
     }
@@ -277,7 +277,7 @@ final class VLCPlayer: NSObject {
     private func makeMediaPlayer() -> VLCMediaPlayer {
         let player = VLCMediaPlayer(library: library)
         player.delegate = self
-        player.timeChangeUpdateInterval = 0.25
+        player.timeChangeUpdateInterval = 0.5
         applyConfiguredRate(to: player)
         // Attach drawable after other setup to avoid transient states
         if let view = currentAttachedView {

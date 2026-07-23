@@ -1605,7 +1605,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
 
     private func bindNativePlayer(for player: AVPlayer, generation: UUID) {
         nativeTimeObserver = player.addPeriodicTimeObserver(
-            forInterval: CMTime(seconds: 0.1, preferredTimescale: 600),
+            forInterval: CMTime(seconds: 0.5, preferredTimescale: 600),
             queue: .main
         ) { [weak self, weak player] time in
             Task { @MainActor [weak self, weak player] in
@@ -1620,7 +1620,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
                 if !self.isPaused && !self.isSeeking && !self.nativePlaybackRefreshInFlight && seconds.isFinite && seconds > 0 {
                     if seconds == self.lastStallPosition {
                         self.nativeStallCount += 1
-                        if self.nativeStallCount > 30 { // ~3 seconds stall
+                        if self.nativeStallCount > 6 { // ~3 seconds stall at 0.5s tick
                             self.nativeStallCount = 0
                             BZLogger.error("Native player stalled at \(seconds)s; switching to VLC")
                             if let url = self.currentFileURL {

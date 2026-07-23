@@ -12,6 +12,7 @@ struct PlayerRootView: View {
     @State private var hideWorkItem: DispatchWorkItem?
     @State private var controlBarHeight: CGFloat = 0
     @State private var mouseIdleTimer: DispatchWorkItem?
+    @State private var lastMouseActivityAt: Date = .distantPast
     @State private var isCursorHidden = false
     @State private var sleepAssertionID: IOPMAssertionID = 0
     @State private var hasSleepAssertion = false
@@ -108,11 +109,13 @@ struct PlayerRootView: View {
             releaseSleepAssertion()
         }
         .onReceive(viewModel.$currentTime) { current in
-            guard viewModel.duration > 0 else {
+            if viewModel.duration > 0 {
+                seekValue = current / viewModel.duration
+            } else {
                 seekValue = 0
-                return
             }
-            seekValue = current / viewModel.duration
+            // Merged: previously a second onReceive($currentTime) called this.
+            syncControlsVisibilityWithPlaybackState()
         }
         .onReceive(viewModel.$windowTitle) { title in
             viewModel.currentWindow?.title = title
@@ -124,9 +127,6 @@ struct PlayerRootView: View {
             } else {
                 acquireSleepAssertion()
             }
-        }
-        .onReceive(viewModel.$currentTime) { _ in
-            syncControlsVisibilityWithPlaybackState()
         }
         .onReceive(viewModel.$duration) { _ in
             syncControlsVisibilityWithPlaybackState()
@@ -218,7 +218,7 @@ struct PlayerRootView: View {
             }
         }
         hideWorkItem = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
     }
 
     private func cancelHide() {
@@ -227,18 +227,34 @@ struct PlayerRootView: View {
     }
 
     // MARK: - 鼠标 1s 空闲隐藏
+    // 实现说明：以前每次鼠标移动都 cancel 旧 workItem + 创建新的 + asyncAfter 提交，
+    // 在 hover 期间主线程被 GCD 提交塞满。现在让一个已调度的 workItem 在触发时检查
+    // lastMouseActivityAt：如果距上次鼠标活动 < 1s，则用剩余时间重新调度自己，
+    // 不再每次鼠标移动都创建新 workItem。
 
     private func resetMouseIdleTimer() {
-        mouseIdleTimer?.cancel()
+        lastMouseActivityAt = Date()
+        if mouseIdleTimer != nil { return }
+        scheduleMouseIdleCheck(after: 1.0)
+    }
+
+    private func scheduleMouseIdleCheck(after delay: TimeInterval) {
         let work = DispatchWorkItem { [self] in
-            if !isHoveringControlBar && !isHoveringPlaylist && !shouldPinControlsVisible {
-                setControlsVisible(false)
-                NSCursor.setHiddenUntilMouseMoves(true)
-                isCursorHidden = true
+            mouseIdleTimer = nil
+            guard !shouldPinControlsVisible else { return }
+            let elapsed = Date().timeIntervalSince(lastMouseActivityAt)
+            if elapsed < 1.0 {
+                // 鼠标在最后 1s 内有移动，按剩余时间重新调度，不重新创建中间状态
+                scheduleMouseIdleCheck(after: max(1.0 - elapsed, 0.05))
+                return
             }
+            guard !isHoveringControlBar, !isHoveringPlaylist else { return }
+            setControlsVisible(false)
+            NSCursor.setHiddenUntilMouseMoves(true)
+            isCursorHidden = true
         }
         mouseIdleTimer = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
     private func cancelMouseIdleTimer() {
