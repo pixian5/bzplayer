@@ -2,9 +2,9 @@
 
 ## 目的与当前状态
 
-BZPlayer 的 VLC 播放后端使用 `VLCKit 4.0.0-alpha.20`，对应 VideoLAN `4.0.0a20` / 运行时 `libvlc 4.0.0-dev`。该版本是一个明确锁定的内测二进制，不会因为执行 `swift build` 自动升级。升级必须同时修改下载地址、SHA-256、文档和回归结果，避免源码、缓存与最终 `.app` 使用不同框架。
+BZPlayer 的 VLC 播放后端使用 `VLCKit 4.0.0-alpha.21`，对应 VideoLAN `4.0.0a21` / 运行时 `libvlc 4.0.0-dev`。该版本是一个明确锁定的内测二进制，不会因为执行 `swift build` 自动升级。升级必须同时修改下载地址、SHA-256、大小、文档和回归结果，避免源码、缓存与最终 `.app` 使用不同框架。
 
-本项目不直接把 `VLCKit.xcframework` 提交到 Git：解压后约 2.6 GB，下载包约 821 MB。框架由 `scripts/fetch_vlckit.sh` 放入 `macos/Vendor/vlckit-spm/`，后者再以 SwiftPM 本地 path package 的形式提供给 BZPlayer。
+本项目不直接把 `VLCKit.xcframework` 提交到 Git：解压后约 2.6 GB，下载包约 861 MB。框架由 `scripts/fetch_vlckit.sh` 放入 `macos/Vendor/vlckit-spm/`，后者再以 SwiftPM 本地 path package 的形式提供给 BZPlayer。当前锁定 archive 的 SHA-256 为 `2dc35b65bb9efc4ef792737af026c33053f3ea6d89244e7e8aa46ab57a0e9b8e`，大小为 `861112270` bytes。
 
 ## 依赖结构
 
@@ -12,6 +12,7 @@ BZPlayer 的 VLC 播放后端使用 `VLCKit 4.0.0-alpha.20`，对应 VideoLAN `4
 scripts/fetch_vlckit.sh
   -> macos/Vendor/vlckit-spm/VLCKit.xcframework  (忽略，不入库)
   -> macos/Vendor/vlckit-spm/Package.swift       (本地 SwiftPM 包)
+  -> macos/Vendor/vlckit-spm/VLCKIT.lock         (锁定版本、URL、SHA、大小)
   -> macos/BZPlayer/Package.swift                (path: ../Vendor/vlckit-spm)
   -> SwiftPM release build
   -> .build/.../VLCKit.framework                  (构建派生产物)
@@ -58,9 +59,9 @@ python3 ~/.codex/skills/pixian-dev-workflow/scripts/check_network.py
 
 随后按以下顺序操作：
 
-1. 从可信发布源确认候选版本、macOS universal XCFramework、发布 SHA-256 和最小 macOS 要求。不要以“latest”字符串或未经校验的第三方重打包替代具体版本号。
-2. 在 `scripts/fetch_vlckit.sh` 同步更新 `ZIP_URL`、`EXPECTED_SHA`、`CACHE_ZIP` 的版本后缀和文件顶部说明；在 `macos/BZPlayer/Package.swift` 与本手册更新锁定版本。
-3. 删除旧二进制目录：`rm -rf macos/Vendor/vlckit-spm/VLCKit.xcframework`。当前拉取脚本为避免每次构建扫描 2.6 GB，只检查目录是否存在，不会主动识别现有 framework 的版本或哈希；不删除会继续使用旧版。
+1. 从可信发布源确认候选版本、macOS universal XCFramework、发布 SHA-256、archive 大小和最小 macOS 要求。不要以“latest”字符串或未经校验的第三方重打包替代具体版本号。
+2. 在 `scripts/fetch_vlckit.sh` 同步更新 `VLCKIT_VERSION`、`ZIP_URL`、`EXPECTED_SHA`、`EXPECTED_SIZE` 和文件顶部说明；在 `macos/BZPlayer/Package.swift` 与本手册更新锁定版本。
+3. 将旧二进制目录移到被忽略的备份目录，或确认不需要回滚后删除：`mv macos/Vendor/vlckit-spm/VLCKit.xcframework macos/Vendor/vlckit-spm/.cache/VLCKit.xcframework.<旧版本>.backup`。拉取脚本通过 `VLCKIT.lock` 防止目录存在时误用旧版。
 4. 执行 `zsh scripts/fetch_vlckit.sh`，下载完成后重新计算 archive SHA-256，并用 `plutil -p .../Info.plist` 确认含 `macos-arm64_x86_64` slice。
 5. 运行测试、release 构建和安装流程。不要复用旧 `.build` 是否成功作为升级结论。
 6. 完成下方播放回归、记录实测机器与结论，再提交版本号、文档和锁定信息。
@@ -101,6 +102,6 @@ AV1 不是“不能使用 VLC”。路由策略按容器和失败路径选择更
 
 ## CI 与发布注意事项
 
-GitHub Actions 在构建前运行 `zsh scripts/fetch_vlckit.sh`，随后必须执行 `swift build -c release --product BZPlayer`，不能仅计算 `--show-bin-path`。本地安装和 CI 都调用 `scripts/build_macos_app.sh`，以保持 framework 嵌入和 rpath 修复一致。
+GitHub Actions 在构建前运行 `zsh scripts/fetch_vlckit.sh`，随后必须执行 `swift build -c release --product BZPlayer`，不能仅计算 `--show-bin-path`。本地安装和 CI 都调用 `scripts/build_macos_app.sh`，以保持 framework 嵌入和 rpath 修复一致。若 CI 缓存了旧 `VLCKit.xcframework`，`VLCKIT.lock` 不匹配会直接失败，避免静默发布旧内核。
 
 目前 CI 的版本来自 `GITHUB_RUN_NUMBER - 1`，本地应用版本来自最新 Git tag；二者是两套机制。发布前应确认二者是否需要对外保持同一版本号，避免 DMG、应用 About 页面和 Git tag 出现不一致。
