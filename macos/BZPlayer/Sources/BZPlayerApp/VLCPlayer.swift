@@ -19,8 +19,7 @@ final class VLCPlayer: NSObject {
     private var stateObserverToken: NSObjectProtocol?
     private var pendingResumeAt: Double?
     private var didFireFileLoaded = false
-    private var wasPlayingBeforeSeek: Bool?
-    private var pendingPlayTask: Task<Void, Never>?
+    private var resumeAfterSeek = false
     private var pendingLoadTask: Task<Void, Never>?
     private var mediaGeneration = UUID()
     private var isTransitioning = false
@@ -61,7 +60,6 @@ final class VLCPlayer: NSObject {
     }
 
     deinit {
-        pendingPlayTask?.cancel()
         pendingLoadTask?.cancel()
         if let t = timeObserverToken { NotificationCenter.default.removeObserver(t) }
         if let t = stateObserverToken { NotificationCenter.default.removeObserver(t) }
@@ -93,13 +91,13 @@ final class VLCPlayer: NSObject {
         subtitleBackgroundOpacity: Int = 0,
         noVideo: Bool = false
     ) {
-        cancelPendingPlay()
         pendingLoadTask?.cancel()
         pendingLoadTask = nil
 
         let generation = UUID()
         mediaGeneration = generation
         pendingResumeAt = resumeAt
+        resumeAfterSeek = false
         didFireFileLoaded = false
         currentURL = url
         configuredAudioDelayMs = audioDelayMs
@@ -164,7 +162,7 @@ final class VLCPlayer: NSObject {
 
     func play() {
         shouldPlay = true
-        cancelPendingPlay()
+        resumeAfterSeek = false
         guard !isTransitioning, pendingLoadTask == nil else { return }
         mediaPlayer.play()
         applyConfiguredRate(to: mediaPlayer)
@@ -172,7 +170,7 @@ final class VLCPlayer: NSObject {
 
     func pause() {
         shouldPlay = false
-        cancelPendingPlay()
+        resumeAfterSeek = false
         guard !isTransitioning else { return }
         mediaPlayer.pause()
     }
@@ -182,7 +180,7 @@ final class VLCPlayer: NSObject {
         mediaGeneration = UUID()
         isTransitioning = false
         shouldPlay = false
-        cancelPendingPlay()
+        resumeAfterSeek = false
         pendingLoadTask?.cancel()
         pendingLoadTask = nil
         removeNotifications()
@@ -201,34 +199,11 @@ final class VLCPlayer: NSObject {
 
     func seek(seconds: Double) {
         guard seconds >= 0 else { return }
-        let ms = milliseconds(for: seconds)
-
-        cancelPendingPlay(resetSeekState: false)
-
-        if wasPlayingBeforeSeek == nil {
-            wasPlayingBeforeSeek = mediaPlayer.isPlaying
-        }
-
-        if wasPlayingBeforeSeek == true {
-            mediaPlayer.pause()
-            mediaPlayer.time = VLCTime(int: ms)
-            pendingPlayTask = Task { @MainActor [weak self] in
-                do {
-                    try await Task.sleep(nanoseconds: 150_000_000) // 150ms delay
-                    guard !Task.isCancelled else { return }
-                    guard let self else { return }
-                    self.mediaPlayer.play()
-                    self.applyConfiguredRate(to: self.mediaPlayer)
-                    self.wasPlayingBeforeSeek = nil
-                    self.pendingPlayTask = nil
-                } catch {
-                    // Task cancelled
-                }
-            }
-        } else {
-            mediaPlayer.time = VLCTime(int: ms)
-            wasPlayingBeforeSeek = nil
-        }
+        resumeAfterSeek = shouldPlay && mediaPlayer.isPlaying
+        // libvlc accepts time changes while playing. Pausing first and scheduling a later play()
+        // introduced a race in VLCKit 4: a state notification could arrive after the delayed
+        // resume and leave the player permanently paused after a progress-bar click.
+        mediaPlayer.time = VLCTime(int: milliseconds(for: seconds))
     }
 
     func setSpeed(_ speed: Double) {
@@ -509,14 +484,6 @@ final class VLCPlayer: NSObject {
         return Int32(milliseconds.rounded())
     }
 
-    private func cancelPendingPlay(resetSeekState: Bool = true) {
-        pendingPlayTask?.cancel()
-        pendingPlayTask = nil
-        if resetSeekState {
-            wasPlayingBeforeSeek = nil
-        }
-    }
-
     private func fireFileLoadedIfReady(player: VLCMediaPlayer) {
         guard !didFireFileLoaded, currentMedia != nil else { return }
         let durationMs = currentMedia?.length.value?.doubleValue ?? 0
@@ -529,12 +496,20 @@ final class VLCPlayer: NSObject {
         guard generation == mediaGeneration, !isTransitioning, currentMedia != nil else { return }
         switch player.state {
         case .playing:
+            resumeAfterSeek = false
             // VLCKit 4 可能在媒体真正开始时覆盖预设速率；在 .playing 再写一次，保证切换
             // 媒体、恢复播放与手动改速三条路径的最终速率一致。
             applyConfiguredRate(to: player)
             fireFileLoadedIfReady(player: player)
             onPauseChanged?(false)
         case .paused:
+            if resumeAfterSeek, shouldPlay {
+                // A seek can transiently report paused even though the user did not pause.
+                // Resume from the state callback and do not leak that transient state upward.
+                player.play()
+                applyConfiguredRate(to: player)
+                return
+            }
             fireFileLoadedIfReady(player: player)
             onPauseChanged?(true)
         case .stopped:

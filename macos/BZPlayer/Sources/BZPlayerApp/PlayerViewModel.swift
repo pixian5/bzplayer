@@ -183,6 +183,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
     private var mediaAnalysisTask: Task<Void, Never>?
     private var pendingVolumeSaveTask: Task<Void, Never>?
     private var pendingVLCSeekTask: Task<Void, Never>?
+    private var pendingVLCSeekTarget: (generation: UUID, seconds: Double)?
     private var pendingSpeedSaveTask: Task<Void, Never>?
     private var pendingWindowFrameSaveTask: Task<Void, Never>?
     private var mediaOpenGeneration = UUID()
@@ -1575,7 +1576,15 @@ final class PlayerViewModel: NSObject, ObservableObject {
     private func bindVLCCallbacks() {
         vlcPlayer.onTimeChanged = { [weak self] time in
             guard let self, self.playbackBackend == .vlc else { return }
-            self.currentTime = time.isFinite ? time : 0
+            let normalizedTime = time.isFinite ? time : 0
+            if let pendingSeek = self.pendingVLCSeekTarget {
+                guard pendingSeek.generation == self.activeSeekGeneration else { return }
+                // VLC can emit one queued pre-seek tick. Hold the UI at the requested location
+                // until the decoder reports a position close to that location.
+                guard abs(normalizedTime - pendingSeek.seconds) <= 1.5 else { return }
+                self.finishVLCSeek(generation: pendingSeek.generation)
+            }
+            self.currentTime = normalizedTime
             self.saveCurrentProgressIfNeeded()
         }
         vlcPlayer.onDurationChanged = { [weak self] duration in
@@ -1778,10 +1787,15 @@ final class PlayerViewModel: NSObject, ObservableObject {
     private func scheduleVLCSeek(to seconds: Double, seekGeneration: UUID) {
         guard seconds.isFinite, seconds >= 0 else { return }
         pendingVLCSeekTask?.cancel()
+        pendingVLCSeekTarget = (seekGeneration, seconds)
         let mediaGeneration = mediaOpenGeneration
+        vlcPlayer.seek(seconds: seconds)
         pendingVLCSeekTask = Task { @MainActor [weak self] in
             do {
-                try await Task.sleep(nanoseconds: 40_000_000)
+                // A paused VLC player may not emit a time notification after a direct seek.
+                // Keep the requested slider position briefly, then release it without changing
+                // decoder state; playback itself was never paused for the seek.
+                try await Task.sleep(nanoseconds: 1_500_000_000)
             } catch {
                 return
             }
@@ -1790,24 +1804,22 @@ final class PlayerViewModel: NSObject, ObservableObject {
                   self.playbackBackend == .vlc,
                   self.mediaOpenGeneration == mediaGeneration,
                   self.activeSeekGeneration == seekGeneration else { return }
-            self.vlcPlayer.seek(seconds: seconds)
-            self.pendingVLCSeekTask = nil
-            do {
-                try await Task.sleep(nanoseconds: 300_000_000)
-            } catch {
-                return
-            }
-            guard !Task.isCancelled,
-                  self.playbackBackend == .vlc,
-                  self.mediaOpenGeneration == mediaGeneration,
-                  self.activeSeekGeneration == seekGeneration else { return }
-            self.isSeeking = false
+            self.finishVLCSeek(generation: seekGeneration)
         }
+    }
+
+    private func finishVLCSeek(generation: UUID) {
+        guard activeSeekGeneration == generation else { return }
+        pendingVLCSeekTask?.cancel()
+        pendingVLCSeekTask = nil
+        pendingVLCSeekTarget = nil
+        isSeeking = false
     }
 
     private func invalidatePendingSeek() {
         pendingVLCSeekTask?.cancel()
         pendingVLCSeekTask = nil
+        pendingVLCSeekTarget = nil
         activeSeekGeneration = UUID()
         isSeeking = false
     }

@@ -77,7 +77,7 @@ python3 ~/.codex/skills/pixian-dev-workflow/scripts/check_network.py
 - 每次载入媒体会等旧 player 进入 stopped/error，再新建 `VLCMediaPlayer`。VLCKit 4 将自然结束和 stop 都表现为 `.stopped`，代码以媒体代次、通知解绑和 `shouldPlay` 区分真实 EOF 与内部切换。
 - 倍速、音频延迟、字幕字体和字幕背景是不随新 player 自动保留的配置。重载和进入 playing 后会重新应用；这是防止切换文件或内核后状态丢失的必要步骤。
 - `VLCVideoView` 会在原生后端运行时预先登记，新 player 会在分配媒体前绑定 drawable；无媒体的 stop 不再触发后续等待。两者避免手动切换到 VLC 时出现数秒首帧卡顿，同时保留有活动媒体时的安全停止流程。
-- 进度条拖动只更新 SwiftUI 滑块，松开时才提交一次 seek；不要把 Slider 的每个 Binding setter 都直接转成 VLC seek，否则暂停、定位、恢复会连续重入。
+- 进度条拖动只更新 SwiftUI 滑块，松开时才提交一次 seek。VLC 定位直接写入 `mediaPlayer.time`，不得人为执行“暂停、定位、延迟恢复”：VLCKit 4 的异步状态通知会使该恢复竞态丢失，从而把播放器留在暂停状态。界面以目标附近的 VLC 时间回调完成 seek；暂停时没有时间回调则在短超时后仅解除界面等待，不改变解码器状态。
 
 ## AV1 路由与回归
 
