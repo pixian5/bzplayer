@@ -109,9 +109,9 @@ struct PlayerRootView: View {
             releaseSleepAssertion()
         }
         .onReceive(viewModel.$currentTime) { current in
-            if viewModel.duration > 0 {
+            if !viewModel.isSeeking, viewModel.duration > 0 {
                 seekValue = current / viewModel.duration
-            } else {
+            } else if !viewModel.isSeeking {
                 seekValue = 0
             }
             // Merged: previously a second onReceive($currentTime) called this.

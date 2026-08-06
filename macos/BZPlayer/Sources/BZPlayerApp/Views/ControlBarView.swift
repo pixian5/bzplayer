@@ -23,9 +23,14 @@ struct ControlBarView: View {
                         set: { newValue in
                             revealControlsAndScheduleHide()
                             seekValue = newValue
-                            viewModel.seek(to: newValue)
                         }
-                    ), in: 0...1)
+                    ), in: 0...1, onEditingChanged: { editing in
+                        if editing {
+                            viewModel.beginSeeking()
+                        } else {
+                            viewModel.seek(to: seekValue)
+                        }
+                    })
                     .tint(.blue)
                     .accentColor(.blue)
                     .frame(minWidth: 280)

@@ -895,6 +895,13 @@ final class PlayerViewModel: NSObject, ObservableObject {
         }
     }
 
+    /// Marks the progress slider as actively scrubbing without sending a seek to the decoder.
+    /// The actual seek is committed once Slider reports editing ended.
+    func beginSeeking() {
+        guard duration > 0 else { return }
+        isSeeking = true
+    }
+
     func setSpeed(_ value: Double) {
         speed = Self.normalizeSpeed(value)
         scheduleSpeedSave(for: currentFileURL)
