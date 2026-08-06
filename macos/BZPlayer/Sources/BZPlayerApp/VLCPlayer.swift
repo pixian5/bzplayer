@@ -33,6 +33,9 @@ final class VLCPlayer: NSObject {
     /// Desired playback rate. VLCPlayer recreates VLCMediaPlayer for every load to isolate
     /// VLCKit 4 stop/load transitions, so this value must outlive the concrete player instance.
     private var configuredRate: Float = 1.0
+    /// The host video view is registered before VLC becomes the active backend so a new player
+    /// can bind its drawable before media assignment, avoiding a first-frame catch-up stall.
+    private weak var preferredVideoView: VLCVideoView?
     private weak var currentAttachedView: VLCVideoView?
 
     override init() {
@@ -65,11 +68,16 @@ final class VLCPlayer: NSObject {
     }
 
     func attach(to view: VLCVideoView) {
+        preferredVideoView = view
         guard currentAttachedView !== view else { return }
         // Clear old drawable before attaching new one to avoid OpenGL assert
         mediaPlayer.drawable = nil
         currentAttachedView = view
         mediaPlayer.drawable = view
+    }
+
+    func registerVideoView(_ view: VLCVideoView) {
+        preferredVideoView = view
     }
 
     func detach() {
@@ -170,6 +178,7 @@ final class VLCPlayer: NSObject {
     }
 
     func stop() {
+        let shouldWaitForStop = currentMedia != nil || mediaPlayer.media != nil
         mediaGeneration = UUID()
         isTransitioning = false
         shouldPlay = false
@@ -179,7 +188,12 @@ final class VLCPlayer: NSObject {
         removeNotifications()
         mediaPlayer.drawable = nil
         mediaPlayer.stop()
-        needsStopWait = true
+        // Do not manufacture a later stop wait when this player has no media. That path was
+        // hit after a native -> VLC switch and made the next load wait up to two seconds.
+        needsStopWait = shouldWaitForStop
+        if !shouldWaitForStop {
+            mediaPlayer.media = nil
+        }
         currentMedia = nil
         currentURL = nil
         pendingResumeAt = nil
@@ -282,8 +296,10 @@ final class VLCPlayer: NSObject {
         player.delegate = self
         player.timeChangeUpdateInterval = 0.5
         applyConfiguredRate(to: player)
-        // Attach drawable after other setup to avoid transient states
-        if let view = currentAttachedView {
+        // Bind before assigning media so samplebufferdisplay owns a visible drawable from the
+        // first decoded frame. The view remains registered while the native backend is active.
+        if let view = preferredVideoView {
+            currentAttachedView = view
             player.drawable = view
         }
         return player

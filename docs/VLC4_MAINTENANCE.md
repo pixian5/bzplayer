@@ -76,6 +76,7 @@ python3 ~/.codex/skills/pixian-dev-workflow/scripts/check_network.py
 - 不传已移除的 `--avcodec-hw`，也不强制 `:codec=videotoolbox`。VLC 应自行选择 H.264/HEVC 的硬件路径；强制 VideoToolbox 会使不少设备上的 AV1 (`av01`) 无法回退到 `dav1d` / `libavcodec`。
 - 每次载入媒体会等旧 player 进入 stopped/error，再新建 `VLCMediaPlayer`。VLCKit 4 将自然结束和 stop 都表现为 `.stopped`，代码以媒体代次、通知解绑和 `shouldPlay` 区分真实 EOF 与内部切换。
 - 倍速、音频延迟、字幕字体和字幕背景是不随新 player 自动保留的配置。重载和进入 playing 后会重新应用；这是防止切换文件或内核后状态丢失的必要步骤。
+ `VLCVideoView` 会在原生后端运行时预先登记，新 player 会在分配媒体前绑定 drawable；无媒体的 stop 不再触发后续等待。两者避免手动切换到 VLC 时出现数秒首帧卡顿，同时保留有活动媒体时的安全停止流程。
 
 ## AV1 路由与回归
 

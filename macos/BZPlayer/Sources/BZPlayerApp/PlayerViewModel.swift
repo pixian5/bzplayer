@@ -587,8 +587,11 @@ final class PlayerViewModel: NSObject, ObservableObject {
         }
     }
 
-    func attachVLCView(_ view: VLCVideoView) {
-        vlcPlayer.attach(to: view)
+    func registerVLCView(_ view: VLCVideoView) {
+        vlcPlayer.registerVideoView(view)
+        if playbackBackend == .vlc {
+            vlcPlayer.attach(to: view)
+        }
     }
 
     func attachWindow(_ window: NSWindow) {

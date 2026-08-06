@@ -111,8 +111,10 @@ struct PlayerContainerView: NSViewRepresentable {
             positionX: subtitlePositionX,
             positionY: subtitlePositionY
         )
-        if nsView.window != nil, backend == .vlc {
-            viewModel.attachVLCView(nsView.vlcVideoView)
+        // Register the drawable even while AVPlayer is active. This lets VLC bind it before
+        // media assignment during a backend switch instead of waiting for SwiftUI's next update.
+        if nsView.window != nil {
+            viewModel.registerVLCView(nsView.vlcVideoView)
         }
     }
 }
