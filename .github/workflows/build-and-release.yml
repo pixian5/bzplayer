@@ -46,6 +46,9 @@ jobs:
         shell: bash
         run: |
           cd macos/BZPlayer
+          # --show-bin-path only reports a cached product directory. Build the executable first
+          # so the following packaging step cannot embed a binary from an earlier CI workspace.
+          swift build -c release --product BZPlayer
           BUILD_DIR=$(swift build -c release --show-bin-path)
           echo "BZPLAYER_BUILD_DIR=${BUILD_DIR}" >> "$GITHUB_ENV"
 

@@ -1,9 +1,14 @@
 #!/bin/zsh
 set -euo pipefail
 
-# Download and extract VLCKit 4.0.0-alpha.20 into macos/Vendor/vlckit-spm.
-# Remote binary is ~821MB; SwiftPM remote binaryTarget often times out, so BZPlayer
-# depends on a local path package instead.
+# Download and extract the locked VLCKit 4.0.0-alpha.20 archive into the local SwiftPM
+# wrapper at macos/Vendor/vlckit-spm. The extracted XCFramework is intentionally ignored by
+# Git: it is about 2.6 GB, while the remote archive is about 821 MB. Using a path package
+# keeps SwiftPM from downloading that archive during dependency resolution, which is prone to
+# timing out on both developer machines and GitHub-hosted macOS runners.
+#
+# Keep ZIP_URL, EXPECTED_SHA and CACHE_ZIP's version suffix in sync when upgrading. See
+# docs/VLC4_MAINTENANCE.md for the complete upgrade and regression procedure.
 
 REPO_DIR="$(cd -- "$(dirname -- "$0")/.." && pwd)"
 VENDOR_DIR="${REPO_DIR}/macos/Vendor/vlckit-spm"
@@ -12,6 +17,9 @@ EXPECTED_SHA="c94b6f556f58a471a3c2edacb242506587d6c01cc4874f96d7665bcfa0666ecc"
 CACHE_ZIP="${TMPDIR:-/tmp}/VLCKit-4.0.0-alpha.20.xcframework.zip"
 
 if [[ -d "${VENDOR_DIR}/VLCKit.xcframework" ]]; then
+    # Presence is deliberately enough for a normal build to avoid re-hashing 2.6 GB each time.
+    # During an upgrade, remove this directory first so the new archive is extracted; this
+    # script currently does not infer the installed framework version from its binary.
     echo "[fetch_vlckit] Already present: ${VENDOR_DIR}/VLCKit.xcframework"
     exit 0
 fi
@@ -75,6 +83,8 @@ EOF
 fi
 
 if [[ -f /tmp/vlckit4-binary/VLCKit.xcframework.zip ]]; then
+    # Preserve the known local cache override used by the original alpha.20 import. The hash
+    # below remains mandatory, so the override cannot silently substitute another build.
     CACHE_ZIP="/tmp/vlckit4-binary/VLCKit.xcframework.zip"
 fi
 

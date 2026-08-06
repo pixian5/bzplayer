@@ -2238,8 +2238,9 @@ final class PlayerViewModel: NSObject, ObservableObject {
         if audioDelayMs != 0 {
             return .vlc
         }
-        // AV1 in native-friendly containers (mp4/mov/m4v) prefers AVPlayer for
-        // power/efficiency; VLC remains available via manual switch and failure fallback.
+        // AV1 装在 AVPlayer 原生容器（mp4/mov/m4v）中时，优先走系统硬件解码路径以降低
+        // 功耗。这里不是禁用 VLC：用户可手动切换，原生播放失败时也会自动回退到 VLC 4。
+        // MKV/WebM 已在上方容器规则中直接选择 VLC，避免让 AVPlayer 处理不支持的封装。
         if hasAV1 {
             return .native
         }

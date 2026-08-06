@@ -11,8 +11,12 @@ let package = Package(
         .executable(name: "BZPlayer", targets: ["BZPlayerApp"])
     ],
     dependencies: [
-        // VLCKit 4.0.0-alpha.20 (VideoLAN 4.0.0a20). Remote SPM zip is ~821MB and often
-        // times out; use a local path package. Run scripts/fetch_vlckit.sh if missing.
+        // SwiftPM packages the macOS slice of VLCKit through this local wrapper rather than
+        // a remote binaryTarget. The locked archive is about 821 MB and repeatedly times out
+        // in both local and CI resolution. The directory name (vlckit-spm) is the package
+        // identity used below; run scripts/fetch_vlckit.sh before the first build.
+        // The active binary version and upgrade procedure are documented in
+        // docs/VLC4_MAINTENANCE.md.
         .package(path: "../Vendor/vlckit-spm")
     ],
     targets: [

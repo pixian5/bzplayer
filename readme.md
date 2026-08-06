@@ -35,6 +35,8 @@ zsh scripts/install_macos_app.sh
 
 安装脚本会结束旧的 BZPlayer 进程、重建 `/Applications/BZPlayer.app` 并启动新版本。它默认不会提交 Git；只有明确执行 `zsh scripts/install_macos_app.sh --commit "中文提交说明"` 或 `./deploy.sh --commit "中文提交说明"` 才会提交并推送。
 
+VLCKit 的依赖结构、锁定版本、离线缓存、升级步骤和 AV1 回归清单见 [VLC 4 维护手册](docs/VLC4_MAINTENANCE.md)。这是维护 VLC 内核时的唯一操作入口；不要直接修改 `.build`、`artifacts` 或应用包内的 framework。
+
 音频模式 A/B 测量：
 
 ```bash

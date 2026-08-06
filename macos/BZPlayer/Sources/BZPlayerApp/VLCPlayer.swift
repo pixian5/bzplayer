@@ -30,7 +30,8 @@ final class VLCPlayer: NSObject {
     private var configuredAudioDelayMs: Double = 0
     private var configuredSubtitleFontSize = 55
     private var configuredSubtitleBackgroundOpacity = 0
-    /// Desired playback rate; survives mediaPlayer recreation in load().
+    /// Desired playback rate. VLCPlayer recreates VLCMediaPlayer for every load to isolate
+    /// VLCKit 4 stop/load transitions, so this value must outlive the concrete player instance.
     private var configuredRate: Float = 1.0
     private weak var currentAttachedView: VLCVideoView?
 
@@ -38,7 +39,8 @@ final class VLCPlayer: NSObject {
         library = VLCLibrary(options: [
             "--freetype-font=/System/Library/Fonts/STHeiti Light.ttc",
             "--subsdec-encoding=GB18030",
-            // VLCKit 4 已移除 --avcodec-hw；硬件解码由模块自动协商，勿再传该选项。
+            // VLCKit 4 已移除 --avcodec-hw；硬件解码由模块、视频编码和 macOS 能力共同协商，
+            // 因此不能沿用 3.x 的启动参数强制它。
             // macOS 26 上 OpenGL vout（macosx / caopengllayer）会在渲染线程的
             // vout_display_opengl_Prepare 命中断言并 abort（SIGABRT），播放约 15s 后崩溃。
             // 模块短名是 samplebufferdisplay（AVSampleBufferDisplayLayer / CoreMedia），
@@ -132,9 +134,9 @@ final class VLCPlayer: NSObject {
             media.addOption(":freetype-font=/System/Library/Fonts/STHeiti Light.ttc")
             media.addOption(":freetype-rel-fontsize=\(self.configuredSubtitleFontSize)")
             media.addOption(":freetype-background-opacity=\(self.configuredSubtitleBackgroundOpacity * 255 / 100)")
-            // Do NOT force :codec=videotoolbox — VideoToolbox rejects av01 on many Macs and
-            // that forced codec list prevented a clean dav1d/libavcodec path for AV1.
-            // Let VLC pick: VT for H.264/HEVC when available, dav1d/avcodec for AV1.
+            // 不能强制 :codec=videotoolbox：许多 Mac 的 VideoToolbox 会拒绝 av01，强制
+            // 解码器列表还会阻断 VLC 回退到 dav1d/libavcodec。保留自动协商可让 H.264/HEVC
+            // 优先使用可用硬件路径，并让 AV1 使用 VLC 4 实际支持的解码路径。
             if noVideo {
                 media.addOption(":no-video")
             }
@@ -258,7 +260,8 @@ final class VLCPlayer: NSObject {
     private func waitForStopped(_ player: VLCMediaPlayer) async -> Bool {
         for _ in 0..<200 {
             guard !Task.isCancelled else { return false }
-            // VLCKit 4 removed .ended; natural EOS and stop both land on .stopped.
+            // VLCKit 4 不再提供 .ended；自然播完与主动 stop 都会进入 .stopped，因此调用方
+            // 必须依赖媒体代次和 shouldPlay 区分“播放结束”与“正在切换媒体”。
             switch player.state {
             case .stopped, .error:
                 return true
@@ -510,7 +513,8 @@ final class VLCPlayer: NSObject {
         guard generation == mediaGeneration, !isTransitioning, currentMedia != nil else { return }
         switch player.state {
         case .playing:
-            // Re-apply after transition to playing — VLCKit 4 may reset rate on media start.
+            // VLCKit 4 可能在媒体真正开始时覆盖预设速率；在 .playing 再写一次，保证切换
+            // 媒体、恢复播放与手动改速三条路径的最终速率一致。
             applyConfiguredRate(to: player)
             fireFileLoadedIfReady(player: player)
             onPauseChanged?(false)
@@ -518,9 +522,9 @@ final class VLCPlayer: NSObject {
             fireFileLoadedIfReady(player: player)
             onPauseChanged?(true)
         case .stopped:
-            // VLCKit 4 removed .ended; natural EOS lands on .stopped.
-            // Intentional stop()/load() clears notifications and currentMedia first, and
-            // sets shouldPlay = false — only fire when playback was still expected.
+            // VLCKit 4 不再提供 .ended，自然播完会落在 .stopped。主动 stop()/load() 会先
+            // 解绑通知、清空 currentMedia 并令 shouldPlay 为 false；只有仍期待播放时才向
+            // 上层发送 onEndReached，避免切换内核或重载字幕时被误判为文件结束。
             if shouldPlay {
                 shouldPlay = false
                 onEndReached?()

@@ -84,14 +84,19 @@ EOF
 
 /bin/cp "${BIN_SOURCE}" "${APP_DIR}/Contents/MacOS/BZPlayer"
 chmod +x "${APP_DIR}/Contents/MacOS/BZPlayer"
+# SwiftPM places the selected macOS framework beside the executable build product. It is not
+# embedded automatically because this is a script-created .app, so copy this exact slice into
+# Contents/Frameworks before fixing the executable's runtime search path below.
 /bin/cp -R "${BUILD_DIR}/VLCKit.framework" "${APP_DIR}/Contents/Frameworks/"
 /bin/cp -R "${BUILD_DIR}/BZPlayer_BZPlayerApp.bundle" "${APP_DIR}/"
 if [[ -f "${PROJECT_DIR}/Resources/AppIcon.icns" ]]; then
     /bin/cp "${PROJECT_DIR}/Resources/AppIcon.icns" "${APP_DIR}/Contents/Resources/AppIcon.icns"
 fi
 
-# SPM links VLCKit as @rpath; the binary only has @loader_path by default, so
-# dyld looks next to MacOS/ not Contents/Frameworks/. Add the app-bundle rpath.
+# The VLCKit install name is @rpath/VLCKit.framework/..., while SwiftPM's executable initially
+# has only an @loader_path-oriented lookup. In an .app that resolves next to Contents/MacOS,
+# not Contents/Frameworks. Add the bundle-relative rpath so the copied framework is found after
+# installation as well as from the build directory.
 install_name_tool -add_rpath "@executable_path/../Frameworks" \
     "${APP_DIR}/Contents/MacOS/BZPlayer" 2>/dev/null || true
 # If rpath already exists (re-packaging), -add_rpath fails; ensure presence:
