@@ -1,9 +1,27 @@
-app_output.log
+# macOS local metadata and logs
 .DS_Store
+*.log
+
+# SwiftPM / Xcode local build state
+.build/
+.swiftpm/
+DerivedData/
+xcuserdata/
+*.xcuserstate
 macos/BZPlayer/.build/
+macos/BZPlayer/.swiftpm/
+
+# Local app/release artifacts
 dist/
 release/
 artifacts/
-# VLCKit binary (~2.6GB extracted / ~821MB zip); fetch via scripts/fetch_vlckit.sh
+*.dmg
+*.app/
+*.dSYM/
+
+# VLCKit binary/cache artifacts (~2.6GB extracted / ~821MB zip)
+macos/Vendor/vlckit-spm/.cache/
+macos/Vendor/vlckit-spm/*.zip
+macos/Vendor/vlckit-spm/*.xcframework.zip
 macos/Vendor/vlckit-spm/VLCKit.xcframework/
 macos/Vendor/vlckit-spm/__MACOSX/
