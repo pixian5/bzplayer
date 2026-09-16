@@ -36,6 +36,86 @@ struct Localization {
             "es": "Configuración",
             "ru": "Настройки"
         ],
+        "Toast 位置": [
+            "en": "Toast Position",
+            "ja": "トーストの位置",
+            "de": "Toast-Position",
+            "fr": "Position de la notification",
+            "es": "Posición de la notificación",
+            "ru": "Положение уведомления"
+        ],
+        "左上": [
+            "en": "Top Left",
+            "ja": "左上",
+            "de": "Oben links",
+            "fr": "En haut à gauche",
+            "es": "Arriba a la izquierda",
+            "ru": "Вверху слева"
+        ],
+        "上中": [
+            "en": "Top Center",
+            "ja": "上中央",
+            "de": "Oben mittig",
+            "fr": "En haut au centre",
+            "es": "Arriba al centro",
+            "ru": "Вверху по центру"
+        ],
+        "右上": [
+            "en": "Top Right",
+            "ja": "右上",
+            "de": "Oben rechts",
+            "fr": "En haut à droite",
+            "es": "Arriba a la derecha",
+            "ru": "Вверху справа"
+        ],
+        "左中": [
+            "en": "Center Left",
+            "ja": "左中央",
+            "de": "Mittig links",
+            "fr": "Au centre à gauche",
+            "es": "Centro a la izquierda",
+            "ru": "По центру слева"
+        ],
+        "居中": [
+            "en": "Center",
+            "ja": "中央",
+            "de": "Zentriert",
+            "fr": "Au centre",
+            "es": "Centro",
+            "ru": "По центру"
+        ],
+        "右中": [
+            "en": "Center Right",
+            "ja": "右中央",
+            "de": "Mittig rechts",
+            "fr": "Au centre à droite",
+            "es": "Centro a la derecha",
+            "ru": "По центру справа"
+        ],
+        "左下": [
+            "en": "Bottom Left",
+            "ja": "左下",
+            "de": "Unten links",
+            "fr": "En bas à gauche",
+            "es": "Abajo a la izquierda",
+            "ru": "Внизу слева"
+        ],
+        "下中": [
+            "en": "Bottom Center",
+            "ja": "下中央",
+            "de": "Unten mittig",
+            "fr": "En bas au centre",
+            "es": "Abajo al centro",
+            "ru": "Внизу по центру"
+        ],
+        "右下": [
+            "en": "Bottom Right",
+            "ja": "右下",
+            "de": "Unten rechts",
+            "fr": "En bas à droite",
+            "es": "Abajo a la derecha",
+            "ru": "Внизу справа"
+        ],
         "可通过 ⌘, 打开本页。": [
             "en": "You can open this page with ⌘,.",
             "ja": "⌘, でこのページを開くことができます。",

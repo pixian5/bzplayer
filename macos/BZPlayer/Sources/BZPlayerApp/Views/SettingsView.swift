@@ -213,6 +213,21 @@ struct SettingsView: View {
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
 
+                    HStack {
+                        Text(viewModel.t("Toast 位置"))
+                            .frame(width: 150, alignment: .leading)
+                        Picker(viewModel.t("Toast 位置"), selection: Binding(
+                            get: { viewModel.toastPosition },
+                            set: { viewModel.setToastPosition($0) }
+                        )) {
+                            ForEach(PlayerViewModel.ToastPosition.allCases, id: \.self) { position in
+                                Text(viewModel.t(position.title)).tag(position)
+                            }
+                        }
+                        .labelsHidden()
+                        .frame(width: 180)
+                    }
+
                     Toggle(viewModel.t("允许多窗口"), isOn: Binding(
                         get: { viewModel.allowMultipleWindows },
                         set: { viewModel.setAllowMultipleWindows($0) }

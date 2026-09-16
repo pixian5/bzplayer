@@ -61,6 +61,8 @@ struct PlayerRootView: View {
                     .cornerRadius(8)
                     .transition(.opacity.animation(.easeInOut(duration: 0.2)))
                     .zIndex(20)
+                    .padding(20)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: toastAlignment)
             }
 
             // Playback error overlay
@@ -190,6 +192,29 @@ struct PlayerRootView: View {
             .animation(.easeInOut(duration: 0.15), value: shouldShowPlaylist)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var toastAlignment: Alignment {
+        switch viewModel.toastPosition {
+        case .topLeading:
+            .topLeading
+        case .top:
+            .top
+        case .topTrailing:
+            .topTrailing
+        case .leading:
+            .leading
+        case .center:
+            .center
+        case .trailing:
+            .trailing
+        case .bottomLeading:
+            .bottomLeading
+        case .bottom:
+            .bottom
+        case .bottomTrailing:
+            .bottomTrailing
+        }
     }
 
     private func revealControlsAndScheduleHide() {

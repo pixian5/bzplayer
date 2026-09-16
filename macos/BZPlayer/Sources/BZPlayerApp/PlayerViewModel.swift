@@ -80,6 +80,41 @@ final class PlayerViewModel: NSObject, ObservableObject {
         }
     }
 
+    enum ToastPosition: String, CaseIterable {
+        case topLeading
+        case top
+        case topTrailing
+        case leading
+        case center
+        case trailing
+        case bottomLeading
+        case bottom
+        case bottomTrailing
+
+        var title: String {
+            switch self {
+            case .topLeading:
+                "左上"
+            case .top:
+                "上中"
+            case .topTrailing:
+                "右上"
+            case .leading:
+                "左中"
+            case .center:
+                "居中"
+            case .trailing:
+                "右中"
+            case .bottomLeading:
+                "左下"
+            case .bottom:
+                "下中"
+            case .bottomTrailing:
+                "右下"
+            }
+        }
+    }
+
     @Published var isPaused = true
     @Published var speed: Double = 1.0
     @Published var memorySpeed: Double = 1.0
@@ -111,6 +146,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
     @Published var playbackError: String?
     @Published var audioDelayMs: Double
     @Published var audioDelayStepMs: Double
+    @Published var toastPosition: ToastPosition
     @Published var toastMessage: String = ""
     @Published var showToast: Bool = false
     @Published var showRecentFiles: Bool = true
@@ -312,6 +348,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         var allowMultipleWindows: Bool = true
         var audioDelayMs: Double = 0
         var audioDelayStepMs: Double = 50
+        var toastPosition: String = ToastPosition.center.rawValue
         var showRecentFiles: Bool = true
         var audioOnlyWhenMinimized: Bool = false
         var subtitleBackgroundOpacity: Int = 0
@@ -341,6 +378,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
             case allowMultipleWindows
             case audioDelayMs
             case audioDelayStepMs
+            case toastPosition
             case showRecentFiles
             case audioOnlyWhenMinimized
             case subtitleBackgroundOpacity
@@ -373,6 +411,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
             allowMultipleWindows = try container.decodeIfPresent(Bool.self, forKey: .allowMultipleWindows) ?? allowMultipleWindows
             audioDelayMs = try container.decodeIfPresent(Double.self, forKey: .audioDelayMs) ?? audioDelayMs
             audioDelayStepMs = try container.decodeIfPresent(Double.self, forKey: .audioDelayStepMs) ?? audioDelayStepMs
+            toastPosition = try container.decodeIfPresent(String.self, forKey: .toastPosition) ?? toastPosition
             showRecentFiles = try container.decodeIfPresent(Bool.self, forKey: .showRecentFiles) ?? showRecentFiles
             audioOnlyWhenMinimized = try container.decodeIfPresent(Bool.self, forKey: .audioOnlyWhenMinimized) ?? audioOnlyWhenMinimized
             subtitleBackgroundOpacity = try container.decodeIfPresent(Int.self, forKey: .subtitleBackgroundOpacity) ?? subtitleBackgroundOpacity
@@ -431,6 +470,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         allowMultipleWindows = settings.allowMultipleWindows
         audioDelayMs = Self.normalizeAudioDelay(settings.audioDelayMs)
         audioDelayStepMs = Self.normalizeAudioDelayStep(settings.audioDelayStepMs)
+        toastPosition = ToastPosition(rawValue: settings.toastPosition) ?? .center
         showRecentFiles = settings.showRecentFiles
         audioOnlyWhenMinimized = settings.audioOnlyWhenMinimized
         subtitleBackgroundOpacity = Self.clampSubtitleOpacity(settings.subtitleBackgroundOpacity)
@@ -493,6 +533,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         settings.allowMultipleWindows = allowMultipleWindows
         settings.audioDelayMs = Self.normalizeAudioDelay(audioDelayMs)
         settings.audioDelayStepMs = Self.normalizeAudioDelayStep(audioDelayStepMs)
+        settings.toastPosition = toastPosition.rawValue
         settings.showRecentFiles = showRecentFiles
         settings.audioOnlyWhenMinimized = audioOnlyWhenMinimized
         settings.subtitleBackgroundOpacity = subtitleBackgroundOpacity
@@ -996,6 +1037,12 @@ final class PlayerViewModel: NSObject, ObservableObject {
         applyInitialWindowBehaviorIfNeeded(force: true)
     }
 
+    func setToastPosition(_ position: ToastPosition) {
+        guard toastPosition != position else { return }
+        toastPosition = position
+        saveSettings()
+    }
+
     func setAllowMultipleWindows(_ value: Bool) {
         allowMultipleWindows = value
         saveSettings()
@@ -1397,6 +1444,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
         isMuted = settings.isMuted
         allowMultipleWindows = settings.allowMultipleWindows
         audioDelayStepMs = Self.normalizeAudioDelayStep(settings.audioDelayStepMs)
+        toastPosition = ToastPosition(rawValue: settings.toastPosition) ?? .center
         showRecentFiles = settings.showRecentFiles
         audioOnlyWhenMinimized = settings.audioOnlyWhenMinimized
         subtitleBackgroundOpacity = Self.clampSubtitleOpacity(settings.subtitleBackgroundOpacity)
