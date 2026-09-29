@@ -11,6 +11,18 @@
 - 使用 AVPlayer 和 VLCKit 双播放后端，按媒体格式自动选择
 - 文件信息可同时显示 AVFoundation 与 `ffprobe` 的媒体流识别结果
 
+## 当前开发进度
+
+截至 `v99`：双后端播放、字幕、快捷键、多窗口、按文件记忆等核心能力均已在 `/Applications/BZPlayer.app` 形态下跑通；播放器源码未冻结，仍以修复型迭代为主。
+
+简单说明之外，详细内容见 [当前开发进度（202609292334）](docs/202609292334当前开发进度.md)。
+
+## 下一步待实现
+
+优先方向：持久化数据治理（fileSettings 上限与清理）、版本号统一、测试补齐与架构减负；功能侧待定项（网络流、截图、A-B 循环、PiP）由使用者决定优先级。
+
+详细清单见 [下一步待实现（202609292334）](docs/202609292334下一步待实现.md)。
+
 ## 运行方式（macOS）
 
 ```bash
@@ -73,3 +85,12 @@ bash scripts/measure_audio_only.sh "/path/to/media.mp4" \
 - CI 只有在配置 `MACOS_CERTIFICATE_BASE64`、`MACOS_CERTIFICATE_PASSWORD`、`MACOS_SIGNING_IDENTITY` 后才签名；再配置 `APPLE_API_KEY_BASE64`、`APPLE_API_KEY_ID`、`APPLE_API_ISSUER` 才会公证并 staple，否则产物保持 unsigned。
 
 > 注意：Release 发布需要仓库具备 `contents: write` 权限（工作流已声明）。
+
+## 文档索引
+
+| 文档 | 作用 |
+|------|------|
+| [VLC4_MAINTENANCE.md](docs/VLC4_MAINTENANCE.md) | VLC 4 内核维护手册：依赖结构、锁定版本、离线缓存、升级步骤、AV1 回归清单；维护 VLC 的唯一操作入口 |
+| [202609292334项目详细分析与开发建议.md](docs/202609292334项目详细分析与开发建议.md) | 全量代码/CI/仓库的分析结论（问题分级 P0–P2）与分阶段重构路线图 |
+| [202609292334当前开发进度.md](docs/202609292334当前开发进度.md) | 当前版本可跑通能力、基础设施状态、已知问题状态 |
+| [202609292334下一步待实现.md](docs/202609292334下一步待实现.md) | 按优先级排列的待办清单（P0 立即 → P4 分发准备） |

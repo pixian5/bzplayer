@@ -2,6 +2,9 @@
 .DS_Store
 *.log
 
+# 本地运行日志（datalog 为历史调试/LLM 调用记录，不入库）
+datalog/
+
 # SwiftPM / Xcode local build state
 .build/
 .swiftpm/
