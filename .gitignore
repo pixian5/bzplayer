@@ -28,3 +28,6 @@ macos/Vendor/vlckit-spm/*.zip
 macos/Vendor/vlckit-spm/*.xcframework.zip
 macos/Vendor/vlckit-spm/VLCKit.xcframework/
 macos/Vendor/vlckit-spm/__MACOSX/
+
+# WorkBuddy 工作目录（项目记忆等，不入库）
+.workbuddy/
