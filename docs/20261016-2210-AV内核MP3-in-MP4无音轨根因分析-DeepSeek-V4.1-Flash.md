@@ -4,6 +4,7 @@
 - 模型：DeepSeek-V4.1-Flash
 - 样本：`/Users/x/Downloads/Nagram Desktop/ezgif.com-video-merger.mp4`（15.68 MB，1920x1080 H.264 + MP3 立体声 48 kHz 128 kbps，时长 71.73 s，编码器 `ezgif.com`）
 - 性质：**纯分析，未修改任何源码**（VERSION 保持 240）
+- 事后状态（2026-10-16 复核补记）：本文所有**行号基于修复前的版本**，修复提交 `8a8dd71` 之后行号已整体偏移（最多 +30 行），对照表见文末「八、复核补记」。第四节第 1 条的"路由未修"结论**已被修复文档 [20261016-2247-AV内核MP3-in-MP4强制走VLC修复-hy3.md](20261016-2247-AV内核MP3-in-MP4强制走VLC修复-hy3.md) 部分解决**；第五节方案 1 的最终落地形式见文末「八、复核补记」。
 
 ---
 
@@ -155,7 +156,11 @@ if audioTracks.isEmpty {
 
 `audioTrackMenuEntries()`（第 3349-3351 行）第一句就是 `guard playbackBackend == .vlc else { return [] }`，原生后端永远返回空 → 右键菜单显示"无可用音轨"（`PlayerContainerView.swift:630`）。这正是用户看到的"找不到音轨"。
 
----
+> **事后状态（2026-10-16 复核补记）**：本节 4 条的现状——
+> 1. 路由白名单问题**已修**（修复提交 `8a8dd71`：新增「MP4 系列容器 + mp3 音轨 → 强制 VLC」判据）。
+> 2. 自动回退抓不到该情况：**仍未修**（失败判据 `duration == 0 && (isPaused || currentTime < 0.5)` 未变）。
+> 3. 面板文案与实际行为不一致：**部分改善**——ffprobe 可用时该文案成立；ffprobe 缺失时仍不成立（文案在 PlayerViewModel.swift:2974-2975）。
+> 4. 音轨菜单在原生后端恒为空：**仍未修**（`audioTrackMenuEntries()` 现位于 PlayerViewModel.swift:3379）。
 
 ## 五、可选修复方向（待决策，本次未实施）
 
@@ -186,3 +191,40 @@ if audioTracks.isEmpty {
 3. **`ezgif.com` 这类在线工具的产物是高危样本来源**，常出现 MP3-in-MP4、非标准 edit list、`moov` 置尾等组合，适合做回归测试素材。
 4. **文案不要承诺未实现的回退行为**，否则会把"框架能力问题"误导成"项目逻辑问题"，浪费排查时间。
 5. 排查此类问题的标准动作：`ffprobe -show_streams` 看编码 → 解析 `stsd`/`esds` 看 OTI → 用 `AVURLAsset.load(.tracks)` 实测 → 做"只改封装"的对照实验。
+
+---
+
+## 八、复核补记（2026-10-16 代码审查回填）
+
+对本文的复核由另一轮代码审查完成，方式为"逐条实测"而非只读文字。结论：**技术结论与证据链全部成立**，但行号与部分"未修"表述已过时。
+
+### 1. 实测复核结果（全部成立）
+
+| 本文论断 | 实测结果 |
+|---|---|
+| 样本编码信息（H.264 1080p 1.61Mbps + mp3/`mp4a` 48k 立体声 128k） | ffprobe 实测完全一致；文件 15,680,934 B |
+| AVFoundation 对 MP3-in-MP4 返回 0 条音轨且 `isPlayable=true` | `AVURLAsset` 实测 `totalTracks=1 video=1 audio=0 isPlayable=true` |
+| 对照：AAC-in-MP4 可识别；MOV（`.mp3` 采样描述）可识别 | 实测 `audio=1 subtype='aac '`；`audio=1 subtype='.mp3'` |
+
+### 2. 行号对照（本文行号 → 当前 HEAD 实际行号）
+
+本文写作时修复尚未提交，修复提交 `8a8dd71` 在其引用位置之前插入了约 30 行，故行号整体偏移：
+
+| 本文引用 | 当前实际 |
+|---|---|
+| `nativeSafeAudioCodecs` 含 `"mp3"`：第 2385 行 | PlayerViewModel.swift:2397（集合 2396-2400） |
+| `nativeSafeAudioSubtypes`：第 2402-2406 行 | PlayerViewModel.swift:2420-2424 |
+| 面板提示文案：第 2942-2945 行 | PlayerViewModel.swift:2972-2979 |
+| `audioTrackMenuEntries()`：第 3349-3351 行 | PlayerViewModel.swift:3379 |
+| `checkAndHandlePlaybackFailure` 失败判据 | PlayerViewModel.swift:2166（未变） |
+| `.failed` 分支：第 2280 行 | PlayerViewModel.swift:2280（未变） |
+
+### 3. 第五节方案 1 的最终落地形式（回填）
+
+- 实际实现**未采用**本文建议的 `codec_tag == "mp4a"` 判据，而是采用「**文件扩展名属于 mp4/m4v/m4a/3gp/3g2/f4v** 且 **`codec_name == "mp3"`** → 走 VLC」，见 PlayerViewModel.swift:2406-2410。
+- 本文遗留的开放问题"需实测确认 MOV 的 `codec_tag_string`"**已可关闭**：实测 remux 成 `.mov` 后 ffprobe 的 `codec_tag_string` 为 `.mp3`，与 MP4 的 `mp4a` 不同；两种判据对样本与 MOV 对照组给出的结论一致（MOV 走原生、MP4 走 VLC）。
+
+### 4. 仍未解决的残留缺口（本文未覆盖）
+
+1. 该修复**只在 ffprobe 可用时生效**。ffprobe 是外部依赖（从 `/opt/homebrew/bin` 等路径查找），缺失时走 asset 路径，而此时音轨已被系统丢弃、拿不到 `.mp3` 子类型，兜底恒不命中，仍会走原生静默无声。本文第五节方案 2（"音轨缺失兜底"）因此仍有必要。
+2. `chooseBackend` 中 `if hasAV1 { return .native }`（PlayerViewModel.swift:2314-2316）在新增判据之前提前返回，使「AV1 视频 + MP3-in-MP4 音频」绕过新判据，仍然无声。
