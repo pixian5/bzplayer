@@ -2315,7 +2315,7 @@ final class PlayerViewModel: NSObject, ObservableObject {
             return .native
         }
         if let ffprobeInfo {
-            if shouldPreferVLC(ffprobeInfo: ffprobeInfo) {
+            if shouldPreferVLC(ffprobeInfo: ffprobeInfo, containerExtension: url.pathExtension) {
                 return .vlc
             }
             if ffprobeInfo.videoStreams.contains(where: { $0.codecName == "h264" }),
@@ -2364,7 +2364,19 @@ final class PlayerViewModel: NSObject, ObservableObject {
         showFileInfo()
     }
 
-    private func shouldPreferVLC(ffprobeInfo: FFprobeInfo) -> Bool {
+    /// MP4 系列容器（ISO BMFF / M4V / 3GP 等）下，AVFoundation 因封装方式不支持、必须走 VLC 的音频编码。
+    /// 典型：MP3 装在 mp4/m4v 的 mp4a box 内，AVPlayer 既无法识别音轨也无法解码（VLC/libavcodec 可正常出声）。
+    private let mp4FamilyUnsafeAudioCodecs: Set<String> = ["mp3"]
+    /// AVAsset 路径下能被直接识别为「MP3 子类型」的 fourcc（mp4a box 内包裹 MP3 时也可能直接标为 mp3）。
+    private let mp4FamilyUnsafeAudioSubtypes: Set<String> = [".mp3", "mp3 "]
+
+    /// 容器是否为 MP4 系列：AVFoundation 在其中的部分音频封装存在兼容盲区，需交给 VLC 处理。
+    private func isMP4FamilyContainer(_ ext: String) -> Bool {
+        let mp4Family: Set<String> = ["mp4", "m4v", "m4a", "3gp", "3g2", "f4v"]
+        return mp4Family.contains(ext.lowercased())
+    }
+
+    private func shouldPreferVLC(ffprobeInfo: FFprobeInfo, containerExtension: String) -> Bool {
         let nativeSafeVideoCodecs: Set<String> = [
             "h264", "hevc", "mpeg4", "mjpeg", "prores", "jpeg2000", "dvvideo", "h263", "av1", "vp9"
         ]
@@ -2388,6 +2400,12 @@ final class PlayerViewModel: NSObject, ObservableObject {
         ]
 
         if ffprobeInfo.audioStreams.contains(where: { !nativeSafeAudioCodecs.contains($0.codecName) }) {
+            return true
+        }
+
+        // MP4 系列容器中的 MP3 音轨：AVFoundation 无法解码，但 ffprobe 能识别，强制走 VLC。
+        if isMP4FamilyContainer(containerExtension),
+           ffprobeInfo.audioStreams.contains(where: { mp4FamilyUnsafeAudioCodecs.contains($0.codecName) }) {
             return true
         }
 
@@ -2423,6 +2441,18 @@ final class PlayerViewModel: NSObject, ObservableObject {
             for formatDescription in formatDescriptions {
                 let subtype = codecSubtypeString(from: formatDescription)
                 if !subtype.isEmpty && !nativeSafeAudioSubtypes.contains(subtype) { return true }
+            }
+        }
+
+        // 兜底：AVAsset 路径无法可靠区分 mp4a 内是 AAC 还是 MP3，但若子类型直接是 MP3
+        // 且容器是 MP4 系列，则强制走 VLC（与 ffprobe 路径保持一致）。
+        if isMP4FamilyContainer(asset.url.pathExtension) {
+            for track in audioTracks {
+                guard let formatDescriptions = try? await track.load(.formatDescriptions) else { continue }
+                for formatDescription in formatDescriptions {
+                    let subtype = codecSubtypeString(from: formatDescription)
+                    if mp4FamilyUnsafeAudioSubtypes.contains(subtype) { return true }
+                }
             }
         }
 
