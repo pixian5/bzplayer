@@ -11,7 +11,8 @@
 
 ## 修复记录
 
-- [修复：MP3-in-MP4 强制走 VLC 后端（2026-10-16）](20261016-2247-AV内核MP3-in-MP4强制走VLC修复-hy3.md) — 后端路由把 MP3 当原生安全、未结合容器判断，导致 MP3-in-MP4 误走 AVPlayer 无音轨；已改 `PlayerViewModel.shouldPreferVLC` 强制 VLC，构建安装并提交。
+- [修复：MP3-in-MP4 强制走 VLC 后端（2026-10-16）](20261016-2247-AV内核MP3-in-MP4强制走VLC修复-hy3.md) — 后端路由把 MP3 当原生安全、未结合容器判断，导致 MP3-in-MP4 误走 AVPlayer 无音轨；已改 `PlayerViewModel.shouldPreferVLC` 强制 VLC，构建安装并提交。**注：本轮只覆盖 ffprobe 可用路径，后续被下面一篇补齐/重构。**
+- [代码审查与四项修复补齐：后端路由（2026-10-17）](20261017-0010-后端路由代码审查与四项修复补齐-hy3.md) — 审查发现首轮修复在 ffprobe 缺失、AV1 组合下仍失效；补齐四项（判据下沉 Core 可测 + 补 mp1/mp2、ffprobe 缺失兜底、AV1 判断顺序、消除重复加载），新增 11 个单测，14 个测试全过。
 
 ## 维护手册
 
