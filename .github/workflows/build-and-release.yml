@@ -34,9 +34,19 @@ jobs:
         id: version
         shell: bash
         run: |
-          VERSION=$((GITHUB_RUN_NUMBER - 1))
+          # 版本号以仓库根目录的 VERSION 文件为唯一来源（与本地安装脚本同源）。
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+          if [[ -z "${VERSION}" ]]; then
+            echo "仓库根目录 VERSION 文件为空或不存在" >&2
+            exit 1
+          fi
+          # tag 追加「年月日-时分」（东八区 Asia/Singapore），保证每次 push 都得到唯一 tag。
+          # 原因：VERSION 只在改源码时递增，仅改文档的提交会沿用同一 VERSION；
+          # 若 tag 只含版本号，第二个提交就会撞上已存在的同名 tag，导致 Release 步骤失败。
+          STAMP="$(TZ='Asia/Singapore' date +%Y%m%d-%H%M)"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${VERSION}-${STAMP}" >> "$GITHUB_OUTPUT"
+          echo "[版本] VERSION=${VERSION}，release tag=v${VERSION}-${STAMP}"
 
       - name: Fetch VLCKit binary
         shell: bash

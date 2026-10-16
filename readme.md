@@ -17,7 +17,7 @@
 
 最新一轮（2026-10-17 01:46）：对后端路由做代码审查后修复 6 项。重点是 **ffprobe 缺失时兜底判据精确化** —— 不再用"音轨为空"（会误伤本就无音轨的静音 MP4、丢原生硬件解码），改为解析 MP4 容器的 `moov/trak/mdia/hdlr` 看是否声明 `soun` 音频轨（新增 `MP4ContainerInspector`）；同时把「ffprobe 判不安全」提到 AV1 之前（避免 **AV1 + dts/truehd** 静音）、`decide` 改为惰性闭包避免无谓 AVAsset 探测、`.mp3` 判据统一到 Core（消除黑白名单自相矛盾）。`swift test` **32 个测试全过**。真实文件端到端实测：`特斯拉.mp4`（MP3-in-MP4，音轨被静默丢弃）→ VLC；`-an` 生成的静音 MP4 → 保持原生。详见 [后端路由六项审查修复](docs/20261017-0146-后端路由六项审查修复-DeepSeek-V4.1-Flash.md)。
 
-版本号现状：本机安装版本串已与根目录 `VERSION` 同源（均为 `244`，安装脚本改为读 `VERSION`）；CI 仍用 `GITHUB_RUN_NUMBER - 1`（当前 tag `v240`），与其他两处不同源，统一方案待定。
+版本号已统一（2026-10-17）：**单一版本源 = 根目录 `VERSION`**（当前 `244`），本机安装脚本与 CI 都读它；CI 的 Release tag 额外追加时间戳 `v244-<年月日>-<时分>`，以区分"仅改文档、未递增版本"的提交。详见 [CI 版本号统一与 tag 时间戳](docs/20261017-0206-CI版本号统一与tag时间戳-DeepSeek-V4.1-Flash.md)。
 
 之前两次修复（00:10 判据下沉 Core 并补 mp1/mp2 等四项；00:35 路由顺序抽成可测纯函数 `decide()`）详见 [代码审查与四项修复补齐](docs/20261017-0010-后端路由代码审查与四项修复补齐-hy3.md)（该文数字口径已修正为：本轮合计新增 19 个用例）。
 
@@ -87,8 +87,11 @@ bash scripts/measure_audio_only.sh "/path/to/media.mp4" \
   - 手动 `workflow_dispatch`
 - 产物：
   - `BZPlayer.app`
-  - `BZPlayer-v<版本>.dmg`
-- 版本规则：`version = GITHUB_RUN_NUMBER - 1`（首次为 `0`，之后每次 +1）
+  - `BZPlayer-v<版本>-<年月日>-<时分>.dmg`
+- 版本规则（2026-10-17 起）：
+  - app 版本串 = 读仓库根目录 `VERSION` 文件（纯数字，如 `244`）；本地安装脚本同源。
+  - Release tag = `v${VERSION}-${YYYYMMDD}-${HHMM}`（**东八区 Asia/Singapore** 时间戳）。带时间戳是为了让"仅改文档、未递增 VERSION"的提交也能得到唯一 tag，避免撞名导致 Release 失败。
+  - 旧规则曾是 `version = GITHUB_RUN_NUMBER - 1`（已废弃；它会跳号且与 `VERSION` 脱节）。
 - CI 会先执行 `swift test --package-path macos/BZPlayer`，再使用 `scripts/build_macos_app.sh` 生成与本地一致的 `.app` 和 DMG。
 - CI 只有在配置 `MACOS_CERTIFICATE_BASE64`、`MACOS_CERTIFICATE_PASSWORD`、`MACOS_SIGNING_IDENTITY` 后才签名；再配置 `APPLE_API_KEY_BASE64`、`APPLE_API_KEY_ID`、`APPLE_API_ISSUER` 才会公证并 staple，否则产物保持 unsigned。
 
@@ -108,3 +111,4 @@ bash scripts/measure_audio_only.sh "/path/to/media.mp4" \
 | [20261016-2247-AV内核MP3-in-MP4强制走VLC修复-hy3.md](docs/20261016-2247-AV内核MP3-in-MP4强制走VLC修复-hy3.md) | 对应修复记录：MP4 系列容器 + mp3 → 强制走 VLC；含设计取舍、验证、残留风险（**已被下面一篇补齐**） |
 | [20261017-0010-后端路由代码审查与四项修复补齐-hy3.md](docs/20261017-0010-后端路由代码审查与四项修复补齐-hy3.md) | 代码审查 + 四项补齐：判据下沉 Core 可测并补 mp1/mp2、ffprobe 缺失兜底、AV1 判断顺序、消除重复加载；含实测证据与 19 个新增单测（含 8 个顺序单测） |
 | [20261017-0146-后端路由六项审查修复-DeepSeek-V4.1-Flash.md](docs/20261017-0146-后端路由六项审查修复-DeepSeek-V4.1-Flash.md) | 六项审查修复：ffprobe 缺失兜底精确化（解析容器 `hdlr=soun`，新增 `MP4ContainerInspector`）、ffprobe 判不安全早于 AV1、`decide` 惰性求值、`.mp3` 判据统一到 Core、文档/版本账目修正；含真实文件端到端实测 |
+| [20261017-0206-CI版本号统一与tag时间戳-DeepSeek-V4.1-Flash.md](docs/20261017-0206-CI版本号统一与tag时间戳-DeepSeek-V4.1-Flash.md) | CI 改为读根目录 `VERSION` 作为 app 版本串，Release tag 追加「年月日-时分」（东八区）保证唯一，消除"仅改文档提交撞同名 tag"问题；含本地验证 |
