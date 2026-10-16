@@ -2308,22 +2308,20 @@ final class PlayerViewModel: NSObject, ObservableObject {
         if audioDelayMs != 0 {
             return .vlc
         }
-        // AV1 装在 AVPlayer 原生容器（mp4/mov/m4v）中时，优先走系统硬件解码路径以降低
-        // 功耗。这里不是禁用 VLC：用户可手动切换，原生播放失败时也会自动回退到 VLC 4。
-        // MKV/WebM 已在上方容器规则中直接选择 VLC，避免让 AVPlayer 处理不支持的封装。
-        // MP3 等装在 MP4 系列容器里时，AVFoundation 既不识别也不解码音轨：实测这类文件
-        // audioTracks=0 却 isPlayable=true，不会触发任何失败回退，用户侧就是"能放、没声、不报错"。
-        // 必须排在下面 AV1 的"原生优先"之前，否则 AV1 + MP3 组合会漏判成原生、播放静音。
-        if await mp4FamilyAudioNeedsVLC(url: url, ffprobeInfo: ffprobeInfo) {
-            return .vlc
-        }
-        if hasAV1 {
-            return .native
-        }
+        // 规则的"短路 return 顺序"已抽到 BackendRoutingCore.decide（可被单测覆盖），
+        // 这里只负责准备入参，顺序改动请改 Core 并同步测试。
+        let decision = BackendRoutingCore.decide(
+            isNonNativeContainer: nonNativeContainers.contains(url.pathExtension.lowercased()),
+            audioDelayNonZero: audioDelayMs != 0,
+            mp4FamilyAudioUnavailable: await mp4FamilyAudioNeedsVLC(url: url, ffprobeInfo: ffprobeInfo),
+            hasAV1: hasAV1,
+            ffprobePrefersVLC: ffprobeInfo.map { shouldPreferVLC(ffprobeInfo: $0) }
+        )
+        if decision == .vlc { return .vlc }
+        if decision == .native { return .native }
+
+        // decision == .needsFurtherProbe：前置规则都没命中，继续做异步探测。
         if let ffprobeInfo {
-            if shouldPreferVLC(ffprobeInfo: ffprobeInfo) {
-                return .vlc
-            }
             if ffprobeInfo.videoStreams.contains(where: { $0.codecName == "h264" }),
                await hasVideoDecodeErrors(url: url, scanSeconds: 20) {
                 BZLogger.debug("[BZPlayer] Detected video decode errors, using VLC/libvlc: \(url.lastPathComponent)")

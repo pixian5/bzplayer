@@ -102,4 +102,99 @@ final class BackendRoutingTests: XCTestCase {
         XCTAssertFalse(BackendRoutingCore.isMP4FamilyContainer("mp3"))
         XCTAssertFalse(BackendRoutingCore.isMP4FamilyContainer("mov"))
     }
+
+    // MARK: - 路由决策顺序（chooseBackend 的短路顺序，锁死防回归）
+
+    /// 核心回归点：AV1 分支会短路走原生，若把 MP4+不安全音频的判据排在它后面，
+    /// "AV1 视频 + MP3 音频"就会被判成原生 —— 画面正常但静音，且不报错。
+    func testAV1WithMP3InMP4RoutesToVLC() {
+        let decision = BackendRoutingCore.decide(
+            isNonNativeContainer: false,
+            audioDelayNonZero: false,
+            mp4FamilyAudioUnavailable: true,
+            hasAV1: true,
+            ffprobePrefersVLC: nil
+        )
+        XCTAssertEqual(decision, .vlc, "AV1 + MP3-in-MP4 必须走 VLC，不能因 AV1 短路成原生而静音")
+    }
+
+    func testAV1WithSafeAudioStaysNative() {
+        let decision = BackendRoutingCore.decide(
+            isNonNativeContainer: false,
+            audioDelayNonZero: false,
+            mp4FamilyAudioUnavailable: false,
+            hasAV1: true,
+            ffprobePrefersVLC: nil
+        )
+        XCTAssertEqual(decision, .native, "AV1 且音频安全时应走原生硬件解码省电")
+    }
+
+    /// AV1 分支短路，优先于 ffprobe 的判断（保持既有行为）。
+    func testAV1ShortCircuitsBeforeFFprobeOpinion() {
+        let decision = BackendRoutingCore.decide(
+            isNonNativeContainer: false,
+            audioDelayNonZero: false,
+            mp4FamilyAudioUnavailable: false,
+            hasAV1: true,
+            ffprobePrefersVLC: true
+        )
+        XCTAssertEqual(decision, .native)
+    }
+
+    func testNonNativeContainerWinsOverAV1() {
+        let decision = BackendRoutingCore.decide(
+            isNonNativeContainer: true,
+            audioDelayNonZero: false,
+            mp4FamilyAudioUnavailable: false,
+            hasAV1: true,
+            ffprobePrefersVLC: nil
+        )
+        XCTAssertEqual(decision, .vlc)
+    }
+
+    func testAudioDelayWinsOverAV1() {
+        let decision = BackendRoutingCore.decide(
+            isNonNativeContainer: false,
+            audioDelayNonZero: true,
+            mp4FamilyAudioUnavailable: false,
+            hasAV1: true,
+            ffprobePrefersVLC: nil
+        )
+        XCTAssertEqual(decision, .vlc)
+    }
+
+    func testFFprobePrefersVLCRoutesToVLC() {
+        let decision = BackendRoutingCore.decide(
+            isNonNativeContainer: false,
+            audioDelayNonZero: false,
+            mp4FamilyAudioUnavailable: false,
+            hasAV1: false,
+            ffprobePrefersVLC: true
+        )
+        XCTAssertEqual(decision, .vlc)
+    }
+
+    /// ffprobe 认为安全时不能直接判原生 —— 后面还有 h264 解码错误扫描需要执行。
+    func testFFprobeSaysSafeNeedsFurtherProbe() {
+        let decision = BackendRoutingCore.decide(
+            isNonNativeContainer: false,
+            audioDelayNonZero: false,
+            mp4FamilyAudioUnavailable: false,
+            hasAV1: false,
+            ffprobePrefersVLC: false
+        )
+        XCTAssertEqual(decision, .needsFurtherProbe)
+    }
+
+    /// ffprobe 缺失（外置可选依赖未安装）时交给调用方用 AVAsset 继续探测。
+    func testFFprobeMissingNeedsFurtherProbe() {
+        let decision = BackendRoutingCore.decide(
+            isNonNativeContainer: false,
+            audioDelayNonZero: false,
+            mp4FamilyAudioUnavailable: false,
+            hasAV1: false,
+            ffprobePrefersVLC: nil
+        )
+        XCTAssertEqual(decision, .needsFurtherProbe)
+    }
 }
