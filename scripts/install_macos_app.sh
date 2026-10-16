@@ -22,14 +22,19 @@ PROJECT_DIR="${REPO_DIR}/macos/BZPlayer"
 LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 
 cd "${REPO_DIR}"
-# 获取最新的 Git tag 并提取数字作为版本号
-LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0")
-VERSION_NUM=${LATEST_TAG#v}
-if [[ -z "$VERSION_NUM" ]]; then
-    VERSION_NUM="0"
+# 版本号以仓库根目录的 VERSION 文件为唯一来源。
+# 历史上 app 版本串取自 git tag，与 VERSION 文件、CI（用 run number）三处长期不一致；
+# 本机安装改为读 VERSION，保证安装出的 .app 版本串与 VERSION 一致。
+if [[ -f "${REPO_DIR}/VERSION" ]]; then
+    NEXT_VERSION="$(tr -d '[:space:]' < "${REPO_DIR}/VERSION")"
+else
+    LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0")
+    NEXT_VERSION="${LATEST_TAG#v}"
 fi
-NEXT_VERSION="${VERSION_NUM}"
-echo "[deploy] BZPlayer version from Git: ${NEXT_VERSION}"
+if [[ -z "${NEXT_VERSION}" ]]; then
+    NEXT_VERSION="0"
+fi
+echo "[deploy] BZPlayer version from VERSION: ${NEXT_VERSION}"
 
 echo "[deploy] Ensuring VLCKit is present..."
 zsh "${SCRIPT_DIR}/fetch_vlckit.sh"

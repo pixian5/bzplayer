@@ -22,6 +22,21 @@ public enum BackendRoutingCore {
         mp4FamilyContainers.contains(ext.lowercased())
     }
 
+    /// 把 AVFoundation 的音频格式子类型（fourcc）映射为 ffprobe 风格的编码名。
+    ///
+    /// 用途：`shouldPreferVLC(asset:)` 拿到的是子类型（如 `.mp3`），而「容器 × 编码」判据
+    /// `mp4FamilyAudioNeedsVLC` 用的是编码名（如 `mp3`）。集中在这里映射，保证
+    /// AVAsset 路径与 ffprobe 路径走同一套规则，不再各写一份、互相矛盾。
+    /// 只覆盖 MP4 系列里原生不安全的三种 MPEG 音频层，其余返回 `nil`。
+    public static func audioCodecName(fromSubtype subtype: String) -> String? {
+        switch subtype.lowercased() {
+        case ".mp3", "mp3 ": return "mp3"
+        case ".mp2", "mp2 ": return "mp2"
+        case ".mp1", "mp1 ": return "mp1"
+        default: return nil
+        }
+    }
+
     /// MP4 系列容器 + 原生不可解码的音频 → 必须交给 VLC。
     ///
     /// - Parameters:
@@ -47,31 +62,37 @@ public enum BackendRoutingCore {
 
     /// 按固定优先级决定后端。**顺序即语义**：先命中的规则短路返回，调整顺序会改变行为。
     ///
-    /// 抽成纯函数是为了让"规则顺序"本身能被单元测试锁住 —— 例如 AV1 分支是短路走原生，
-    /// 若把 MP4+不安全音频的判据排在它后面，**AV1 视频 + MP3-in-MP4 会被判成原生而静音**。
+    /// 抽成纯函数是为了让"规则顺序"本身能被单元测试锁住。两条关键顺序：
+    /// 1. 「MP4 系列 + 不安全音频」必须排在 AV1 之前，否则 **AV1 视频 + MP3-in-MP4 会被判成原生而静音**；
+    /// 2. 「ffprobe 判不安全」也必须排在 AV1 之前，否则 **AV1 视频 + 非白名单音频（dts/truehd…）同样会静音**。
+    ///    AV1 只在音频安全（或无法判定为不安全）时才短路走原生省电。
+    ///
+    /// 昂贵判据以**惰性闭包**传入（`() async -> …`）：只有真正走到对应分支才会执行，
+    /// 因此"非原生容器"或"音频延迟非 0"这类廉价规则命中时，不会白跑 AVAsset 探测。
     ///
     /// - Parameters:
     ///   - isNonNativeContainer: 扩展名属于 mkv/avi/webm 等非原生容器。
     ///   - audioDelayNonZero: 用户设置了非 0 音频延迟（只有 VLC 支持）。
-    ///   - mp4FamilyAudioUnavailable: MP4 系列容器里的音频原生不可用（如 MP3-in-MP4）。
-    ///   - hasAV1: 视频是 AV1（走系统硬件解码更省电）。
-    ///   - ffprobePrefersVLC: ffprobe 路径的判断结果；`nil` 表示 ffprobe 不可用。
+    ///   - mp4FamilyAudioUnavailable: MP4 系列容器里的音频原生不可用（如 MP3-in-MP4）。惰性求值。
+    ///   - hasAV1: 视频是 AV1（走系统硬件解码更省电）。惰性求值。
+    ///   - ffprobePrefersVLC: ffprobe 路径的判断结果；`nil` 表示 ffprobe 不可用。惰性求值。
     public static func decide(
         isNonNativeContainer: Bool,
         audioDelayNonZero: Bool,
-        mp4FamilyAudioUnavailable: Bool,
-        hasAV1: Bool,
-        ffprobePrefersVLC: Bool?
-    ) -> RoutingDecision {
+        mp4FamilyAudioUnavailable: () async -> Bool,
+        hasAV1: () async -> Bool,
+        ffprobePrefersVLC: () async -> Bool?
+    ) async -> RoutingDecision {
         if isNonNativeContainer { return .vlc }
         if audioDelayNonZero { return .vlc }
-        // 必须排在 AV1 之前：AV1 分支会短路走原生，排在它后面的音频判据将永远不生效。
-        if mp4FamilyAudioUnavailable { return .vlc }
-        if hasAV1 { return .native }
-        if let ffprobePrefersVLC {
-            return ffprobePrefersVLC ? .vlc : .needsFurtherProbe
-        }
-        // ffprobe 不可用：交给调用方用 AVAsset 继续探测。
+        // 必须排在 AV1 之前：AV1 分支会短路走原生。
+        if await mp4FamilyAudioUnavailable() { return .vlc }
+        let ffprobeOpinion = await ffprobePrefersVLC()
+        // 同样必须排在 AV1 之前：否则"AV1 + ffprobe 判不安全（非白名单音频）"会被 AV1 短路成原生而静音。
+        if ffprobeOpinion == true { return .vlc }
+        // AV1 走原生硬件解码更省电；音频安全时短路线原生。
+        if await hasAV1() { return .native }
+        // ffprobe 认为音频安全（false）或 ffprobe 不可用（nil）：交给调用方继续探测。
         return .needsFurtherProbe
     }
 }

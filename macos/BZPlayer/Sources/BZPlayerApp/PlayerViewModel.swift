@@ -2294,28 +2294,28 @@ final class PlayerViewModel: NSObject, ObservableObject {
     }
 
     private func chooseBackend(for url: URL, ffprobeInfo: FFprobeInfo? = nil) async -> PlaybackBackend {
-        let hasAV1 = await hasAV1Video(url: url, ffprobeInfo: ffprobeInfo)
         // MKV, AVI and other containers are not natively supported by AVPlayer on macOS
         let nonNativeContainers: Set<String> = [
             "mkv", "avi", "flv", "wmv", "webm", "rmvb", "ts", "mpeg", "mpg",
             "ogg", "oga", "opus", "wma", "ape", "mka"
         ]
-        if nonNativeContainers.contains(url.pathExtension.lowercased()) {
-            return .vlc
-        }
-        // Audio delay still needs VLC. External text subtitles are rendered
-        // by the native overlay, so they no longer force a backend switch.
-        if audioDelayMs != 0 {
-            return .vlc
-        }
-        // 规则的"短路 return 顺序"已抽到 BackendRoutingCore.decide（可被单测覆盖），
-        // 这里只负责准备入参，顺序改动请改 Core 并同步测试。
-        let decision = BackendRoutingCore.decide(
+        // 规则的"短路 return 顺序"已抽到 BackendRoutingCore.decide（可被单测覆盖）。
+        // 昂贵判据（AVAsset 探测）以惰性闭包传入：只有真正走到对应分支才执行，
+        // 避免为"根本用不到"的判据提前做磁盘/解码探测。
+        // 复用同一个 AVURLAsset 实例，让 AVFoundation 的解析结果在其中被缓存，避免重复解析。
+        let asset = AVURLAsset(url: url)
+        let decision = await BackendRoutingCore.decide(
             isNonNativeContainer: nonNativeContainers.contains(url.pathExtension.lowercased()),
             audioDelayNonZero: audioDelayMs != 0,
-            mp4FamilyAudioUnavailable: await mp4FamilyAudioNeedsVLC(url: url, ffprobeInfo: ffprobeInfo),
-            hasAV1: hasAV1,
-            ffprobePrefersVLC: ffprobeInfo.map { shouldPreferVLC(ffprobeInfo: $0) }
+            mp4FamilyAudioUnavailable: {
+                await self.mp4FamilyAudioNeedsVLC(asset: asset, ffprobeInfo: ffprobeInfo)
+            },
+            hasAV1: {
+                await self.hasAV1Video(asset: asset, ffprobeInfo: ffprobeInfo)
+            },
+            ffprobePrefersVLC: {
+                ffprobeInfo.map { self.shouldPreferVLC(ffprobeInfo: $0) }
+            }
         )
         if decision == .vlc { return .vlc }
         if decision == .native { return .native }
@@ -2327,21 +2327,25 @@ final class PlayerViewModel: NSObject, ObservableObject {
                 BZLogger.debug("[BZPlayer] Detected video decode errors, using VLC/libvlc: \(url.lastPathComponent)")
                 return .vlc
             }
-        } else if await shouldPreferVLC(asset: AVURLAsset(url: url)) {
+        } else if await shouldPreferVLC(asset: asset) {
             return .vlc
         }
         return .native
     }
 
     private func hasAV1Video(url: URL, ffprobeInfo: FFprobeInfo? = nil) async -> Bool {
+        await hasAV1Video(asset: AVURLAsset(url: url), ffprobeInfo: ffprobeInfo)
+    }
+
+    /// 判断视频是否 AV1。复用调用方传入的 asset，避免重复解析同一个文件。
+    private func hasAV1Video(asset: AVURLAsset, ffprobeInfo: FFprobeInfo? = nil) async -> Bool {
         if ffprobeInfo?.videoStreams.contains(where: { $0.codecName.lowercased() == "av1" }) == true {
             return true
         }
 
-        let asset = AVURLAsset(url: url)
         let av1Subtypes: Set<String> = ["av01", "av1 ", "1va "]
-        guard let tracks = try? await asset.loadTracks(withMediaType: .video) else { return false }
-        for track in tracks {
+        guard let videoTracks = try? await asset.loadTracks(withMediaType: .video) else { return false }
+        for track in videoTracks {
             guard let formatDescriptions = try? await track.load(.formatDescriptions) else { continue }
             if formatDescriptions.contains(where: { formatDescription in
                 av1Subtypes.contains(codecSubtypeString(from: formatDescription))
@@ -2368,28 +2372,35 @@ final class PlayerViewModel: NSObject, ObservableObject {
         showFileInfo()
     }
 
-    /// AVAsset 路径下能被直接识别为「MP3 子类型」的 fourcc（mp4a box 内包裹 MP3 时也可能直接标为 mp3）。
-    private let mp4FamilyUnsafeAudioSubtypes: Set<String> = [".mp3", "mp3 "]
-
-    /// MP4 系列容器中的音频是否原生不可用、必须交给 VLC。
+    /// MP4 系列容器中的音频是否原生不可用、必须交给 VLC。复用调用方传入的 asset。
     ///
     /// - ffprobe 可用（brew 外置安装）：按真实编码名判断，规则见 `BackendRoutingCore`。
-    /// - ffprobe 缺失：它是**外置可选依赖**，此时改用 AVAsset 兜底 —— AVFoundation 对这类文件
-    ///   会把音轨静默丢弃（实测 `audioTracks` 为空且 `isPlayable=true`），于是用
-    ///   "MP4 系列容器 + 音轨为空"作为信号。代价是真正无音轨的 MP4 也会走 VLC
-    ///   （VLC 能正常播放，仅功耗略高），换来的是不会静音。
-    private func mp4FamilyAudioNeedsVLC(url: URL, ffprobeInfo: FFprobeInfo?) async -> Bool {
-        guard BackendRoutingCore.isMP4FamilyContainer(url.pathExtension) else { return false }
+    /// - ffprobe 缺失（它是**外置可选依赖**，应用不内置）：改用 AVAsset + 容器字节双重证据。
+    ///   AVFoundation 对 MP3-in-MP4 会把音轨**静默丢弃**（实测 `audioTracks` 为空且 `isPlayable=true`），
+    ///   因此单看"音轨为空"会误伤真正无音轨的静音 MP4 —— 那会丢原生硬件解码、抵消 AV1 省电策略。
+    ///   这里改为再看容器是否**声明**了音频轨（`moov/trak/mdia/hdlr` 的 `soun`）来精确区分：
+    ///   - 声明了却取不到音轨 → 音轨被丢弃 → 交给 VLC（宁可功耗略高，不可静音）；
+    ///   - 容器没有任何 `soun` → 文件本来无音轨 → 保持原生。
+    private func mp4FamilyAudioNeedsVLC(asset: AVURLAsset, ffprobeInfo: FFprobeInfo?) async -> Bool {
+        guard BackendRoutingCore.isMP4FamilyContainer(asset.url.pathExtension) else { return false }
         if let ffprobeInfo {
             return BackendRoutingCore.mp4FamilyAudioNeedsVLC(
-                containerExtension: url.pathExtension,
+                containerExtension: asset.url.pathExtension,
                 audioCodecs: ffprobeInfo.audioStreams.map { $0.codecName }
             )
         }
-        guard let audioTracks = try? await AVURLAsset(url: url).loadTracks(withMediaType: .audio) else {
+        // AVFoundation 侧看到任何音轨时，说明没有被丢弃，无需走 VLC。
+        guard let audioTracks = try? await asset.loadTracks(withMediaType: .audio),
+              audioTracks.isEmpty else {
             return false
         }
-        return audioTracks.isEmpty
+        // 容器解析失败时保守走 VLC：无法判定就宁可功耗略高，也不能静音。
+        guard let source = FileMP4ByteSource(url: asset.url) else { return true }
+        switch MP4ContainerInspector.audioTrackPresence(in: source) {
+        case .declared: return true
+        case .none: return false
+        case .unknown: return true
+        }
     }
 
     private func shouldPreferVLC(ffprobeInfo: FFprobeInfo) -> Bool {
@@ -2464,10 +2475,14 @@ final class PlayerViewModel: NSObject, ObservableObject {
             if !nativeSafeAudioSubtypes.contains(subtype) { return true }
         }
 
-        // 子类型直接就是 MP3 且容器是 MP4 系列时交给 VLC。
-        // 注意 mp4a 无法据此区分内部是 AAC 还是 MP3，那种情况由 ffprobe 路径负责。
-        if BackendRoutingCore.isMP4FamilyContainer(asset.url.pathExtension),
-           audioSubtypes.contains(where: { mp4FamilyUnsafeAudioSubtypes.contains($0) }) {
+        // 注意：`.mp3` 单看编码本身是可解码的，所以留在上面白名单里；但「MP3 装在 MP4 容器内」
+        // 是**容器 × 编码**的组合问题，必须按容器再判一次 —— 统一走 Core 的同一套规则，
+        // 避免 AVAsset 路径与 ffprobe 路径各写一份、互相矛盾。
+        // 纯 .mp3 文件容器不是 MP4 系列，不受此规则影响。
+        if BackendRoutingCore.mp4FamilyAudioNeedsVLC(
+            containerExtension: asset.url.pathExtension,
+            audioCodecs: audioSubtypes.compactMap { BackendRoutingCore.audioCodecName(fromSubtype: $0) }
+        ) {
             return true
         }
 
