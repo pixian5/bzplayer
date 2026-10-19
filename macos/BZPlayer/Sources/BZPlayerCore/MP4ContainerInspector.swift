@@ -103,10 +103,25 @@ public enum MP4ContainerInspector {
                 state.malformed = true
                 return
             }
-            let bodyStart = cursor + header.headerLength
             // size == 0 表示该 box 一直延伸到文件末尾。
-            let boxEnd = header.size == 0 ? end : cursor + header.size
-            guard bodyStart <= boxEnd, boxEnd <= end else {
+            // ⚠️ 必须先判边界再相加：64 位 largesize 可能接近 Int.max，
+            // `cursor + size` 会整数溢出并让整个进程崩溃（Swift 溢出即 trap）。
+            let boxEnd: Int
+            if header.size == 0 {
+                boxEnd = end
+            } else {
+                guard header.size <= end - cursor else {
+                    state.malformed = true
+                    return
+                }
+                boxEnd = cursor + header.size
+            }
+            guard header.headerLength <= end - cursor else {
+                state.malformed = true
+                return
+            }
+            let bodyStart = cursor + header.headerLength
+            guard bodyStart <= boxEnd else {
                 state.malformed = true
                 return
             }
@@ -114,7 +129,9 @@ public enum MP4ContainerInspector {
             if header.type == "hdlr" {
                 // hdlr payload 起始：version(1) + flags(3) + predefined(4) + handler_type(4)。
                 // handler_type 位于 bodyStart + 8，音频轨为 "soun"。
-                if let data = source.read(at: bodyStart, count: 12),
+                // 先确认 box 内确实还有 12 字节，避免截断的 hdlr 读到下一个 box 的字节而误匹配。
+                if boxEnd - bodyStart >= 12,
+                   let data = source.read(at: bodyStart, count: 12),
                    data.count == 12,
                    data[data.startIndex + 8 ..< data.startIndex + 12] == Data("soun".utf8) {
                     state.foundSoun = true
@@ -131,16 +148,19 @@ public enum MP4ContainerInspector {
     }
 
     private static func readBoxHeader(source: MP4ByteSource, at offset: Int) -> BoxHeader? {
-        guard let head = source.read(at: offset, count: 16), head.count >= 8 else { return nil }
-        let typeRange = head.startIndex + 4 ..< head.startIndex + 8
-        guard let type = String(data: head[typeRange], encoding: .ascii) else { return nil }
+        // 先只读 8 字节基础头。若一次性读 16 字节，文件末尾那种 8 字节的小 box
+        // （如 free/skip 填充）会读取越界返回 nil，被误判成"结构异常"→ 保守走 VLC，
+        // 反而误伤本就无音轨的静音 MP4（正是本解析器要避免的）。
+        guard let base = source.read(at: offset, count: 8), base.count == 8 else { return nil }
+        let typeRange = base.startIndex + 4 ..< base.startIndex + 8
+        guard let type = String(data: base[typeRange], encoding: .ascii) else { return nil }
 
-        var size = Int(readUInt32(head, at: 0))
+        var size = Int(readUInt32(base, at: 0))
         var headerLength = 8
         if size == 1 {
-            // size == 1：真正的 64 位大小紧跟其后 8 字节（largesize）。
-            guard head.count >= 16 else { return nil }
-            let large = readUInt64(head, at: 8)
+            // size == 1：真正的 64 位大小（largesize）紧跟其后 8 字节。
+            guard let extra = source.read(at: offset + 8, count: 8), extra.count == 8 else { return nil }
+            let large = readUInt64(extra, at: 0)
             guard large <= UInt64(Int.max) else { return nil }
             size = Int(large)
             headerLength = 16

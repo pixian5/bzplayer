@@ -2061,12 +2061,14 @@ final class PlayerViewModel: NSObject, ObservableObject {
         mediaAnalysisTask = Task { @MainActor [weak self] in
             let ffprobeInfo = await probeMediaInfo(url: url)
             guard !Task.isCancelled, let self else { return }
-            let backend = await self.chooseBackend(for: url, ffprobeInfo: ffprobeInfo)
+            let choice = await self.resolveBackend(for: url, ffprobeInfo: ffprobeInfo)
+            let backend = choice.backend
             guard !Task.isCancelled,
                   self.mediaOpenGeneration == generation,
                   self.currentFileURL == url else { return }
 
-            let hasAV1Video = await self.hasAV1Video(url: url, ffprobeInfo: ffprobeInfo)
+            // AV1 探测已在 resolveBackend 内完成并复用，此处不再重复解析 AVAsset
+            let hasAV1Video = choice.hasAV1
             let nominalFPS = await self.estimateFPS(for: url, ffprobeInfo: ffprobeInfo)
             let videoSize = await self.estimateVideoSize(for: url)
             guard !Task.isCancelled,
@@ -2293,17 +2295,31 @@ final class PlayerViewModel: NSObject, ObservableObject {
         player.replaceCurrentItem(with: item)
     }
 
+    /// 路由结果 + 顺带解析出的元信息，避免调用方为同一文件重复探测 AV1。
+    private struct BackendChoice {
+        let backend: PlaybackBackend
+        let hasAV1: Bool
+    }
+
+    /// 只关心后端时的便捷入口（文件信息面板等）。
     private func chooseBackend(for url: URL, ffprobeInfo: FFprobeInfo? = nil) async -> PlaybackBackend {
+        await resolveBackend(for: url, ffprobeInfo: ffprobeInfo).backend
+    }
+
+    /// 解析后端，并顺带返回是否 AV1 —— 播放路径同时需要这两项，
+    /// 一次解析即可，避免对同一文件做两遍 AVAsset 探测（ffprobe 缺失时尤其明显）。
+    private func resolveBackend(for url: URL, ffprobeInfo: FFprobeInfo?) async -> BackendChoice {
         // MKV, AVI and other containers are not natively supported by AVPlayer on macOS
         let nonNativeContainers: Set<String> = [
             "mkv", "avi", "flv", "wmv", "webm", "rmvb", "ts", "mpeg", "mpg",
             "ogg", "oga", "opus", "wma", "ape", "mka"
         ]
         // 规则的"短路 return 顺序"已抽到 BackendRoutingCore.decide（可被单测覆盖）。
-        // 昂贵判据（AVAsset 探测）以惰性闭包传入：只有真正走到对应分支才执行，
-        // 避免为"根本用不到"的判据提前做磁盘/解码探测。
-        // 复用同一个 AVURLAsset 实例，让 AVFoundation 的解析结果在其中被缓存，避免重复解析。
+        // 昂贵判据（AVAsset 探测）以惰性闭包传入：只有真正走到对应分支才执行。
+        // 复用同一个 AVURLAsset 实例，让 AVFoundation 的解析结果在其中被缓存。
         let asset = AVURLAsset(url: url)
+        // 缓存 AV1 探测结果：decide 内部可能已算过，下面再取时不再重复解析。
+        var probedHasAV1: Bool?
         let decision = await BackendRoutingCore.decide(
             isNonNativeContainer: nonNativeContainers.contains(url.pathExtension.lowercased()),
             audioDelayNonZero: audioDelayMs != 0,
@@ -2311,30 +2327,47 @@ final class PlayerViewModel: NSObject, ObservableObject {
                 await self.mp4FamilyAudioNeedsVLC(asset: asset, ffprobeInfo: ffprobeInfo)
             },
             hasAV1: {
-                await self.hasAV1Video(asset: asset, ffprobeInfo: ffprobeInfo)
+                if let probedHasAV1 { return probedHasAV1 }
+                let value = await self.hasAV1Video(asset: asset, ffprobeInfo: ffprobeInfo)
+                probedHasAV1 = value
+                return value
             },
             ffprobePrefersVLC: {
                 ffprobeInfo.map { self.shouldPreferVLC(ffprobeInfo: $0) }
             }
         )
-        if decision == .vlc { return .vlc }
-        if decision == .native { return .native }
 
-        // decision == .needsFurtherProbe：前置规则都没命中，继续做异步探测。
-        if let ffprobeInfo {
-            if ffprobeInfo.videoStreams.contains(where: { $0.codecName == "h264" }),
-               await hasVideoDecodeErrors(url: url, scanSeconds: 20) {
-                BZLogger.debug("[BZPlayer] Detected video decode errors, using VLC/libvlc: \(url.lastPathComponent)")
-                return .vlc
+        let backend: PlaybackBackend
+        switch decision {
+        case .vlc:
+            backend = .vlc
+        case .native:
+            backend = .native
+        case .needsFurtherProbe:
+            // 前置规则都没命中，继续做异步探测。
+            if let ffprobeInfo {
+                if ffprobeInfo.videoStreams.contains(where: { $0.codecName == "h264" }),
+                   await hasVideoDecodeErrors(url: url, scanSeconds: 20) {
+                    BZLogger.debug("[BZPlayer] Detected video decode errors, using VLC/libvlc: \(url.lastPathComponent)")
+                    backend = .vlc
+                } else {
+                    backend = .native
+                }
+            } else if await shouldPreferVLC(asset: asset) {
+                backend = .vlc
+            } else {
+                backend = .native
             }
-        } else if await shouldPreferVLC(asset: asset) {
-            return .vlc
         }
-        return .native
-    }
 
-    private func hasAV1Video(url: URL, ffprobeInfo: FFprobeInfo? = nil) async -> Bool {
-        await hasAV1Video(asset: AVURLAsset(url: url), ffprobeInfo: ffprobeInfo)
+        // decide 若在前面短路（如非原生容器），可能还没探测过 AV1；这里补齐。
+        let hasAV1: Bool
+        if let probedHasAV1 {
+            hasAV1 = probedHasAV1
+        } else {
+            hasAV1 = await hasAV1Video(asset: asset, ffprobeInfo: ffprobeInfo)
+        }
+        return BackendChoice(backend: backend, hasAV1: hasAV1)
     }
 
     /// 判断视频是否 AV1。复用调用方传入的 asset，避免重复解析同一个文件。
@@ -2390,10 +2423,12 @@ final class PlayerViewModel: NSObject, ObservableObject {
             )
         }
         // AVFoundation 侧看到任何音轨时，说明没有被丢弃，无需走 VLC。
-        guard let audioTracks = try? await asset.loadTracks(withMediaType: .audio),
-              audioTracks.isEmpty else {
-            return false
+        guard let audioTracks = try? await asset.loadTracks(withMediaType: .audio) else {
+            // 连音轨都加载不出来 → 无法判定。与下面"容器解析失败"保持一致，保守走 VLC：
+            // 宁可功耗略高，也不能出现"能放、没声、不报错"。
+            return true
         }
+        guard audioTracks.isEmpty else { return false }
         // 容器解析失败时保守走 VLC：无法判定就宁可功耗略高，也不能静音。
         guard let source = FileMP4ByteSource(url: asset.url) else { return true }
         switch MP4ContainerInspector.audioTrackPresence(in: source) {

@@ -15,9 +15,11 @@
 
 截至最新发布：双后端播放、字幕、快捷键、多窗口、按文件记忆等核心能力均已在 `/Applications/BZPlayer.app` 形态下跑通；播放器源码未冻结，仍以修复型迭代为主。
 
-最新一轮（2026-10-17 01:46）：对后端路由做代码审查后修复 6 项。重点是 **ffprobe 缺失时兜底判据精确化** —— 不再用"音轨为空"（会误伤本就无音轨的静音 MP4、丢原生硬件解码），改为解析 MP4 容器的 `moov/trak/mdia/hdlr` 看是否声明 `soun` 音频轨（新增 `MP4ContainerInspector`）；同时把「ffprobe 判不安全」提到 AV1 之前（避免 **AV1 + dts/truehd** 静音）、`decide` 改为惰性闭包避免无谓 AVAsset 探测、`.mp3` 判据统一到 Core（消除黑白名单自相矛盾）。`swift test` **32 个测试全过**。真实文件端到端实测：`特斯拉.mp4`（MP3-in-MP4，音轨被静默丢弃）→ VLC；`-an` 生成的静音 MP4 → 保持原生。详见 [后端路由六项审查修复](docs/20261017-0146-后端路由六项审查修复-DeepSeek-V4.1-Flash.md)。
+最新一轮（2026-10-19 09:14）：对后端路由做**第二轮**审查后修复 6 项。其中两项是上一轮引入 `MP4ContainerInspector` 时留下的缺陷：**手写 box 遍历的整数溢出崩溃**（64 位 `largesize` 接近 `Int.max` 时 `cursor + size` 溢出，Swift 溢出即 trap，实测 `exit=133`）与**末尾 8 字节 `free` box 被误判结构异常**（会误伤本应走原生的静音 MP4）。另修：`loadTracks` 抛错时改为保守走 VLC、新增 `resolveBackend`/`BackendChoice` 消除 AV1 重复探测、`hdlr` 读取加限界。`swift test` **37 个测试全过**（新增 5 个解析器边界用例）。真实文件实测：`特斯拉.mp4` → VLC；`-an` 生成的静音 MP4 → 保持原生。详见 [后端路由第二轮审查六项修复](docs/20261019-0914-后端路由第二轮审查六项修复与边界测试-DeepSeek-V4.1-Flash.md)。
 
-版本号已统一（2026-10-17）：**单一版本源 = 根目录 `VERSION`**（当前 `244`），本机安装脚本与 CI 都读它；CI 的 Release tag 额外追加时间戳 `v244-<年月日>-<时分>`，以区分"仅改文档、未递增版本"的提交。详见 [CI 版本号统一与 tag 时间戳](docs/20261017-0206-CI版本号统一与tag时间戳-DeepSeek-V4.1-Flash.md)。
+上一轮（2026-10-17 01:46）：对后端路由做代码审查后修复 6 项。重点是 **ffprobe 缺失时兜底判据精确化** —— 不再用"音轨为空"（会误伤本就无音轨的静音 MP4、丢原生硬件解码），改为解析 MP4 容器的 `moov/trak/mdia/hdlr` 看是否声明 `soun` 音频轨（新增 `MP4ContainerInspector`）；同时把「ffprobe 判不安全」提到 AV1 之前（避免 **AV1 + dts/truehd** 静音）、`decide` 改为惰性闭包避免无谓 AVAsset 探测、`.mp3` 判据统一到 Core（消除黑白名单自相矛盾）。详见 [后端路由六项审查修复](docs/20261017-0146-后端路由六项审查修复-DeepSeek-V4.1-Flash.md)。
+
+版本号已统一（2026-10-17）：**单一版本源 = 根目录 `VERSION`**（当前 `245`），本机安装脚本与 CI 都读它；CI 的 Release tag 额外追加时间戳 `v245-<年月日>-<时分>`，以区分"仅改文档、未递增版本"的提交。详见 [CI 版本号统一与 tag 时间戳](docs/20261017-0206-CI版本号统一与tag时间戳-DeepSeek-V4.1-Flash.md)。
 
 之前两次修复（00:10 判据下沉 Core 并补 mp1/mp2 等四项；00:35 路由顺序抽成可测纯函数 `decide()`）详见 [代码审查与四项修复补齐](docs/20261017-0010-后端路由代码审查与四项修复补齐-hy3.md)（该文数字口径已修正为：本轮合计新增 19 个用例）。
 
@@ -27,7 +29,7 @@
 
 优先方向：持久化数据治理（fileSettings 上限与清理）、版本号统一（CI 与 `VERSION` 同源，需评估 tag 冲突）、测试补齐与架构减负；功能侧待定项（网络流、截图、A-B 循环、PiP）由使用者决定优先级。
 
-上一轮的后端路由缺口已于 2026-10-17 全部修复（① ffprobe 缺失兜底 ② 音频判据早于 AV1 ③ ffprobe 判不安全早于 AV1）。已用真实文件端到端实测并补足单测（`BackendRoutingTests` 29 个用例、全库 32 个通过）。仍未覆盖：`hasVideoDecodeErrors` 异步逻辑、MP3-in-MOV/ADPCM 等其它组合。详见 [后端路由六项审查修复](docs/20261017-0146-后端路由六项审查修复-DeepSeek-V4.1-Flash.md) 与 [代码审查与四项修复补齐](docs/20261017-0010-后端路由代码审查与四项修复补齐-hy3.md) 第七、八节。
+上一轮的后端路由缺口已于 2026-10-17 全部修复（① ffprobe 缺失兜底 ② 音频判据早于 AV1 ③ ffprobe 判不安全早于 AV1），2026-10-19 又修掉手写解析器的崩溃级/误判级缺陷。已用真实文件端到端实测并补足单测（`BackendRoutingTests` 34 个用例、全库 37 个通过）。仍未覆盖：`hasVideoDecodeErrors` 异步逻辑、MP3-in-MOV/ADPCM 等其它组合。详见 [后端路由第二轮审查六项修复](docs/20261019-0914-后端路由第二轮审查六项修复与边界测试-DeepSeek-V4.1-Flash.md) 与 [后端路由六项审查修复](docs/20261017-0146-后端路由六项审查修复-DeepSeek-V4.1-Flash.md)。
 
 详细清单见 [下一步待实现（202609292334）](docs/20260929-2334-下一步待实现-未标注.md)。
 
@@ -112,3 +114,4 @@ bash scripts/measure_audio_only.sh "/path/to/media.mp4" \
 | [20261017-0010-后端路由代码审查与四项修复补齐-hy3.md](docs/20261017-0010-后端路由代码审查与四项修复补齐-hy3.md) | 代码审查 + 四项补齐：判据下沉 Core 可测并补 mp1/mp2、ffprobe 缺失兜底、AV1 判断顺序、消除重复加载；含实测证据与 19 个新增单测（含 8 个顺序单测） |
 | [20261017-0146-后端路由六项审查修复-DeepSeek-V4.1-Flash.md](docs/20261017-0146-后端路由六项审查修复-DeepSeek-V4.1-Flash.md) | 六项审查修复：ffprobe 缺失兜底精确化（解析容器 `hdlr=soun`，新增 `MP4ContainerInspector`）、ffprobe 判不安全早于 AV1、`decide` 惰性求值、`.mp3` 判据统一到 Core、文档/版本账目修正；含真实文件端到端实测 |
 | [20261017-0206-CI版本号统一与tag时间戳-DeepSeek-V4.1-Flash.md](docs/20261017-0206-CI版本号统一与tag时间戳-DeepSeek-V4.1-Flash.md) | CI 改为读根目录 `VERSION` 作为 app 版本串，Release tag 追加「年月日-时分」（东八区）保证唯一，消除"仅改文档提交撞同名 tag"问题；含本地验证 |
+| [20261019-0914-后端路由第二轮审查六项修复与边界测试-DeepSeek-V4.1-Flash.md](docs/20261019-0914-后端路由第二轮审查六项修复与边界测试-DeepSeek-V4.1-Flash.md) | 第二轮审查六项修复：box 遍历整数溢出崩溃、末尾 8 字节 box 误判、`loadTracks` 抛错保守化、`resolveBackend` 消除 AV1 重复探测、`hdlr` 限界、补 5 个解析器边界单测；含真实文件实测 |

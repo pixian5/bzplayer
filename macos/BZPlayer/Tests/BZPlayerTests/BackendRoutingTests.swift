@@ -330,6 +330,76 @@ final class BackendRoutingTests: XCTestCase {
         )
     }
 
+    // MARK: - 容器解析的边界情况（回归用）
+
+    func testContainerHandlesTrailingHeaderOnlyBox() {
+        // 文件末尾常见的 8 字节 `free` 填充（只有头、没有 payload）不应被判成结构异常，
+        // 否则静音 MP4 会被误判为 .unknown → 保守走 VLC，白白丢掉原生硬解。
+        let data = makeBox("moov", makeTrack(handler: "vide") + makeBox("free", Data()))
+        XCTAssertEqual(
+            MP4ContainerInspector.audioTrackPresence(in: DataByteSource(data: data)),
+            .none,
+            "末尾只有 8 字节头的 box 是合法结构，应遍历到 EOF 后判为无音频"
+        )
+    }
+
+    func testContainerSupports64BitLargeSizeBox() {
+        // size == 1 表示真正的 64 位大小（largesize）紧跟其后 8 字节，头部共 16 字节。
+        let large = makeLargeBox("free", Data(repeating: 0, count: 4))
+        let data = makeBox("moov", large + makeTrack(handler: "soun"))
+        XCTAssertEqual(
+            MP4ContainerInspector.audioTrackPresence(in: DataByteSource(data: data)),
+            .declared,
+            "跳过大 size 的 free box 后仍应找到 soun 轨"
+        )
+    }
+
+    func testContainerTreatsZeroSizeBoxAsExtendingToEOF() {
+        // size == 0 是合法写法，表示该 box 一直延伸到文件末尾。
+        var data = makeBox("moov", makeTrack(handler: "vide"))
+        var zero = UInt32(0).bigEndian
+        withUnsafeBytes(of: &zero) { data.append(contentsOf: $0) }
+        data.append(Data("free".utf8))
+        data.append(Data(repeating: 0, count: 4))
+        XCTAssertEqual(
+            MP4ContainerInspector.audioTrackPresence(in: DataByteSource(data: data)),
+            .none,
+            "size == 0 应吃到 EOF 并正常结束，而不是判为结构异常"
+        )
+    }
+
+    func testContainerRejectsLargeSizeBeyondBuffer() {
+        // largesize 本身没超过 Int.max，但远超缓冲区剩余字节。
+        // 修复前 `cursor + size` 会整数溢出直接 trap（实测 exit=133），现在应先比较再相加。
+        var data = Data()
+        var marker = UInt32(1).bigEndian
+        withUnsafeBytes(of: &marker) { data.append(contentsOf: $0) }
+        data.append(Data("free".utf8))
+        var huge = UInt64(Int.max).bigEndian
+        withUnsafeBytes(of: &huge) { data.append(contentsOf: $0) }
+        data.append(Data(repeating: 0, count: 8))
+        XCTAssertEqual(
+            MP4ContainerInspector.audioTrackPresence(in: DataByteSource(data: data)),
+            .unknown,
+            "超出缓冲区的 size 应判为结构异常，且不能因整数溢出崩溃"
+        )
+    }
+
+    func testContainerRejectsLargeSizeExceedingIntMax() {
+        // largesize > Int.max 无法用 Int 表示 → 头部解析失败 → 结构异常（不能崩溃）。
+        var data = Data()
+        var marker = UInt32(1).bigEndian
+        withUnsafeBytes(of: &marker) { data.append(contentsOf: $0) }
+        data.append(Data("free".utf8))
+        var beyond = UInt64.max.bigEndian
+        withUnsafeBytes(of: &beyond) { data.append(contentsOf: $0) }
+        data.append(Data(repeating: 0, count: 8))
+        XCTAssertEqual(
+            MP4ContainerInspector.audioTrackPresence(in: DataByteSource(data: data)),
+            .unknown
+        )
+    }
+
     // MARK: - 测试辅助
 
     /// 内存字节源，用于在没有真实文件的情况下驱动容器解析。
@@ -348,6 +418,18 @@ final class BackendRoutingTests: XCTestCase {
         var size = UInt32(8 + payload.count).bigEndian
         withUnsafeBytes(of: &size) { data.append(contentsOf: $0) }
         data.append(Data(type.utf8))
+        data.append(payload)
+        return data
+    }
+
+    /// 构造一个使用 64 位 largesize 的 box：[4 字节 1][4 字节类型][8 字节大小][payload]。
+    private func makeLargeBox(_ type: String, _ payload: Data) -> Data {
+        var data = Data()
+        var marker = UInt32(1).bigEndian
+        withUnsafeBytes(of: &marker) { data.append(contentsOf: $0) }
+        data.append(Data(type.utf8))
+        var large = UInt64(16 + payload.count).bigEndian
+        withUnsafeBytes(of: &large) { data.append(contentsOf: $0) }
         data.append(payload)
         return data
     }
