@@ -46,3 +46,10 @@ venv/
 .coverage
 htmlcov/
 *.egg-info/
+
+# 一次性代码改写/清理脚本（历史上为改 PlayerViewModel 写的 sed 式脚本，已执行完即废弃）
+/rewrite_root_view.py
+/rewrite_root_view_2.py
+/rm_ffprobe_vm.py
+/rm_lines.py
+/rm_lines_root.py
